@@ -1,3 +1,14 @@
+## 0.5.8-dev — Floating controls restoration hotfix
+
+### Fixed
+- Restore the floating bubble immediately after the user approves screen/app capture and GO LIVE starts, rather than waiting for the first outgoing bitrate.
+- Explicit GO LIVE and the manual SHOW FLOATING CONTROLS action clear the previous drag-to-dismiss preference, so a previously hidden bubble cannot silently prevent testing or monitoring a new stream.
+- Preserve drag-to-close, panel minimize and the existing overlay service implementation.
+
+### Device validation still required
+- Verify the bubble appears immediately after screen-capture approval, remains available during Preparing/Connecting/Error, and can be dragged to the close target.
+- Verify stream state, RTMP connection and all audio sources on the Galaxy S25 Ultra; CI compilation alone cannot validate device behaviour.
+
 # MobileGamingStreamer — Changelog
 
 Development prerelease builds for device testing.
