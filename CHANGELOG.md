@@ -2,12 +2,29 @@
 
 Development prerelease builds for device testing.
 
-## 0.5.6-dev — About, settings, Soft Clay theme and Play readiness
+## 0.5.7-dev — RTMP startup lifecycle and original claymorphism
+
+### Fixed
+- Split the RTMP broadcast engine into a dedicated foreground service and the separate user-enabled microphone compatibility AccessibilityService.
+- Start the RTMP foreground service directly from the successful Android screen/app capture consent result instead of relying on a broadcast receiver hosted by an AccessibilityService.
+- Removed the stop-time call that disabled the AccessibilityService, preventing the next stream start from targeting an unavailable receiver.
+- Keep the accessibility service free of active event subscriptions and without window-content retrieval.
+
+### Updated
+- Restored a more pronounced claymorphism visual language: warm layered surface gradients, deeper soft shadows, larger sculpted corners and rounded control geometry.
+- Updated in-app and HTML privacy wording to describe the no-event-subscription accessibility implementation.
+- Bumped development build to 0.5.7 (versionCode 14).
+
+### Device validation still required
+- GitHub Actions compilation does not prove RTMP connection, capture of a selected app window, or BGMI microphone/game/teammate audio on the Galaxy S25 Ultra.
+- The AccessibilityService declaration remains in the APK. Play Protect's sideload block cannot be bypassed by changing the install UI; Google review/appeal or compliant Play distribution is required.
+
+## 0.5.6-dev — About, settings, Claymorphism theme and Play readiness
 
 ### Added
 - Added About page crediting Juber Saleem as developer and BGMI / PUBG Mobile streamer.
-- Added Settings navigation with persistent Classic and Soft Clay theme choices.
-- Added a shared theme palette and soft claymorphism surfaces with rounded corners, raised edges, subtle depth and a warm light palette.
+- Added Settings navigation with persistent Classic and Claymorphism theme choices.
+- Added a shared theme palette and original claymorphism surfaces with pronounced rounded forms, raised highlights and deeper 3D shadows and a warm light palette.
 - Added in-app Privacy Policy and Terms & Conditions pages.
 - Added standalone HTML legal pages under docs/ for future GitHub Pages hosting.
 - Added explicit affirmative Accessibility disclosure before launching Android Accessibility settings.
@@ -16,7 +33,7 @@ Development prerelease builds for device testing.
 
 ### Review notes
 - targetSdk and compileSdk are API 36.
-- The AccessibilityService is not declared as an accessibility tool. It receives window-state events only and has canRetrieveWindowContent=false; its Play Console declaration and review video are still required.
+- The AccessibilityService is not declared as an accessibility tool. It has no active event subscriptions and has canRetrieveWindowContent=false; its Play Console declaration and review video are still required.
 - The debug APK is for device testing only. A signed release Android App Bundle and protected upload key are still required for Google Play.
 - The legal HTML files are not publicly hosted until GitHub Pages is enabled and verified.
 - Google Play approval, BGMI audio capture, teammate voice capture, and long-session stability are not certified by this source update.
