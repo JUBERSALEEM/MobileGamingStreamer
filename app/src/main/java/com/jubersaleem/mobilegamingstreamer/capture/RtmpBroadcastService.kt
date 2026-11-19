@@ -14,16 +14,22 @@ import android.os.Looper
 import android.provider.Settings
 import android.os.IBinder
 import android.util.DisplayMetrics
+import android.media.projection.MediaProjectionManager
 import android.util.Log
 import android.view.WindowManager
 import com.jubersaleem.mobilegamingstreamer.MainActivity
 import com.pedro.common.ConnectChecker
 import com.pedro.encoder.utils.CodecUtil
-import com.pedro.library.rtmp.RtmpDisplay
+import com.pedro.encoder.input.sources.audio.AudioSource
+import com.pedro.encoder.input.sources.audio.InternalAudioSource
+import com.pedro.encoder.input.sources.audio.MicrophoneSource
+import com.pedro.encoder.input.sources.audio.MixAudioSource
+import com.pedro.encoder.input.sources.video.ScreenSource
+import com.pedro.library.generic.GenericStream
 
 /** RTMP broadcast service with microphone audio and screen video. */
 class RtmpBroadcastService : Service() {
-    private var display: RtmpDisplay? = null
+    private var display: GenericStream? = null
     private var streamingConfirmed = false
     private var lastBitrate = 0L
     private val handler = Handler(Looper.getMainLooper())
@@ -122,56 +128,80 @@ class RtmpBroadcastService : Service() {
             val quality = intent.getStringExtra(EXTRA_QUALITY) ?: "1080p"
             val orientation = intent.getStringExtra(EXTRA_ORIENTATION) ?: "AUTO"
             val fps = intent.getIntExtra(EXTRA_FPS, 30).coerceIn(30, 60)
-            val maxEdge = when (quality) {
+            val maxLongEdge = when (quality) {
                 "720p" -> 1280
                 "1440p" -> 2560
                 else -> 1920
             }
-            val sourceLong = maxOf(screenWidth, screenHeight).toFloat()
-            val sourceShort = minOf(screenWidth, screenHeight).toFloat()
-            val aspect = sourceLong / sourceShort
-            val longEdge = minOf(maxEdge, sourceLong.toInt())
-            val shortEdge = (longEdge / aspect).toInt()
-            var width = if (orientation == "PORTRAIT") shortEdge else longEdge
-            var height = if (orientation == "PORTRAIT") longEdge else shortEdge
-            if (orientation == "AUTO") {
-                width = if (screenWidth >= screenHeight) longEdge else shortEdge
-                height = if (screenWidth >= screenHeight) shortEdge else longEdge
+
+            // Use standard 16:9 landscape or 9:16 portrait output dimensions.
+            // Portrait is a real vertical canvas, not a rotated landscape resolution.
+            val portrait = when (orientation) {
+                "PORTRAIT" -> true
+                "LANDSCAPE" -> false
+                else -> screenHeight > screenWidth
             }
-            width = (width / 2) * 2
-            height = (height / 2) * 2
-            // YouTube-oriented starting bitrates by resolution and frame rate.
-            // These are targets, not guarantees: network and encoder determine actual throughput.
+            val width: Int
+            val height: Int
+            if (portrait) {
+                width = ((maxLongEdge * 9f / 16f).toInt() / 2) * 2
+                height = maxLongEdge
+            } else {
+                width = maxLongEdge
+                height = ((maxLongEdge * 9f / 16f).toInt() / 2) * 2
+            }
             val bitrate = when (quality) {
                 "720p" -> if (fps >= 60) 6_000_000 else 4_000_000
                 "1440p" -> if (fps >= 60) 18_000_000 else 14_000_000
                 else -> if (fps >= 60) 12_000_000 else 8_000_000
             }
 
-            // OpenGL is required for MediaProjection display input; force rendering keeps static screens producing frames.
-            val rtmp = RtmpDisplay(this, true, checker)
-            // Keep hardware H.264 for efficient screen encoding, but let Android select a compatible AAC encoder.
-            rtmp.forceCodecType(CodecUtil.CodecType.HARDWARE, CodecUtil.CodecType.FIRST_COMPATIBLE_FOUND)
-            rtmp.setIntentResult(resultCode, resultData)
-            val prepared = rtmp.prepareVideo(width, height, fps, bitrate, 0, dpi)
-            val actualFps = if (prepared) fps else if (
-                fps == 60 && rtmp.prepareVideo(width, height, 30, bitrate, 0, dpi)
-            ) {
-                update("60 FPS unavailable; using 30 FPS")
-                30
-            } else {
-                throw IllegalStateException("H.264 video encoder preparation failed for ${width}x${height}")
+            // RtmpDisplay.prepareAudio() captures ONLY the microphone. It never configures
+            // AudioPlaybackCapture, which is why BGMI gunshots/game effects were absent.
+            // GenericStream with MixAudioSource uses the same MediaProjection token for
+            // screen video + internal playback + microphone, matching RootEncoder's
+            // supported screen-stream architecture.
+            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
+                ?: throw IllegalStateException("Android did not provide a MediaProjection session")
+
+            val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE) ?: AUDIO_MODE_BOTH
+            val audioSource: AudioSource = when (audioMode) {
+                AUDIO_MODE_MIC -> MicrophoneSource()
+                AUDIO_MODE_GAME -> InternalAudioSource(mediaProjection)
+                else -> MixAudioSource(mediaProjection).apply {
+                    // RootEncoder recommends raising mic level because game playback is
+                    // commonly louder than the microphone signal in a mixed track.
+                    microphoneVolume = 1.5f
+                    internalVolume = 1.0f
+                }
             }
-            // A valid audio source is initialized before streaming. RootEncoder documents screen-only frame starvation on some devices.
-            val audioPrepared = rtmp.prepareAudio(128_000, 44_100, true, true, true)
-            if (!audioPrepared) throw IllegalStateException("Microphone/AAC preparation failed. Check microphone permission and device audio encoder.")
-            rtmp.glInterface.setForceRender(true, 15)
-            display = rtmp
+
+            val stream = GenericStream(
+                this,
+                checker,
+                ScreenSource(this, mediaProjection),
+                audioSource
+            )
+            stream.forceCodecType(CodecUtil.CodecType.HARDWARE, CodecUtil.CodecType.FIRST_COMPATIBLE_FOUND)
+
+            val videoPrepared = stream.prepareVideo(width, height, bitrate, fps, 2, 0)
+            if (!videoPrepared) {
+                throw IllegalStateException("H.264 video encoder preparation failed for ${width}x${height} @ ${fps} FPS")
+            }
+            val echoCancellation = audioMode != AUDIO_MODE_GAME
+            val noiseSuppression = audioMode != AUDIO_MODE_GAME
+            val audioPrepared = stream.prepareAudio(44_100, true, 128_000, echoCancellation, noiseSuppression)
+            if (!audioPrepared) {
+                throw IllegalStateException("Audio source preparation failed for mode: $audioMode")
+            }
+            stream.getGlInterface().setForceRender(true, 15)
+            display = stream
             publishState(false, "Encoder ready • Connecting…", 0L)
             update("Encoder ready • Connecting…")
-            rtmp.startStream(streamUrl)
+            stream.startStream(streamUrl)
             handler.postDelayed(startupTimeout, 25_000L)
-            Log.i(TAG, "RTMP broadcast requested: ${width}x${height} @ ${actualFps}fps")
+            Log.i(TAG, "RTMP broadcast requested: ${width}x${height} @ ${fps}fps, orientation=${if (portrait) "PORTRAIT" else "LANDSCAPE"}, audio=$audioMode, dpi=$dpi")
         } catch (error: Exception) {
             Log.e(TAG, "Unable to start RTMP broadcast", error)
             stopBroadcast("Unable to start: ${error.message ?: "encoder error"}")
@@ -279,6 +309,10 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_QUALITY = "quality"
         const val EXTRA_FPS = "fps"
         const val EXTRA_ORIENTATION = "orientation"
+        const val EXTRA_AUDIO_MODE = "audio_mode"
+        const val AUDIO_MODE_MIC = "MIC"
+        const val AUDIO_MODE_GAME = "GAME"
+        const val AUDIO_MODE_BOTH = "BOTH"
         const val ACTION_STATUS = "com.jubersaleem.mobilegamingstreamer.action.RTMP_STATUS"
         const val EXTRA_STATUS_ACTIVE = "status_active"
         const val EXTRA_STATUS_MESSAGE = "status_message"
