@@ -104,9 +104,10 @@ class RtmpBroadcastService : AccessibilityService() {
         streamingConfirmed = false
         lastBitrate = 0L
         display?.let { previous ->
-            try { previous.stopStream() } catch (_: Exception) { }
+            try { previous.release() } catch (_: Exception) { }
             display = null
         }
+        releaseProjection()
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
         val resultData = parcelableIntent(intent, EXTRA_RESULT_DATA)
         val streamUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
@@ -143,6 +144,7 @@ class RtmpBroadcastService : AccessibilityService() {
                     try { disconnected?.release() } catch (error: Exception) {
                         Log.w(TAG, "Error releasing disconnected stream", error)
                     }
+                    releaseProjection()
                     publishState(false, "Broadcast disconnected", 0L)
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
@@ -270,12 +272,17 @@ class RtmpBroadcastService : AccessibilityService() {
         try { active?.release() } catch (error: Exception) {
             Log.w(TAG, "Error while releasing RTMP stream", error)
         }
-        val projection = activeProjection
-        activeProjection = null
-        try { projection?.unregisterCallback(projectionCallback); projection?.stop() } catch (_: Exception) { }
+        releaseProjection()
         publishState(false, message, 0L)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun releaseProjection() {
+        val projection = activeProjection ?: return
+        activeProjection = null
+        try { projection.unregisterCallback(projectionCallback) } catch (_: Exception) { }
+        try { projection.stop() } catch (_: Exception) { }
     }
 
     private fun update(message: String, bitrate: Long = 0L) {
@@ -349,8 +356,7 @@ class RtmpBroadcastService : AccessibilityService() {
         lastBitrate = 0L
         try { display?.release() } catch (_: Exception) { }
         display = null
-        try { activeProjection?.unregisterCallback(projectionCallback); activeProjection?.stop() } catch (_: Exception) { }
-        activeProjection = null
+        releaseProjection()
         publishState(false, "Broadcast service stopped", 0L)
         getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putBoolean(KEY_ACCESSIBILITY_READY, false).apply()
         super.onDestroy()
