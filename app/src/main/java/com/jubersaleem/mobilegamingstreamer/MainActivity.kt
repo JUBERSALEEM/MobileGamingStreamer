@@ -9,6 +9,8 @@ import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jubersaleem.mobilegamingstreamer.capture.RtmpBroadcastService
 import com.jubersaleem.mobilegamingstreamer.capture.ScreenCaptureService
+import com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService
 
 private val Bg = Color(0xFF080C11)
 private val Panel = Color(0xFF121A23)
@@ -105,6 +108,7 @@ class MainActivity : ComponentActivity() {
                 putExtra(RtmpBroadcastService.EXTRA_ORIENTATION, orientation)
             }
             startForegroundService(liveIntent)
+            if (Settings.canDrawOverlays(this)) startService(Intent(this, FloatingControlService::class.java))
             broadcastActive = true
             status = "Connecting to RTMP server"
             pendingLive = false
@@ -171,6 +175,9 @@ class MainActivity : ComponentActivity() {
                                     Text("LIVE SESSION", color = Lime, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                     Text(if (broadcastActive) status else "No active broadcast", color = if (broadcastActive) Lime else Muted)
                                     Text(if (broadcastActive && liveBitrate > 0) "${liveBitrate / 1000} kbps" else if (broadcastActive) "Waiting for bitrate…" else "0 kbps", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+                                    OutlinedButton(onClick = { enableFloatingControls() }, modifier = Modifier.fillMaxWidth()) {
+                                        Text(if (Settings.canDrawOverlays(this@MainActivity)) "OPEN FLOATING CONTROLS" else "ENABLE FLOATING CONTROLS")
+                                    }
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Button(onClick = { page = "SETUP" }, modifier = Modifier.weight(1f)) { Text("BROADCAST SETUP") }
                                         OutlinedButton(onClick = { startService(Intent(this@MainActivity, RtmpBroadcastService::class.java).setAction(RtmpBroadcastService.ACTION_STOP)) }, enabled = broadcastActive, modifier = Modifier.weight(1f)) { Text("STOP LIVE") }
@@ -208,6 +215,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun enableFloatingControls() {
+        if (Settings.canDrawOverlays(this)) {
+            startService(Intent(this, FloatingControlService::class.java))
+            status = "Floating controls are visible over other apps"
+        } else {
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            status = "Allow Display over other apps, then return and tap OPEN FLOATING CONTROLS"
+        }
+    }
+
     private fun requestProjection() {
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         projectionPermission.launch(manager.createScreenCaptureIntent())
@@ -223,7 +240,7 @@ private fun Header() {
             Text("MOBILE GAMING", color = Muted, fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Bold)
             Text("STREAMER", fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
         }
-        Text("DEV 0.4.2", color = Lime, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("DEV 0.5.0", color = Lime, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
 
