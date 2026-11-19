@@ -223,9 +223,7 @@ private fun HeroCard(captureActive: Boolean, captureStatus: String) {
                     }
                 }
                 Text(
-                    if (captureActive) "Capture
-is running." else "Ready when
-you are.",
+                    if (captureActive) "Capture\\nis running." else "Ready when\\nyou are.",
                     fontSize = 32.sp,
                     lineHeight = 36.sp,
                     fontWeight = FontWeight.ExtraBold
