@@ -67,7 +67,7 @@ class RtmpBroadcastService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         serviceInfo = AccessibilityServiceInfo().apply {
-            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            eventTypes = 0
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             notificationTimeout = 100
             packageNames = null
@@ -162,7 +162,8 @@ class RtmpBroadcastService : AccessibilityService() {
                         lastBitrate = bitrate
                         handler.removeCallbacks(startupTimeout)
                         update("LIVE • ${bitrate / 1000} kbps", bitrate)
-                        if (firstConfirmation && Settings.canDrawOverlays(this@RtmpBroadcastService)) {
+                        if (firstConfirmation && Settings.canDrawOverlays(this@RtmpBroadcastService) &&
+                            !getSharedPreferences("mgs_preferences", MODE_PRIVATE).getBoolean(com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService.KEY_BUBBLE_DISMISSED, false)) {
                             startService(Intent(this@RtmpBroadcastService, com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService::class.java))
                         }
                     } else {
@@ -364,6 +365,11 @@ class RtmpBroadcastService : AccessibilityService() {
     private fun parcelableIntent(intent: Intent, key: String): Intent? =
         if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(key, Intent::class.java)
         else intent.getParcelableExtra(key)
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        stopBroadcast("App closed from recent apps")
+        super.onTaskRemoved(rootIntent)
+    }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
