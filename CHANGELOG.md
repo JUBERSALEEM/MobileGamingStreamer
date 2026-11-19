@@ -1,22 +1,24 @@
 # MobileGamingStreamer — Changelog
 
-All builds published from the `main` branch are development prereleases for device testing.
+Development prerelease builds for device testing.
 
-## 0.5.0-dev — Floating stream controls
-
-### Added
-- Movable always-on-top control panel after the user grants Android Display over other apps permission.
-- YouTube live-chat pop-out panel using the live video ID.
-- Stop-stream control accessible while another app or game is open.
-- Live video bitrate controls (1.5, 2.5, 4, 6 and 8 Mbps) without reconnecting.
-- Stable CI debug signing key cache so future APKs can update the installed development app.
+## 0.5.1-dev — Stream startup and floating bubble fixes
 
 ### Fixed
-- APK upgrades previously could fail because each ephemeral CI runner generated a different Android debug signing key. The first 0.5.0 install may require uninstalling the previous debug build once; subsequent CI builds reuse the cached key.
-- Floating chat input can receive keyboard focus.
+- Initialize the microphone/AAC audio encoder before starting RTMP. RootEncoder has a documented screen-only capture issue where video frames can stall when no audio source is initialized.
+- Request microphone permission before starting a live session and declare the microphone foreground-service type.
+- Request Android Display over other apps permission before live capture so the recorder-style floating bubble can appear automatically after the user approves screen capture.
+- Use a compatible AAC encoder selection rather than forcing the audio encoder to hardware-only.
 
-### Notes
-- YouTube chat needs the live video ID and is subject to YouTube/WebView sign-in and chat availability.
-- Bitrate controls adjust video bitrate only; they do not yet change audio (audio mixing is not implemented).
-- Development builds remain unsigned by a production release key and are not Play Store releases.
+### Added
+- Compact draggable app-icon bubble appears after the user approves screen capture.
+- Bubble dims after 3.5 seconds and expands to controls only when tapped.
+- Floating overlay windows use Android FLAG_SECURE so their contents are excluded from normal screenshots and screen capture.
+- Expanded controls retain stop-stream and live bitrate presets.
+- Main status now identifies screen video plus microphone audio.
 
+### Platform notes
+- Android still requires explicit screen-capture consent for every new MediaProjection session. The app cannot silently start capturing Chrome or BGMI without the system confirmation.
+- The YouTube video ID is not transmitted in RTMP server URLs or stream keys. Automatic chat discovery requires YouTube account OAuth and the YouTube Live Streaming API; a manual ID is retained until that integration is configured.
+- Microphone capture is implemented. Internal game playback audio and mixing with microphone are still a separate milestone; Android may restrict capture for some apps.
+- The overlay is marked secure to keep its UI out of captured video. Verify this on the target Samsung device, as OEM capture behaviour can vary.
