@@ -95,10 +95,9 @@ class MainActivity : ComponentActivity() {
         if (waitingForOverlayPermission) {
             waitingForOverlayPermission = false
             if (Settings.canDrawOverlays(this)) {
-                status = "Overlay permission granted • continuing stream setup"
-                requestProjection()
+                startService(Intent(this, FloatingControlService::class.java))
+                status = "Floating controls enabled"
             } else {
-                pendingLive = false
                 status = "Floating bubble permission was not granted"
             }
         }
@@ -206,6 +205,11 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onStopLive = { startService(Intent(this@MainActivity, RtmpBroadcastService::class.java).setAction(RtmpBroadcastService.ACTION_STOP)) }
                             )
+                            Text("FLOATING CONTROLS", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text("Optional: allow Display over other apps. Streaming does not depend on this permission; the small control bubble appears after video is actually being sent.", color = Muted, fontSize = 11.sp)
+                            OutlinedButton(onClick = { enableFloatingControls() }, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (Settings.canDrawOverlays(this@MainActivity)) "SHOW FLOATING CONTROLS" else "ENABLE FLOATING CONTROLS")
+                            }
                         } else {
                             Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
                                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -257,8 +261,9 @@ class MainActivity : ComponentActivity() {
             startService(Intent(this, FloatingControlService::class.java))
             status = "Floating controls are visible over other apps"
         } else {
+            waitingForOverlayPermission = true
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-            status = "Allow Display over other apps, then return and tap OPEN FLOATING CONTROLS"
+            status = "Allow Display over other apps, then return to enable the floating bubble"
         }
     }
 
