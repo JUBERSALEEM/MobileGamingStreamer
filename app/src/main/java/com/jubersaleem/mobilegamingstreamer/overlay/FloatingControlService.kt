@@ -39,6 +39,8 @@ class FloatingControlService : Service() {
     private var panel: View? = null
     private var chat: WebView? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
+    private var dismissTarget: TextView? = null
+    private var dismissingBubble = false
     private var panelParams: WindowManager.LayoutParams? = null
     private val dimRunnable = Runnable { bubble?.alpha = 0.38f }
     private var statusReceiverRegistered = false
@@ -76,6 +78,9 @@ class FloatingControlService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        val prefs = getSharedPreferences("mgs_preferences", MODE_PRIVATE)
+        if (intent?.action == ACTION_SHOW) prefs.edit().putBoolean(KEY_BUBBLE_DISMISSED, false).apply()
+        if (prefs.getBoolean(KEY_BUBBLE_DISMISSED, false)) { stopSelf(); return START_NOT_STICKY }
         refreshBroadcastState()
         if (bubble == null) createBubble()
         val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -83,7 +88,7 @@ class FloatingControlService : Service() {
         renderBroadcastState()
         renderSpeakerState()
         scheduleDim()
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun createBubble() {
@@ -113,6 +118,7 @@ class FloatingControlService : Service() {
         bubbleParams = lp
         bubble = icon
         wm.addView(icon, lp)
+        createDismissTarget(type)
         icon.setOnTouchListener(object : View.OnTouchListener {
             private var downX = 0f
             private var downY = 0f
@@ -127,22 +133,34 @@ class FloatingControlService : Service() {
                         initialX = lp.x
                         initialY = lp.y
                         dragged = false
+                        dismissingBubble = false
                         brighten()
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
                         val dx = event.rawX - downX
                         val dy = event.rawY - downY
-                        if (abs(dx) > dp(5) || abs(dy) > dp(5)) dragged = true
-                        lp.x = (initialX - dx.toInt()).coerceAtLeast(0)
-                        lp.y = (initialY + dy.toInt()).coerceAtLeast(0)
+                        if (abs(dx) > dp(5) || abs(dy) > dp(5)) { dragged = true; showDismissTarget() }
+                        val bounds = android.graphics.Rect()
+                        wm.defaultDisplay.getRectSize(bounds)
+                        lp.x = (initialX - dx.toInt()).coerceIn(0, (bounds.width() - dp(42)).coerceAtLeast(0))
+                        lp.y = (initialY + dy.toInt()).coerceIn(0, (bounds.height() - dp(42)).coerceAtLeast(0))
                         wm.updateViewLayout(icon, lp)
+                        dismissTarget?.let { target ->
+                            val location = IntArray(2); target.getLocationOnScreen(location)
+                            val cx = event.rawX.toInt(); val cy = event.rawY.toInt()
+                            dismissingBubble = cx >= location[0] && cx <= location[0] + target.width && cy >= location[1] && cy <= location[1] + target.height
+                            target.alpha = if (dismissingBubble) 1f else 0.72f
+                        }
                         return true
                     }
                     MotionEvent.ACTION_UP -> {
-                        if (!dragged) togglePanel()
+                        hideDismissTarget()
+                        if (dragged && dismissingBubble) dismissBubbleByDrag() else if (!dragged) togglePanel()
                         scheduleDim()
                         return true
+                    }
+                    MotionEvent.ACTION_CANCEL -> { hideDismissTarget(); scheduleDim(); return true
                     }
                 }
                 return false
@@ -166,7 +184,8 @@ class FloatingControlService : Service() {
         }
         val minimize = Button(this).apply { text = "—"; setOnClickListener { panel?.visibility = View.GONE; bubble?.visibility = View.VISIBLE; scheduleDim() } }
         header.addView(title, LinearLayout.LayoutParams(0, dp(42), 1f))
-        header.addView(minimize, LinearLayout.LayoutParams(dp(48), dp(42)))
+        header.addView(minimize, LinearLayout.LayoutParams(dp(44), dp(42)))
+        header.addView(Button(this).apply { text = "×"; contentDescription = "Hide floating controls"; setOnClickListener { dismissBubbleByDrag() } }, LinearLayout.LayoutParams(dp(44), dp(42)))
         root.addView(header)
 
         val status = TextView(this).apply {
@@ -281,6 +300,44 @@ class FloatingControlService : Service() {
         wm.addView(root, lp)
     }
 
+
+    private fun createDismissTarget(type: Int) {
+        val target = TextView(this).apply {
+            text = "DROP TO CLOSE"
+            gravity = Gravity.CENTER
+            textSize = 10f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFFFFFFFF.toInt())
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFFE34D59.toInt())
+                setStroke(dp(2), 0xFFFFFFFF.toInt())
+            }
+            alpha = 0.82f
+        }
+        val params = WindowManager.LayoutParams(dp(88), dp(88), type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT).apply { gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; y = dp(34) }
+        dismissTarget = target
+        wm.addView(target, params)
+        target.visibility = View.GONE
+    }
+
+    private fun showDismissTarget() { dismissTarget?.visibility = View.VISIBLE }
+    private fun hideDismissTarget() { dismissTarget?.visibility = View.GONE; dismissingBubble = false }
+
+    private fun dismissBubbleByDrag() {
+        getSharedPreferences("mgs_preferences", MODE_PRIVATE).edit().putBoolean(KEY_BUBBLE_DISMISSED, true).apply()
+        Toast.makeText(this, "Floating controls hidden. Reopen them from the app.", Toast.LENGTH_SHORT).show()
+        stopSelf()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        RtmpBroadcastService.requestStop(this)
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
     private fun refreshBroadcastState() {
         val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
         broadcastActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
@@ -365,6 +422,11 @@ class FloatingControlService : Service() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    companion object {
+        const val ACTION_SHOW = "com.jubersaleem.mobilegamingstreamer.action.SHOW_FLOATING_CONTROLS"
+        const val KEY_BUBBLE_DISMISSED = "floating_bubble_dismissed"
+    }
+
     override fun onDestroy() {
         if (statusReceiverRegistered) {
             try { unregisterReceiver(broadcastReceiver) } catch (_: IllegalArgumentException) { }
@@ -373,6 +435,8 @@ class FloatingControlService : Service() {
         handler.removeCallbacksAndMessages(null)
         chat?.apply { stopLoading(); loadUrl("about:blank"); destroy() }
         chat = null
+        dismissTarget?.let { try { wm.removeView(it) } catch (_: Exception) { } }
+        dismissTarget = null
         panel?.let { try { wm.removeView(it) } catch (_: Exception) { } }
         bubble?.let { try { wm.removeView(it) } catch (_: Exception) { } }
         panel = null
