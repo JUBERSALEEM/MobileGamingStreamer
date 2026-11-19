@@ -34,7 +34,10 @@ class RtmpBroadcastService : Service() {
     }
 
     private fun startBroadcast(intent: Intent) {
-        if (display != null) stopBroadcast()
+        display?.let { previous ->
+            try { previous.stopStream() } catch (_: Exception) { }
+            display = null
+        }
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
         val resultData = parcelableIntent(intent, EXTRA_RESULT_DATA)
         val streamUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
@@ -54,17 +57,15 @@ class RtmpBroadcastService : Service() {
                 override fun onConnectionSuccess() = update("LIVE • Video broadcast connected")
                 override fun onConnectionFailed(reason: String) {
                     Log.e(TAG, "RTMP connection failed: $reason")
-                    update("Connection failed: $reason")
-                    stopBroadcast()
+                    stopBroadcast("Connection failed: $reason")
                 }
                 override fun onDisconnect() = update("Broadcast disconnected")
                 override fun onAuthError() {
-                    update("Stream authentication failed. Check the stream key.")
-                    stopBroadcast()
+                    stopBroadcast("Stream authentication failed. Check the stream key.")
                 }
                 override fun onAuthSuccess() = update("Stream key accepted")
                 override fun onNewBitrate(bitrate: Long) {
-                    update("LIVE • ${bitrate / 1000} kbps")
+                    update("LIVE • ${bitrate / 1000} kbps", bitrate)
                 }
             }
 
@@ -107,28 +108,43 @@ class RtmpBroadcastService : Service() {
                 }
             }
             display = rtmp
+            publishState(true, "Encoder ready • Connecting…", 0L)
             update("Encoder ready • Connecting…")
             rtmp.startStream(streamUrl)
             Log.i(TAG, "RTMP broadcast requested: ${width}x${height} @ ${fps}fps")
         } catch (error: Exception) {
             Log.e(TAG, "Unable to start RTMP broadcast", error)
-            update("Unable to start: ${error.message ?: "encoder error"}")
-            stopBroadcast()
+            stopBroadcast("Unable to start: ${error.message ?: "encoder error"}")
         }
     }
 
-    private fun stopBroadcast() {
+    private fun stopBroadcast(message: String = "Broadcast stopped") {
         val active = display
         display = null
         try { active?.stopStream() } catch (error: Exception) {
             Log.w(TAG, "Error while stopping RTMP stream", error)
         }
+        publishState(false, message, 0L)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
-    private fun update(message: String) {
+    private fun update(message: String, bitrate: Long = 0L) {
+        publishState(true, message, bitrate)
         notifications.notify(NOTIFICATION_ID, notification(message))
+    }
+
+    private fun publishState(active: Boolean, message: String, bitrate: Long) {
+        getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_ACTIVE, active)
+            .putString(KEY_MESSAGE, message)
+            .putLong(KEY_BITRATE, bitrate)
+            .apply()
+        sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).apply {
+            putExtra(EXTRA_STATUS_ACTIVE, active)
+            putExtra(EXTRA_STATUS_MESSAGE, message)
+            putExtra(EXTRA_STATUS_BITRATE, bitrate)
+        })
     }
 
     private fun notification(message: String): Notification {
@@ -182,6 +198,7 @@ class RtmpBroadcastService : Service() {
     override fun onDestroy() {
         try { display?.stopStream() } catch (_: Exception) { }
         display = null
+        publishState(false, "Broadcast service stopped", 0L)
         super.onDestroy()
     }
 
@@ -194,6 +211,14 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_QUALITY = "quality"
         const val EXTRA_FPS = "fps"
         const val EXTRA_ORIENTATION = "orientation"
+        const val ACTION_STATUS = "com.jubersaleem.mobilegamingstreamer.action.RTMP_STATUS"
+        const val EXTRA_STATUS_ACTIVE = "status_active"
+        const val EXTRA_STATUS_MESSAGE = "status_message"
+        const val EXTRA_STATUS_BITRATE = "status_bitrate"
+        const val STATE_PREFS = "broadcast_state"
+        const val KEY_ACTIVE = "active"
+        const val KEY_MESSAGE = "message"
+        const val KEY_BITRATE = "bitrate"
         private const val TAG = "MGS-RTMP"
         private const val CHANNEL_ID = "live_broadcast"
         private const val NOTIFICATION_ID = 1002
