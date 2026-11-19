@@ -38,9 +38,9 @@ fun SettingsPage(
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         PageHeading("SETTINGS", "Personalise your streaming studio")
         Card(
-            shape = RoundedCornerShape(26.dp),
+            shape = RoundedCornerShape(if (p.isClay) 32.dp else 26.dp),
             border = BorderStroke(1.dp, p.edge),
-            elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = if (p.isClay) 24.dp else 12.dp),
             colors = CardDefaults.cardColors(containerColor = p.surface)
         ) {
             Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -62,21 +62,21 @@ fun SettingsPage(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(if (themeMode == "CLAY") "Soft Clay is active" else "Classic is active", color = p.text, fontWeight = FontWeight.Bold)
-                        Text(if (themeMode == "CLAY") "Warm surfaces, raised edges and soft 3D depth." else "The original dark studio with neon lime and cyan accents.", color = p.muted, fontSize = 11.sp)
+                        Text(if (themeMode == "CLAY") "Original Claymorphism is active" else "Classic is active", color = p.text, fontWeight = FontWeight.Bold)
+                        Text(if (themeMode == "CLAY") "Sculpted 3D surfaces, deep soft shadows, raised highlights and inset control wells." else "The original dark studio with neon lime and cyan accents.", color = p.muted, fontSize = 11.sp)
                     }
                     Card(
                         modifier = Modifier.size(62.dp),
-                        shape = RoundedCornerShape(19.dp),
+                        shape = RoundedCornerShape(if (p.isClay) 24.dp else 19.dp),
                         border = BorderStroke(1.dp, p.edge),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 9.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = if (p.isClay) 18.dp else 9.dp),
                         colors = CardDefaults.cardColors(containerColor = p.highlight)
                     ) { }
                 }
             }
         }
         Card(
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(if (p.isClay) 30.dp else 24.dp),
             border = BorderStroke(1.dp, p.edge),
             elevation = CardDefaults.cardElevation(defaultElevation = 9.dp),
             colors = CardDefaults.cardColors(containerColor = p.surface)
@@ -98,9 +98,9 @@ fun AboutPage(onTerms: () -> Unit, onPrivacy: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         PageHeading("ABOUT THE APP", "Built for mobile gamers who stream")
         Card(
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(if (p.isClay) 34.dp else 28.dp),
             border = BorderStroke(1.dp, p.edge),
-            elevation = CardDefaults.cardElevation(defaultElevation = 13.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = if (p.isClay) 26.dp else 13.dp),
             colors = CardDefaults.cardColors(containerColor = p.surface)
         ) {
             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
