@@ -159,6 +159,15 @@ class MainActivity : ComponentActivity() {
             }
             try {
                 startForegroundService(liveIntent)
+                // A user-initiated GO LIVE must always restore the floating controls,
+                // including during encoder preparation or RTMP connection failures.
+                // ACTION_SHOW clears any previous drag-to-dismiss preference.
+                if (Settings.canDrawOverlays(this)) {
+                    startService(
+                        Intent(this, FloatingControlService::class.java)
+                            .setAction(FloatingControlService.ACTION_SHOW)
+                    )
+                }
                 broadcastActive = false
                 broadcastStarting = true
                 status = "Starting stream service • preparing encoders"
@@ -342,7 +351,10 @@ class MainActivity : ComponentActivity() {
 
     private fun enableFloatingControls() {
         if (Settings.canDrawOverlays(this)) {
-            startService(Intent(this, FloatingControlService::class.java))
+            startService(
+                Intent(this, FloatingControlService::class.java)
+                    .setAction(FloatingControlService.ACTION_SHOW)
+            )
             status = "Floating controls are visible over other apps"
         } else {
             waitingForOverlayPermission = true
