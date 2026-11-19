@@ -37,12 +37,6 @@ import com.jubersaleem.mobilegamingstreamer.capture.RtmpBroadcastService
 import com.jubersaleem.mobilegamingstreamer.capture.ScreenCaptureService
 import com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService
 
-private val Bg = Color(0xFF080C11)
-private val Panel = Color(0xFF121A23)
-private val Lime = Color(0xFFC4FF5C)
-private val Cyan = Color(0xFF63D8E8)
-private val Muted = Color(0xFF91A0AE)
-
 class MainActivity : ComponentActivity() {
     private var status by mutableStateOf("Ready to stream")
     private var liveBitrate by mutableStateOf(0L)
@@ -218,7 +212,7 @@ class MainActivity : ComponentActivity() {
                         if (!notificationsAllowed) {
                             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF382B1D))) {
                                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("ENABLE NOTIFICATIONS", color = Lime, fontWeight = FontWeight.Bold)
+                                    Text("ENABLE NOTIFICATIONS", color = palette.primary, fontWeight = FontWeight.Bold)
                                     Text("Android notifications show capture and live-stream status, with a stop control.", color = palette.muted)
                                     Button(onClick = {
                                         if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -261,16 +255,16 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onStopLive = { RtmpBroadcastService.requestStop(this@MainActivity) }
                             )
-                            Text("FLOATING CONTROLS", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text("FLOATING CONTROLS", color = palette.secondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             Text("Optional: allow Display over other apps. Streaming does not depend on this permission; the small control bubble appears after video is actually being sent.", color = palette.muted, fontSize = 11.sp)
                             OutlinedButton(onClick = { enableFloatingControls() }, modifier = Modifier.fillMaxWidth()) {
                                 Text(if (Settings.canDrawOverlays(this@MainActivity)) "SHOW FLOATING CONTROLS" else "ENABLE FLOATING CONTROLS")
                             }
                         } else {
-                            Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
+                            Card(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
                                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text("LIVE SESSION", color = Lime, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                                    Text(if (broadcastActive) status else "No active broadcast", color = if (broadcastActive) Lime else Muted)
+                                    Text("LIVE SESSION", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    Text(if (broadcastActive) status else "No active broadcast", color = if (broadcastActive) palette.primary else palette.muted)
                                     Text(if (broadcastActive && liveBitrate > 0) "${liveBitrate / 1000} kbps" else if (broadcastActive) "Waiting for bitrate…" else "0 kbps", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
                                     OutlinedButton(onClick = { enableFloatingControls() }, modifier = Modifier.fillMaxWidth()) {
                                         Text(if (Settings.canDrawOverlays(this@MainActivity)) "OPEN FLOATING CONTROLS" else "ENABLE FLOATING CONTROLS")
@@ -282,10 +276,10 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        if (page == "HOME") Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
+                        if (page == "HOME") Card(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
                             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                Text("CAPTURE TEST", color = Lime, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                                Text("Test the H.264 encoder without connecting to a streaming platform.", color = Muted)
+                                Text("CAPTURE TEST", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                Text("Test the H.264 encoder without connecting to a streaming platform.", color = palette.muted)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(
                                         onClick = { pendingLive = false; requestProjection() },
@@ -305,7 +299,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         if (page == "HOME") ModuleStatus(captureActive, broadcastActive)
-                        Text("Screen video • Microphone / game audio selectable", color = Muted, fontSize = 11.sp)
+                        Text("Screen video • Microphone / game audio selectable", color = palette.muted, fontSize = 11.sp)
                         }
                     }
                 }
@@ -362,7 +356,7 @@ private fun Hero(status: String, capture: Boolean, live: Boolean, starting: Bool
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("YOUR STREAMING STUDIO", color = Muted, fontSize = 10.sp, letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold)
+                Text("YOUR STREAMING STUDIO", color = palette.muted, fontSize = 10.sp, letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold)
                 Text(if (live) "LIVE" else if (starting) "CONNECTING" else if (capture) "CAPTURING" else "STANDBY",
                     color = if (live || starting || capture) palette.primary else palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
@@ -388,7 +382,7 @@ private fun BroadcastPanel(
     Card(shape = RoundedCornerShape(22.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Text("BROADCAST SETUP", color = palette.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
-            Text("Connect to YouTube or another RTMP platform", color = Muted, fontSize = 12.sp)
+            Text("Connect to YouTube or another RTMP platform", color = palette.muted, fontSize = 12.sp)
             OutlinedTextField(
                 value = server, onValueChange = onServer, modifier = Modifier.fillMaxWidth(),
                 singleLine = true, label = { Text("RTMP server URL") }
@@ -398,21 +392,21 @@ private fun BroadcastPanel(
                 singleLine = true, label = { Text("Stream key") },
                 visualTransformation = PasswordVisualTransformation()
             )
-            Text("VIDEO QUALITY", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("VIDEO QUALITY", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             ChoiceRow(listOf("720p", "1080p", "1440p"), quality, onQuality)
-            Text("FRAME RATE", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("FRAME RATE", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             ChoiceRow(listOf("30", "60"), fps, onFps, " FPS")
-            Text("ORIENTATION", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("ORIENTATION", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             ChoiceRow(listOf("AUTO", "LANDSCAPE", "PORTRAIT"), orientation, onOrientation)
-            Text("AUDIO SOURCE", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("AUDIO SOURCE", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             ChoiceRow(listOf("MIC", "GAME", "NORMAL", "BALANCED"), audioMode, onAudioMode)
-            Text(when (audioMode) { "MIC" -> "Microphone only"; "GAME" -> "Internal game/device playback only"; "NORMAL" -> "Game playback + microphone at equal level"; else -> "Balanced mix: game playback + microphone, with microphone level boosted" }, color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+            Text(when (audioMode) { "MIC" -> "Microphone only"; "GAME" -> "Internal game/device playback only"; "NORMAL" -> "Game playback + microphone at equal level"; else -> "Balanced mix: game playback + microphone, with microphone level boosted" }, color = palette.muted, fontSize = 10.sp, lineHeight = 14.sp)
             Text("Higher resolutions and 60 FPS depend on encoder support, game orientation, network and device temperature.",
-                color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                color = palette.muted, fontSize = 10.sp, lineHeight = 14.sp)
             Button(
                 onClick = if (live) onStopLive else onGoLive,
                 modifier = Modifier.fillMaxWidth().height(50.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (live) Color(0xFFB94D54) else Lime,
+                colors = ButtonDefaults.buttonColors(containerColor = if (live) Color(0xFFB94D54) else palette.primary,
                     contentColor = if (live) Color.White else Color(0xFF11170A))
             ) { Text(if (live) "STOP BROADCAST" else "GO LIVE • SELECT APP", fontWeight = FontWeight.ExtraBold) }
         }
@@ -434,7 +428,7 @@ private fun ModuleStatus(capture: Boolean, live: Boolean) {
     val palette = LocalMgsPalette.current
     Card(border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = 8.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("SYSTEM STATUS", color = Lime, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.2.sp)
+            Text("SYSTEM STATUS", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.2.sp)
             StatusRow("Screen capture", if (capture || live) "ACTIVE" else "READY")
             StatusRow("H.264 encoder", if (capture || live) "SESSION STARTED" else "READY")
             StatusRow("RTMP transport", if (live) "CONNECTING" else "READY TO CONNECT")
@@ -447,7 +441,7 @@ private fun ModuleStatus(capture: Boolean, live: Boolean) {
 private fun StatusRow(label: String, value: String) {
     val palette = LocalMgsPalette.current
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = Muted, fontSize = 12.sp)
+        Text(label, color = palette.muted, fontSize = 12.sp)
         Text(value, color = if (value == "ACTIVE" || value == "SESSION STARTED" || value == "CONNECTING") palette.primary else palette.secondary,
             fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
