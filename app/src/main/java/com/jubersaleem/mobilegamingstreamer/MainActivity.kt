@@ -388,7 +388,7 @@ private fun Header() {
             Text("MOBILE GAMING", color = palette.muted, fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Bold)
             Text("STREAMER", fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
         }
-        Text("DEV 0.5.8", color = palette.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("DEV 0.5.9", color = palette.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
 
