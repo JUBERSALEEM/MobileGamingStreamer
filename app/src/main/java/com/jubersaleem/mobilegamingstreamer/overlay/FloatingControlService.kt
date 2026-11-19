@@ -3,6 +3,7 @@ package com.jubersaleem.mobilegamingstreamer.overlay
 import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Handler
@@ -61,7 +62,11 @@ class FloatingControlService : Service() {
             setImageResource(R.mipmap.ic_launcher)
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(dp(5), dp(5), dp(5), dp(5))
-            setBackgroundResource(android.R.drawable.dialog_holo_light_frame)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFF101820.toInt())
+                setStroke(dp(2), 0xFFC4FF5C.toInt())
+            }
             alpha = 1f
             contentDescription = "Open Mobile Gaming Streamer controls"
         }
