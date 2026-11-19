@@ -155,8 +155,9 @@ class FloatingControlService : Service() {
                         return true
                     }
                     MotionEvent.ACTION_UP -> {
+                        val shouldDismiss = dismissingBubble
                         hideDismissTarget()
-                        if (dragged && dismissingBubble) dismissBubbleByDrag() else if (!dragged) togglePanel()
+                        if (dragged && shouldDismiss) dismissBubbleByDrag() else if (!dragged) togglePanel()
                         scheduleDim()
                         return true
                     }
