@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
     private var key by mutableStateOf("")
     private var quality by mutableStateOf("1080p")
     private var fps by mutableStateOf("30")
-    private var orientation by mutableStateOf("AUTO")
+    private var orientation by mutableStateOf("LANDSCAPE")
     private var audioMode by mutableStateOf("BALANCED")
     private var pendingLive by mutableStateOf(false)
     private var waitingForOverlayPermission = false
