@@ -77,9 +77,9 @@ class RtmpBroadcastService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startBroadcast(intent)
+            ACTION_START -> intent?.let { startBroadcast(it) }
             ACTION_STOP -> stopBroadcast()
-            ACTION_SET_BITRATE -> setBitrate(intent)
+            ACTION_SET_BITRATE -> intent?.let { setBitrate(it) }
         }
         return START_NOT_STICKY
     }
