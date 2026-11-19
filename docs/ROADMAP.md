@@ -12,7 +12,8 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 - [x] User-approved MediaProjection permission flow
 - [x] Foreground capture service and persistent notification
 - [x] Confirm CI build succeeds and debug APK artifact is uploaded
-- [ ] Install and test on the reference device
+- [x] Install and test initial screen capture on the reference device
+- [ ] Validate H.264 encoder stability and output metrics on the reference device
 
 ### M1 — Capture validation
 - [x] Consume ImageReader frames safely and close every acquired frame
@@ -29,8 +30,10 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 - [ ] Document apps/content that disallow playback capture
 
 ### M3 — Encoding and streaming
-- [ ] MediaCodec hardware encoder selection
-- [ ] Resolution/FPS/bitrate controls with capability checks
+- [x] Surface-input H.264 hardware encoder selection with device capability checks
+- [x] Initial adaptive 60/30 FPS selection and bounded 1920-pixel capture output
+- [x] Encoded output drain and encoder FPS/bitrate diagnostics (encoded data is currently discarded)
+- [ ] Runtime resolution/FPS/bitrate controls
 - [ ] RTMP/RTMPS output using a reviewed, licensed implementation
 - [ ] Reconnection, network monitoring, and dropped-frame metrics
 
