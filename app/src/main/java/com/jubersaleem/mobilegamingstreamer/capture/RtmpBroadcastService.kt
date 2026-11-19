@@ -122,19 +122,17 @@ class RtmpBroadcastService : Service() {
             rtmp.forceCodecType(CodecUtil.CodecType.HARDWARE, CodecUtil.CodecType.HARDWARE)
             rtmp.setIntentResult(resultCode, resultData)
             val prepared = rtmp.prepareVideo(width, height, fps, bitrate, 0, dpi)
-            if (!prepared) throw IllegalStateException("H.264 video encoder preparation failed for ${width}x${height} at ${fps} FPS")
-            // A valid audio source is initialized before streaming. RootEncoder documents screen-only frame starvation on some devices.
-            val audioPrepared = rtmp.prepareAudio(128_000, 44_100, true, false, false)
-            if (!audioPrepared) throw IllegalStateException("Microphone/AAC preparation failed. Check microphone permission and device audio encoder.")
-            val actualFps = fps /* fallback below is no longer needed after successful prepareVideo */
-            /* if (prepared) fps else if (
+            val actualFps = if (prepared) fps else if (
                 fps == 60 && rtmp.prepareVideo(width, height, 30, bitrate, 0, dpi)
             ) {
                 update("60 FPS unavailable; using 30 FPS")
                 30
             } else {
-                throw IllegalStateException("This device cannot prepare the selected H.264 stream format")
-            } */
+                throw IllegalStateException("H.264 video encoder preparation failed for ${width}x${height}")
+            }
+            // A valid audio source is initialized before streaming. RootEncoder documents screen-only frame starvation on some devices.
+            val audioPrepared = rtmp.prepareAudio(128_000, 44_100, true, false, false)
+            if (!audioPrepared) throw IllegalStateException("Microphone/AAC preparation failed. Check microphone permission and device audio encoder.")
             rtmp.glInterface.setForceRender(true)
             display = rtmp
             publishState(true, "Encoder ready • Connecting…", 0L)
