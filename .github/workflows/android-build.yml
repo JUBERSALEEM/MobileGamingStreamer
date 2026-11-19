@@ -32,13 +32,13 @@ jobs:
         run: gradle :app:assembleDebug --no-daemon
 
       - name: Rename APK for mobile installation
-        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/MobileGamingStreamer-0.4.1.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/MobileGamingStreamer-0.4.2.apk
 
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: mobile-gaming-streamer-debug
-          path: app/build/outputs/apk/debug/MobileGamingStreamer-0.4.1.apk
+          path: app/build/outputs/apk/debug/MobileGamingStreamer-0.4.2.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -53,5 +53,5 @@ jobs:
           generate_release_notes: true
           prerelease: true
           make_latest: false
-          files: app/build/outputs/apk/debug/MobileGamingStreamer-0.4.1.apk
+          files: app/build/outputs/apk/debug/MobileGamingStreamer-0.4.2.apk
           fail_on_unmatched_files: true
