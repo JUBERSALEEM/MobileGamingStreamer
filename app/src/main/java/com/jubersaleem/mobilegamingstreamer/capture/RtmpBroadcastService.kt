@@ -75,7 +75,7 @@ class RtmpBroadcastService : Service() {
                 }
             }
 
-            val (screenWidth, screenHeight) = screenMetrics()
+            val (screenWidth, screenHeight, dpi) = screenMetrics()
             val quality = intent.getStringExtra(EXTRA_QUALITY) ?: "1080p"
             val orientation = intent.getStringExtra(EXTRA_ORIENTATION) ?: "AUTO"
             val fps = intent.getIntExtra(EXTRA_FPS, 30).coerceIn(30, 60)
@@ -107,9 +107,9 @@ class RtmpBroadcastService : Service() {
             val rtmp = RtmpDisplay(this, true, checker)
             rtmp.forceCodecType(CodecUtil.CodecType.HARDWARE, CodecUtil.CodecType.HARDWARE)
             rtmp.setIntentResult(resultCode, resultData)
-            val prepared = rtmp.prepareVideo(width, height, fps, bitrate, 2, 0)
+            val prepared = rtmp.prepareVideo(width, height, fps, bitrate, 0, dpi)
             val actualFps = if (prepared) fps else if (
-                fps == 60 && rtmp.prepareVideo(width, height, 30, bitrate, 2, 0)
+                fps == 60 && rtmp.prepareVideo(width, height, 30, bitrate, 0, dpi)
             ) {
                 update("60 FPS unavailable; using 30 FPS")
                 30
@@ -186,7 +186,7 @@ class RtmpBroadcastService : Service() {
     }
 
     @Suppress("DEPRECATION")
-    private fun screenMetrics(): Pair<Int, Int> {
+    private fun screenMetrics(): Triple<Int, Int, Int> {
         val metrics = DisplayMetrics()
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -197,7 +197,7 @@ class RtmpBroadcastService : Service() {
         } else {
             wm.defaultDisplay.getRealMetrics(metrics)
         }
-        return Pair(metrics.widthPixels, metrics.heightPixels)
+        return Triple(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
     }
 
     @Suppress("DEPRECATION")
