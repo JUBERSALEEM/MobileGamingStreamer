@@ -42,6 +42,7 @@ class RtmpBroadcastService : Service() {
         val resultData = parcelableIntent(intent, EXTRA_RESULT_DATA)
         val streamUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
         if (resultData == null || !(streamUrl.startsWith("rtmp://") || streamUrl.startsWith("rtmps://"))) {
+            publishState(false, "Invalid stream setup", 0L)
             stopSelf()
             return
         }
@@ -59,7 +60,12 @@ class RtmpBroadcastService : Service() {
                     Log.e(TAG, "RTMP connection failed: $reason")
                     stopBroadcast("Connection failed: $reason")
                 }
-                override fun onDisconnect() = update("Broadcast disconnected")
+                override fun onDisconnect() {
+                    display = null
+                    publishState(false, "Broadcast disconnected", 0L)
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
                 override fun onAuthError() {
                     stopBroadcast("Stream authentication failed. Check the stream key.")
                 }
