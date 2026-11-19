@@ -202,7 +202,7 @@ class RtmpBroadcastService : Service() {
             // Portrait Shorts/Reels canvas: keep landscape gameplay centered in a
             // 16:9 viewport. RootEncoder clears unused upper/lower canvas to black,
             // reserving those bands for the overlay/template compositor milestone.
-            if (portrait) stream.getGlInterface().setStreamIsPortrait(false)
+            stream.getGlInterface().setStreamIsPortrait(portrait)
             stream.getGlInterface().setForceRender(true, 15)
             display = stream
             publishState(false, "Encoder ready • Connecting…", 0L)
