@@ -240,14 +240,9 @@ class RtmpBroadcastService : Service() {
     private fun screenMetrics(): Triple<Int, Int, Int> {
         val metrics = DisplayMetrics()
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = wm.currentWindowMetrics.bounds
-            metrics.widthPixels = bounds.width()
-            metrics.heightPixels = bounds.height()
-            metrics.densityDpi = resources.displayMetrics.densityDpi
-        } else {
-            wm.defaultDisplay.getRealMetrics(metrics)
-        }
+        // Use physical display metrics, not this app window's bounds. GO LIVE may be
+        // launched from portrait while the selected capture app (e.g. BGMI) is landscape.
+        wm.defaultDisplay.getRealMetrics(metrics)
         return Triple(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
     }
 
