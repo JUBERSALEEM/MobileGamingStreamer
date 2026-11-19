@@ -1,3 +1,13 @@
+## 0.5.4-dev
+
+- Replaced the microphone-only RtmpDisplay audio setup with RootEncoder GenericStream + ScreenSource.
+- Added selectable microphone-only, internal game/device playback-only, and microphone + game audio modes.
+- Default audio mode is BOTH. Mixed mode uses MediaProjection AudioPlaybackCapture and separate microphone/internal volume levels.
+- Enabled platform echo cancellation and noise suppression for microphone and mixed capture paths; game-only mode avoids applying voice processing to game playback.
+- Fixed portrait output dimensions to standard 9:16 canvases at 720x1280, 1080x1920 and 1440x2560. Landscape output uses standard 16:9.
+- Added stream resource release on stop/disconnect to avoid stale projection/audio capture sessions.
+- Android playback capture is subject to the target game's capture policy; some games may prohibit it. Device testing is required to confirm BGMI audio.
+
 ## 0.5.3-dev
 
 - Unified the app and floating-control stop actions through the RTMP service stop entry point.
