@@ -163,7 +163,7 @@ class RtmpBroadcastService : Service() {
                 throw IllegalStateException("H.264 video encoder preparation failed for ${width}x${height}")
             }
             // A valid audio source is initialized before streaming. RootEncoder documents screen-only frame starvation on some devices.
-            val audioPrepared = rtmp.prepareAudio(128_000, 44_100, true, false, false)
+            val audioPrepared = rtmp.prepareAudio(128_000, 44_100, true, true, true)
             if (!audioPrepared) throw IllegalStateException("Microphone/AAC preparation failed. Check microphone permission and device audio encoder.")
             rtmp.glInterface.setForceRender(true, 15)
             display = rtmp
