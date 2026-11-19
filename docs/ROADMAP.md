@@ -11,14 +11,16 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 - [x] GitHub Actions debug build workflow
 - [x] User-approved MediaProjection permission flow
 - [x] Foreground capture service and persistent notification
-- [ ] Confirm CI build succeeds
+- [x] Confirm CI build succeeds and debug APK artifact is uploaded
 - [ ] Install and test on the reference device
 
 ### M1 — Capture validation
-- [ ] Consume ImageReader frames safely
-- [ ] Measure capture dimensions and frame cadence
-- [ ] Handle rotation, app backgrounding, and projection revocation
-- [ ] Add lifecycle and error reporting
+- [x] Consume ImageReader frames safely and close every acquired frame
+- [x] Log capture dimensions, average frame rate, and latest frame interval
+- [x] Handle projection revocation and release capture resources
+- [ ] Validate rotation and display-size changes on a physical device
+- [ ] Validate app backgrounding, screen lock, and notification Stop action
+- [ ] Confirm sustained capture without memory growth or thermal instability
 
 ### M2 — Audio
 - [ ] Microphone capture with explicit runtime permission
