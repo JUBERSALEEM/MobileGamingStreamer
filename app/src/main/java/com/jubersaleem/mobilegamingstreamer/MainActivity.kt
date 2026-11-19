@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
     private var quality by mutableStateOf("1080p")
     private var fps by mutableStateOf("30")
     private var orientation by mutableStateOf("AUTO")
+    private var audioMode by mutableStateOf("BOTH")
     private var pendingLive by mutableStateOf(false)
     private var waitingForOverlayPermission = false
 
@@ -133,6 +134,7 @@ class MainActivity : ComponentActivity() {
                 putExtra(RtmpBroadcastService.EXTRA_QUALITY, quality)
                 putExtra(RtmpBroadcastService.EXTRA_FPS, fps.toInt())
                 putExtra(RtmpBroadcastService.EXTRA_ORIENTATION, orientation)
+                putExtra(RtmpBroadcastService.EXTRA_AUDIO_MODE, audioMode)
             }
             try {
                 startForegroundService(liveIntent)
@@ -191,6 +193,7 @@ class MainActivity : ComponentActivity() {
                         if (page == "SETUP") {
                             BroadcastPanel(server, { server = it }, key, { key = it },
                                 quality, { quality = it }, fps, { fps = it }, orientation, { orientation = it },
+                                audioMode, { audioMode = it },
                                 broadcastActive || broadcastStarting,
                                 onGoLive = {
                                     if (broadcastActive) status = "Broadcast is already running"
@@ -322,6 +325,7 @@ private fun BroadcastPanel(
     quality: String, onQuality: (String) -> Unit,
     fps: String, onFps: (String) -> Unit,
     orientation: String, onOrientation: (String) -> Unit,
+    audioMode: String, onAudioMode: (String) -> Unit,
     live: Boolean, onGoLive: () -> Unit, onStopLive: () -> Unit
 ) {
     Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
@@ -343,6 +347,9 @@ private fun BroadcastPanel(
             ChoiceRow(listOf("30", "60"), fps, onFps, " FPS")
             Text("ORIENTATION", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             ChoiceRow(listOf("AUTO", "LANDSCAPE", "PORTRAIT"), orientation, onOrientation)
+            Text("AUDIO SOURCE", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            ChoiceRow(listOf("MIC", "GAME", "BOTH"), audioMode, onAudioMode)
+            Text(if (audioMode == "MIC") "Microphone only" else if (audioMode == "GAME") "Internal game/device playback only" else "Microphone + game audio mixed; voice is slightly boosted", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             Text("Higher resolutions and 60 FPS depend on encoder support, game orientation, network and device temperature.",
                 color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             Button(
