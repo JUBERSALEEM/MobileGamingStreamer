@@ -41,7 +41,7 @@ class RtmpBroadcastService : Service() {
             ACTION_STOP -> stopBroadcast()
             ACTION_START -> startBroadcast(intent)
             ACTION_SET_BITRATE -> {
-                val requested = intent.getIntExtra(EXTRA_BITRATE, 4_000_000).coerceIn(500_000, 12_000_000)
+                val requested = intent.getIntExtra(EXTRA_BITRATE, 4_000_000).coerceIn(500_000, 18_000_000)
                 val active = display
                 if (active != null) {
                     active.setVideoBitrateOnFly(requested)
@@ -140,10 +140,12 @@ class RtmpBroadcastService : Service() {
             }
             width = (width / 2) * 2
             height = (height / 2) * 2
+            // YouTube-oriented starting bitrates by resolution and frame rate.
+            // These are targets, not guarantees: network and encoder determine actual throughput.
             val bitrate = when (quality) {
-                "720p" -> 4_000_000
-                "1440p" -> 12_000_000
-                else -> 8_000_000
+                "720p" -> if (fps >= 60) 6_000_000 else 4_000_000
+                "1440p" -> if (fps >= 60) 18_000_000 else 14_000_000
+                else -> if (fps >= 60) 12_000_000 else 8_000_000
             }
 
             // OpenGL is required for MediaProjection display input; force rendering keeps static screens producing frames.
@@ -265,6 +267,11 @@ class RtmpBroadcastService : Service() {
         const val ACTION_START = "com.jubersaleem.mobilegamingstreamer.action.START_RTMP"
         const val ACTION_STOP = "com.jubersaleem.mobilegamingstreamer.action.STOP_RTMP"
         const val ACTION_SET_BITRATE = "com.jubersaleem.mobilegamingstreamer.action.SET_BITRATE"
+
+        /** Shared stop entry point used by the app UI, notification and floating controls. */
+        fun requestStop(context: Context) {
+            context.startService(Intent(context, RtmpBroadcastService::class.java).setAction(ACTION_STOP))
+        }
         const val EXTRA_BITRATE = "video_bitrate"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
