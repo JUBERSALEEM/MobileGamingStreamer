@@ -176,7 +176,7 @@ class MainActivity : ComponentActivity() {
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
                         Header()
-                        Hero(status, captureActive, broadcastActive)
+                        Hero(status, captureActive, broadcastActive, broadcastStarting)
                         if (!notificationsAllowed) {
                             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF382B1D))) {
                                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -296,7 +296,7 @@ private fun Header() {
 }
 
 @Composable
-private fun Hero(status: String, capture: Boolean, live: Boolean) {
+private fun Hero(status: String, capture: Boolean, live: Boolean, starting: Boolean) {
     Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(
             Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF1C3035), Panel, Bg))).padding(20.dp),
@@ -304,10 +304,10 @@ private fun Hero(status: String, capture: Boolean, live: Boolean) {
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("YOUR STREAMING STUDIO", color = Muted, fontSize = 10.sp, letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold)
-                Text(if (live) "LIVE" else if (capture) "CAPTURING" else "STANDBY",
-                    color = if (live || capture) Lime else Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(if (live) "LIVE" else if (starting) "CONNECTING" else if (capture) "CAPTURING" else "STANDBY",
+                    color = if (live || starting || capture) Lime else Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
-            Text(if (live) "Going\nlive." else if (capture) "Capture\nis running." else "Ready when\nyou are.",
+            Text(if (live) "You're\nlive." else if (starting) "Starting\nstream." else if (capture) "Capture\nis running." else "Ready when\nyou are.",
                 fontSize = 32.sp, lineHeight = 36.sp, fontWeight = FontWeight.ExtraBold)
             Text(status, color = Muted, fontSize = 12.sp)
             Text("SCREEN CAPTURE  /  H.264  /  RTMP", color = Lime, fontSize = 9.sp, letterSpacing = 1.3.sp, fontWeight = FontWeight.Bold)
