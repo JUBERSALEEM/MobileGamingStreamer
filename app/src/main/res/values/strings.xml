@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="accessibility_service_label">Mobile Gaming Streamer microphone compatibility</string>
     <string name="accessibility_service_description">Allows Mobile Gaming Streamer to capture your microphone while a game uses voice chat, so your livestream can include your voice alongside capturable game audio. It does not read screen content or perform actions in other apps.</string>
 </resources>
