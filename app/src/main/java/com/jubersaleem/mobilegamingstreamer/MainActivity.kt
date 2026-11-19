@@ -42,6 +42,7 @@ class MainActivity : ComponentActivity() {
     private var liveBitrate by mutableStateOf(0L)
     private var page by mutableStateOf("SETUP")
     private var themeMode by mutableStateOf("CLASSIC")
+    private var showAccessibilityDisclosure by mutableStateOf(false)
     private var captureActive by mutableStateOf(false)
     private var broadcastActive by mutableStateOf(false)
     private var broadcastStarting by mutableStateOf(false)
@@ -188,6 +189,25 @@ class MainActivity : ComponentActivity() {
         setContent {
             MgsTheme(mode = themeMode) {
                 val palette = LocalMgsPalette.current
+                if (showAccessibilityDisclosure) {
+                    AlertDialog(
+                        onDismissRequest = { showAccessibilityDisclosure = false; pendingLive = false; broadcastStarting = false },
+                        title = { Text("Microphone compatibility service") },
+                        text = {
+                            Text("Mobile Gaming Streamer uses Android Accessibility Service only to help keep microphone capture available while a game such as BGMI is using voice chat. The service receives window-state events but does not read screen text or content, inspect UI controls, click, type, or automate gameplay. When you start a stream, the microphone and any capturable game audio are sent to the RTMP destination you enter. You can turn this service off at any time in Android Settings.")
+                        },
+                        confirmButton = {
+                            Button(onClick = {
+                                showAccessibilityDisclosure = false
+                                waitingForAccessibility = true
+                                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                            }) { Text("I AGREE • CONTINUE") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showAccessibilityDisclosure = false; pendingLive = false; broadcastStarting = false }) { Text("NOT NOW") }
+                        }
+                    )
+                }
                 Surface(Modifier.fillMaxSize(), color = palette.background) {
                     Column(
                         Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState())
@@ -225,7 +245,7 @@ class MainActivity : ComponentActivity() {
                                 Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("ENABLE IN-GAME MIC COMPATIBILITY", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     Text("Android can silence a normal recorder while BGMI is using voice chat. Enable this app's Accessibility service so the stream can capture your microphone concurrently. This service does not read screen content.", color = palette.muted, fontSize = 11.sp, lineHeight = 15.sp)
-                                    Button(onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }, modifier = Modifier.fillMaxWidth()) {
+                                    Button(onClick = { showAccessibilityDisclosure = true }, modifier = Modifier.fillMaxWidth()) {
                                         Text("OPEN ACCESSIBILITY SETTINGS")
                                     }
                                 }
@@ -244,9 +264,8 @@ class MainActivity : ComponentActivity() {
                                         pendingLive = true
                                         broadcastStarting = true
                                         if (!isAccessibilityServiceEnabled()) {
-                                            waitingForAccessibility = true
-                                            status = "Enable Mobile Gaming Streamer in Accessibility settings, then return"
-                                            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                                            showAccessibilityDisclosure = true
+                                            status = "Review the microphone compatibility disclosure to continue"
                                         } else {
                                             status = "Requesting screen/app selection permission…"
                                             requestProjection()
