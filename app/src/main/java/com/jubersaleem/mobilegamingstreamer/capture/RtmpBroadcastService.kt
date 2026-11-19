@@ -142,7 +142,7 @@ class RtmpBroadcastService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.presence_video_online)
+            .setSmallIcon(com.jubersaleem.mobilegamingstreamer.R.drawable.ic_stat_mgs)
             .setContentTitle("Mobile Gaming Streamer")
             .setContentText(message)
             .setContentIntent(open)
