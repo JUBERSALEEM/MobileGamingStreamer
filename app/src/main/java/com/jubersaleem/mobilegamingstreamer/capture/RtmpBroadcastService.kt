@@ -249,9 +249,9 @@ class RtmpBroadcastService : AccessibilityService() {
             if (!audioPrepared) {
                 throw IllegalStateException("Audio source preparation failed for mode: $audioMode")
             }
-            // Portrait Shorts/Reels canvas: keep landscape gameplay centered in a
-            // 16:9 viewport. RootEncoder clears unused upper/lower canvas to black,
-            // reserving those bands for the overlay/template compositor milestone.
+            // Apply the requested output orientation to the encoder renderer.
+            // This is a single-source scene for now; custom top/bottom scene layers
+            // require the separate scene-compositor milestone.
             stream.getGlInterface().setStreamIsPortrait(portrait)
             stream.getGlInterface().setForceRender(true, 15)
             display = stream
