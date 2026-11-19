@@ -9,6 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.os.IBinder
 import android.util.DisplayMetrics
 import android.util.Log
@@ -21,6 +24,13 @@ import com.pedro.library.rtmp.RtmpDisplay
 /** RTMP broadcast service with microphone audio and screen video. */
 class RtmpBroadcastService : Service() {
     private var display: RtmpDisplay? = null
+    private var streamingConfirmed = false
+    private val handler = Handler(Looper.getMainLooper())
+    private val startupTimeout = Runnable {
+        if (display != null && !streamingConfirmed) {
+            stopBroadcast("No outgoing video bitrate after 25 seconds. Encoder or RTMP startup failed.")
+        }
+    }
     private val notifications by lazy { getSystemService(NotificationManager::class.java) }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -44,6 +54,8 @@ class RtmpBroadcastService : Service() {
     }
 
     private fun startBroadcast(intent: Intent) {
+        handler.removeCallbacks(startupTimeout)
+        streamingConfirmed = false
         display?.let { previous ->
             try { previous.stopStream() } catch (_: Exception) { }
             display = null
@@ -69,7 +81,7 @@ class RtmpBroadcastService : Service() {
             )
             val checker = object : ConnectChecker {
                 override fun onConnectionStarted(url: String) = update("Connecting to streaming server…")
-                override fun onConnectionSuccess() = update("RTMP connected • Waiting for video bitrate")
+                override fun onConnectionSuccess() = update("RTMP connected • Waiting for video frames")
                 override fun onConnectionFailed(reason: String) {
                     Log.e(TAG, "RTMP connection failed: $reason")
                     stopBroadcast("Connection failed: $reason")
@@ -85,7 +97,17 @@ class RtmpBroadcastService : Service() {
                 }
                 override fun onAuthSuccess() = update("Stream key accepted")
                 override fun onNewBitrate(bitrate: Long) {
-                    update("LIVE • ${bitrate / 1000} kbps", bitrate)
+                    if (bitrate > 0L) {
+                        val firstConfirmation = !streamingConfirmed
+                        streamingConfirmed = true
+                        handler.removeCallbacks(startupTimeout)
+                        update("LIVE • ${bitrate / 1000} kbps", bitrate)
+                        if (firstConfirmation && Settings.canDrawOverlays(this@RtmpBroadcastService)) {
+                            startService(Intent(this@RtmpBroadcastService, com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService::class.java))
+                        }
+                    } else {
+                        update("Connected • Waiting for outgoing video", 0L)
+                    }
                 }
             }
 
@@ -119,7 +141,8 @@ class RtmpBroadcastService : Service() {
 
             // OpenGL is required for MediaProjection display input; force rendering keeps static screens producing frames.
             val rtmp = RtmpDisplay(this, true, checker)
-            rtmp.forceCodecType(CodecUtil.CodecType.HARDWARE, CodecUtil.CodecType.HARDWARE)
+            // Keep hardware H.264 for efficient screen encoding, but let Android select a compatible AAC encoder.
+            rtmp.forceCodecType(CodecUtil.CodecType.HARDWARE, CodecUtil.CodecType.FIRST_COMPATIBLE_FOUND)
             rtmp.setIntentResult(resultCode, resultData)
             val prepared = rtmp.prepareVideo(width, height, fps, bitrate, 0, dpi)
             val actualFps = if (prepared) fps else if (
@@ -133,11 +156,12 @@ class RtmpBroadcastService : Service() {
             // A valid audio source is initialized before streaming. RootEncoder documents screen-only frame starvation on some devices.
             val audioPrepared = rtmp.prepareAudio(128_000, 44_100, true, false, false)
             if (!audioPrepared) throw IllegalStateException("Microphone/AAC preparation failed. Check microphone permission and device audio encoder.")
-            rtmp.glInterface.setForceRender(true)
+            rtmp.glInterface.setForceRender(true, 15)
             display = rtmp
-            publishState(true, "Encoder ready • Connecting…", 0L)
+            publishState(false, "Encoder ready • Connecting…", 0L)
             update("Encoder ready • Connecting…")
             rtmp.startStream(streamUrl)
+            handler.postDelayed(startupTimeout, 25_000L)
             Log.i(TAG, "RTMP broadcast requested: ${width}x${height} @ ${actualFps}fps")
         } catch (error: Exception) {
             Log.e(TAG, "Unable to start RTMP broadcast", error)
@@ -146,6 +170,8 @@ class RtmpBroadcastService : Service() {
     }
 
     private fun stopBroadcast(message: String = "Broadcast stopped") {
+        handler.removeCallbacks(startupTimeout)
+        streamingConfirmed = false
         val active = display
         display = null
         try { active?.stopStream() } catch (error: Exception) {
@@ -157,7 +183,7 @@ class RtmpBroadcastService : Service() {
     }
 
     private fun update(message: String, bitrate: Long = 0L) {
-        publishState(true, message, bitrate)
+        publishState(streamingConfirmed && bitrate > 0L, message, bitrate)
         notifications.notify(NOTIFICATION_ID, notification(message))
     }
 
@@ -223,6 +249,8 @@ class RtmpBroadcastService : Service() {
         else intent.getParcelableExtra(key)
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        streamingConfirmed = false
         try { display?.stopStream() } catch (_: Exception) { }
         display = null
         publishState(false, "Broadcast service stopped", 0L)
