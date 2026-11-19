@@ -17,6 +17,7 @@ import android.provider.Settings
 import android.os.IBinder
 import android.util.DisplayMetrics
 import android.media.projection.MediaProjectionManager
+import android.media.projection.MediaProjection
 import android.media.MediaRecorder
 import android.util.Log
 import android.view.WindowManager
@@ -33,6 +34,12 @@ import com.pedro.library.generic.GenericStream
 /** RTMP broadcast service with microphone audio and screen video. */
 class RtmpBroadcastService : AccessibilityService() {
     private var display: GenericStream? = null
+    private var activeProjection: MediaProjection? = null
+    private val projectionCallback = object : MediaProjection.Callback() {
+        override fun onStop() {
+            handler.post { if (display != null) stopBroadcast("Screen capture permission ended") }
+        }
+    }
     private var streamingConfirmed = false
     private var lastBitrate = 0L
     private val handler = Handler(Looper.getMainLooper())
@@ -96,6 +103,7 @@ class RtmpBroadcastService : AccessibilityService() {
             return
         }
 
+        publishState(false, "Preparing video encoder…", 0L)
         try {
             startForeground(
                 NOTIFICATION_ID,
@@ -187,6 +195,8 @@ class RtmpBroadcastService : AccessibilityService() {
             val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
                 ?: throw IllegalStateException("Android did not provide a MediaProjection session")
+            activeProjection = mediaProjection
+            mediaProjection.registerCallback(projectionCallback, handler)
 
             val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE) ?: AUDIO_MODE_BALANCED
             val audioSource: AudioSource = when (audioMode) {
@@ -247,6 +257,9 @@ class RtmpBroadcastService : AccessibilityService() {
         try { active?.release() } catch (error: Exception) {
             Log.w(TAG, "Error while releasing RTMP stream", error)
         }
+        val projection = activeProjection
+        activeProjection = null
+        try { projection?.unregisterCallback(projectionCallback); projection?.stop() } catch (_: Exception) { }
         publishState(false, message, 0L)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -319,6 +332,8 @@ class RtmpBroadcastService : AccessibilityService() {
         lastBitrate = 0L
         try { display?.release() } catch (_: Exception) { }
         display = null
+        try { activeProjection?.unregisterCallback(projectionCallback); activeProjection?.stop() } catch (_: Exception) { }
+        activeProjection = null
         publishState(false, "Broadcast service stopped", 0L)
         getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putBoolean(KEY_ACCESSIBILITY_READY, false).apply()
         super.onDestroy()
