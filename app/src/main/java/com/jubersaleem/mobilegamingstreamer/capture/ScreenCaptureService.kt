@@ -10,25 +10,37 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
-import android.os.IBinder
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.WindowManager
 import com.jubersaleem.mobilegamingstreamer.MainActivity
 
 /**
- * First milestone only: obtains a user-approved MediaProjection session and
- * attaches a virtual display to an ImageReader. No frames are encoded or sent.
+ * Capture validation milestone: obtains a user-approved MediaProjection session,
+ * drains ImageReader frames safely, and logs capture dimensions and frame cadence.
+ * Frames are not encoded, saved, or broadcast.
  */
 class ScreenCaptureService : Service() {
     private var projection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
+
+    private var reportStartedAtMs = 0L
+    private var framesSinceReport = 0L
+    private var lastFrameTimestampNs = 0L
+    private var lastFrameWidth = 0
+    private var lastFrameHeight = 0
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -41,42 +53,104 @@ class ScreenCaptureService : Service() {
     }
 
     private fun startCapture(intent: Intent) {
+        // Avoid leaving an earlier capture session attached if Start is tapped again.
+        releaseCaptureResources()
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
         val resultData = getResultData(intent) ?: run {
+            Log.e(TAG, "Capture start aborted: missing MediaProjection permission result")
             stopSelf()
             return
         }
 
-        startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        try {
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
 
-        val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        projection = manager.getMediaProjection(resultCode, resultData)
+            val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            projection = manager.getMediaProjection(resultCode, resultData)
+            projection?.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    Log.i(TAG, "MediaProjection stopped or revoked by the system/user")
+                    releaseCaptureResources()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+            }, mainHandler)
 
-        projection?.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() {
-                releaseCaptureResources()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+            val (width, height, density) = displaySize()
+            reportStartedAtMs = SystemClock.elapsedRealtime()
+            framesSinceReport = 0L
+            lastFrameTimestampNs = 0L
+            lastFrameWidth = width
+            lastFrameHeight = height
+
+            imageReader = ImageReader.newInstance(
+                width,
+                height,
+                android.graphics.PixelFormat.RGBA_8888,
+                3
+            ).also { reader ->
+                reader.setOnImageAvailableListener({ source ->
+                    drainLatestFrame(source)
+                }, mainHandler)
             }
-        }, null)
 
-        val (width, height, density) = displaySize()
-        imageReader = ImageReader.newInstance(width, height, android.graphics.PixelFormat.RGBA_8888, 2).also { reader ->
-            // Drain frames immediately in this foundation milestone so the producer never stalls.
-            reader.setOnImageAvailableListener({ source ->
-                source.acquireLatestImage()?.close()
-            }, Handler(Looper.getMainLooper()))
+            virtualDisplay = projection?.createVirtualDisplay(
+                "MobileGamingStreamerCapture",
+                width,
+                height,
+                density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader?.surface,
+                null,
+                mainHandler
+            )
+
+            if (virtualDisplay == null) {
+                throw IllegalStateException("Android did not create the capture virtual display")
+            }
+            Log.i(TAG, "Capture started: ${width}x${height}, densityDpi=$density")
+        } catch (error: RuntimeException) {
+            Log.e(TAG, "Unable to start screen capture", error)
+            stopCapture()
         }
-        virtualDisplay = projection?.createVirtualDisplay(
-            "MobileGamingStreamerCapture",
-            width,
-            height,
-            density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader?.surface,
-            null,
-            null
-        )
+    }
+
+    private fun drainLatestFrame(source: ImageReader) {
+        var frame: Image? = null
+        try {
+            frame = source.acquireLatestImage() ?: return
+            framesSinceReport++
+            lastFrameWidth = frame.width
+            lastFrameHeight = frame.height
+
+            val nowMs = SystemClock.elapsedRealtime()
+            val elapsedMs = nowMs - reportStartedAtMs
+            if (elapsedMs >= REPORT_INTERVAL_MS) {
+                val averageFps = framesSinceReport * 1000.0 / elapsedMs
+                val cadenceMs = if (lastFrameTimestampNs > 0L) {
+                    (frame.timestamp - lastFrameTimestampNs) / 1_000_000.0
+                } else {
+                    0.0
+                }
+                Log.i(
+                    TAG,
+                    "Capture stats: ${lastFrameWidth}x${lastFrameHeight}, " +
+                        "averageFps=${"%.1f".format(java.util.Locale.US, averageFps)}, " +
+                        "lastFrameIntervalMs=${"%.1f".format(java.util.Locale.US, cadenceMs)}"
+                )
+                reportStartedAtMs = nowMs
+                framesSinceReport = 0L
+            }
+            lastFrameTimestampNs = frame.timestamp
+        } catch (error: RuntimeException) {
+            Log.e(TAG, "Failed while consuming a captured frame", error)
+        } finally {
+            frame?.close()
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -134,8 +208,10 @@ class ScreenCaptureService : Service() {
     }
 
     private fun stopCapture() {
-        projection?.stop()
+        val activeProjection = projection
+        projection = null
         releaseCaptureResources()
+        activeProjection?.stop()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -143,6 +219,7 @@ class ScreenCaptureService : Service() {
     private fun releaseCaptureResources() {
         virtualDisplay?.release()
         virtualDisplay = null
+        imageReader?.setOnImageAvailableListener(null, null)
         imageReader?.close()
         imageReader = null
         projection = null
@@ -158,6 +235,8 @@ class ScreenCaptureService : Service() {
         const val ACTION_STOP = "com.jubersaleem.mobilegamingstreamer.action.STOP_CAPTURE"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
+        private const val TAG = "MGS-Capture"
+        private const val REPORT_INTERVAL_MS = 5_000L
         private const val CHANNEL_ID = "screen_capture"
         private const val NOTIFICATION_ID = 1001
     }
