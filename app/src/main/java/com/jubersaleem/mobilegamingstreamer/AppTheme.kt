@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -70,7 +71,15 @@ fun MgsTheme(mode: String, content: @Composable () -> Unit) {
         )
     }
     CompositionLocalProvider(LocalMgsPalette provides palette) {
-        MaterialTheme(colorScheme = scheme, content = content)
+        MaterialTheme(
+            colorScheme = scheme,
+            shapes = if (mode == "CLAY") Shapes(
+                small = RoundedCornerShape(18.dp),
+                medium = RoundedCornerShape(26.dp),
+                large = RoundedCornerShape(34.dp)
+            ) else Shapes(),
+            content = content
+        )
     }
 }
 
