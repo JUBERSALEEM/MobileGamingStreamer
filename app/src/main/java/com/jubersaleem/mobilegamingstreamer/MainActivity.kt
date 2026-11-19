@@ -2,6 +2,9 @@ package com.jubersaleem.mobilegamingstreamer
 
 import android.Manifest
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -38,6 +41,8 @@ private val Muted = Color(0xFF91A0AE)
 
 class MainActivity : ComponentActivity() {
     private var status by mutableStateOf("Ready to stream")
+    private var liveBitrate by mutableStateOf(0L)
+    private var page by mutableStateOf("HOME")
     private var captureActive by mutableStateOf(false)
     private var broadcastActive by mutableStateOf(false)
     private var notificationsAllowed by mutableStateOf(true)
@@ -47,6 +52,36 @@ class MainActivity : ComponentActivity() {
     private var fps by mutableStateOf("30")
     private var orientation by mutableStateOf("AUTO")
     private var pendingLive by mutableStateOf(false)
+
+    private val broadcastStatusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != RtmpBroadcastService.ACTION_STATUS) return
+            broadcastActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_ACTIVE, false)
+            status = intent.getStringExtra(RtmpBroadcastService.EXTRA_STATUS_MESSAGE) ?: status
+            liveBitrate = intent.getLongExtra(RtmpBroadcastService.EXTRA_STATUS_BITRATE, 0L)
+        }
+    }
+
+    private fun restoreBroadcastState() {
+        val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
+        broadcastActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
+        status = prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Ready to stream") ?: "Ready to stream"
+        liveBitrate = prefs.getLong(RtmpBroadcastService.KEY_BITRATE, 0L)
+    }
+
+    @Suppress("UnspecifiedRegisterReceiverFlag")
+    override fun onStart() {
+        super.onStart()
+        restoreBroadcastState()
+        val filter = IntentFilter(RtmpBroadcastService.ACTION_STATUS)
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(broadcastStatusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        else registerReceiver(broadcastStatusReceiver, filter)
+    }
+
+    override fun onStop() {
+        try { unregisterReceiver(broadcastStatusReceiver) } catch (_: IllegalArgumentException) { }
+        super.onStop()
+    }
 
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         notificationsAllowed = it
