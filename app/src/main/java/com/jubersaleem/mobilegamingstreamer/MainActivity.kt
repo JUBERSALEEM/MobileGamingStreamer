@@ -230,7 +230,7 @@ class MainActivity : ComponentActivity() {
                         if (page != "SETTINGS" && page != "ABOUT" && page != "TERMS" && page != "PRIVACY") {
                         Hero(status, captureActive, broadcastActive, broadcastStarting)
                         if (!notificationsAllowed) {
-                            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF382B1D))) {
+                            Card(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
                                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("ENABLE NOTIFICATIONS", color = palette.primary, fontWeight = FontWeight.Bold)
                                     Text("Android notifications show capture and live-stream status, with a stop control.", color = palette.muted)
@@ -241,7 +241,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         if (!accessibilityEnabled) {
-                            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF30291D))) {
+                            Card(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
                                 Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("ENABLE IN-GAME MIC COMPATIBILITY", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     Text("Android can silence a normal recorder while BGMI is using voice chat. Enable this app's Accessibility service so the stream can capture your microphone concurrently. This service does not read screen content.", color = palette.muted, fontSize = 11.sp, lineHeight = 15.sp)
@@ -362,7 +362,7 @@ private fun Header() {
             Text("MOBILE GAMING", color = palette.muted, fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Bold)
             Text("STREAMER", fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
         }
-        Text("DEV 0.5.5", color = palette.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("DEV 0.5.6", color = palette.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
 
