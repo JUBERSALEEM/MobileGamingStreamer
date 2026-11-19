@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -88,8 +89,9 @@ class MainActivity : ComponentActivity() {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
+                            .safeDrawingPadding()
                             .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 20.dp, vertical = 22.dp),
+                            .padding(horizontal = 20.dp, vertical = 18.dp),
                         verticalArrangement = Arrangement.spacedBy(18.dp)
                     ) {
                         Header()
@@ -130,8 +132,8 @@ class MainActivity : ComponentActivity() {
                             ModuleCard(
                                 modifier = Modifier.weight(1f),
                                 title = "Encoder",
-                                subtitle = "MediaCodec next",
-                                status = "PLANNED",
+                                subtitle = if (captureActive) "H.264 surface encoder" else "H.264 hardware",
+                                status = if (captureActive) "ENCODING" else "READY",
                                 accent = Cyan
                             )
                             ModuleCard(
@@ -328,7 +330,7 @@ private fun NextStepCard() {
             Text("NEXT ENGINEERING MILESTONE", color = Accent, fontSize = 9.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold)
             Text("Hardware video encoder", fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Text(
-                "After capture is tested on your phone, we will add MediaCodec with device-supported resolution and frame-rate options.",
+                "H.264 hardware encoding is now connected to screen capture. Encoded frames are measured for testing; RTMP broadcast is the next milestone.",
                 color = Muted,
                 fontSize = 12.sp,
                 lineHeight = 18.sp
