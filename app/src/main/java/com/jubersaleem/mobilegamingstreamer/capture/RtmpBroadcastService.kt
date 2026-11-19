@@ -18,7 +18,7 @@ import com.pedro.common.ConnectChecker
 import com.pedro.encoder.utils.CodecUtil
 import com.pedro.library.rtmp.RtmpDisplay
 
-/** Video-only RTMP broadcast service. Audio is deliberately not prepared in this milestone. */
+/** RTMP broadcast service with microphone audio and screen video. */
 class RtmpBroadcastService : Service() {
     private var display: RtmpDisplay? = null
     private val notifications by lazy { getSystemService(NotificationManager::class.java) }
@@ -61,7 +61,11 @@ class RtmpBroadcastService : Service() {
             startForeground(
                 NOTIFICATION_ID,
                 notification("Preparing video encoder…"),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                if (Build.VERSION.SDK_INT >= 30) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                } else {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                }
             )
             val checker = object : ConnectChecker {
                 override fun onConnectionStarted(url: String) = update("Connecting to streaming server…")
@@ -118,14 +122,19 @@ class RtmpBroadcastService : Service() {
             rtmp.forceCodecType(CodecUtil.CodecType.HARDWARE, CodecUtil.CodecType.HARDWARE)
             rtmp.setIntentResult(resultCode, resultData)
             val prepared = rtmp.prepareVideo(width, height, fps, bitrate, 0, dpi)
-            val actualFps = if (prepared) fps else if (
+            if (!prepared) throw IllegalStateException("H.264 video encoder preparation failed for ${width}x${height} at ${fps} FPS")
+            // A valid audio source is initialized before streaming. RootEncoder documents screen-only frame starvation on some devices.
+            val audioPrepared = rtmp.prepareAudio(128_000, 44_100, true, false, false)
+            if (!audioPrepared) throw IllegalStateException("Microphone/AAC preparation failed. Check microphone permission and device audio encoder.")
+            val actualFps = fps /* fallback below is no longer needed after successful prepareVideo */
+            /* if (prepared) fps else if (
                 fps == 60 && rtmp.prepareVideo(width, height, 30, bitrate, 0, dpi)
             ) {
                 update("60 FPS unavailable; using 30 FPS")
                 30
             } else {
                 throw IllegalStateException("This device cannot prepare the selected H.264 stream format")
-            }
+            } */
             rtmp.glInterface.setForceRender(true)
             display = rtmp
             publishState(true, "Encoder ready • Connecting…", 0L)
