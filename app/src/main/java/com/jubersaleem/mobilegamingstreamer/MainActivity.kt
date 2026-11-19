@@ -451,7 +451,7 @@ private fun ModuleStatus(capture: Boolean, live: Boolean) {
             StatusRow("Screen capture", if (capture || live) "ACTIVE" else "READY")
             StatusRow("H.264 encoder", if (capture || live) "SESSION STARTED" else "READY")
             StatusRow("RTMP transport", if (live) "CONNECTING" else "READY TO CONNECT")
-            StatusRow("Microphone / game audio", "NEXT MILESTONE")
+            StatusRow("Microphone / game audio", "DEVICE DEPENDENT")
         }
     }
 }
