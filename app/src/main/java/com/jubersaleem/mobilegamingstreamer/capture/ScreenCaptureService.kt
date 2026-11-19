@@ -10,8 +10,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
-import android.media.Image
-import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -25,20 +23,13 @@ import android.view.WindowManager
 import com.jubersaleem.mobilegamingstreamer.MainActivity
 
 /**
- * Capture validation milestone: obtains a user-approved MediaProjection session,
- * drains ImageReader frames safely, and logs capture dimensions and frame cadence.
- * Frames are not encoded, saved, or broadcast.
+ * User-approved MediaProjection capture feeding a hardware H.264 surface encoder.
+ * Encoded frames are currently measured and discarded; no recording or broadcast occurs.
  */
 class ScreenCaptureService : Service() {
     private var projection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
-    private var imageReader: ImageReader? = null
-
-    private var reportStartedAtMs = 0L
-    private var framesSinceReport = 0L
-    private var lastFrameTimestampNs = 0L
-    private var lastFrameWidth = 0
-    private var lastFrameHeight = 0
+    private var videoEncoder: H264SurfaceEncoder? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -80,31 +71,19 @@ class ScreenCaptureService : Service() {
                 }
             }, mainHandler)
 
-            val (width, height, density) = displaySize()
-            reportStartedAtMs = SystemClock.elapsedRealtime()
-            framesSinceReport = 0L
-            lastFrameTimestampNs = 0L
-            lastFrameWidth = width
-            lastFrameHeight = height
-
-            imageReader = ImageReader.newInstance(
-                width,
-                height,
-                android.graphics.PixelFormat.RGBA_8888,
-                3
-            ).also { reader ->
-                reader.setOnImageAvailableListener({ source ->
-                    drainLatestFrame(source)
-                }, mainHandler)
-            }
+            val (sourceWidth, sourceHeight, density) = displaySize()
+            val (width, height) = H264SurfaceEncoder.scaledSize(sourceWidth, sourceHeight)
+            val encoder = H264SurfaceEncoder(width, height)
+            val encoderSurface = encoder.start()
+            videoEncoder = encoder
 
             virtualDisplay = projection?.createVirtualDisplay(
-                "MobileGamingStreamerCapture",
+                "MobileGamingStreamer-H264",
                 width,
                 height,
                 density,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                imageReader?.surface,
+                encoderSurface,
                 null,
                 mainHandler
             )
@@ -116,40 +95,6 @@ class ScreenCaptureService : Service() {
         } catch (error: RuntimeException) {
             Log.e(TAG, "Unable to start screen capture", error)
             stopCapture()
-        }
-    }
-
-    private fun drainLatestFrame(source: ImageReader) {
-        var frame: Image? = null
-        try {
-            frame = source.acquireLatestImage() ?: return
-            framesSinceReport++
-            lastFrameWidth = frame.width
-            lastFrameHeight = frame.height
-
-            val nowMs = SystemClock.elapsedRealtime()
-            val elapsedMs = nowMs - reportStartedAtMs
-            if (elapsedMs >= REPORT_INTERVAL_MS) {
-                val averageFps = framesSinceReport * 1000.0 / elapsedMs
-                val cadenceMs = if (lastFrameTimestampNs > 0L) {
-                    (frame.timestamp - lastFrameTimestampNs) / 1_000_000.0
-                } else {
-                    0.0
-                }
-                Log.i(
-                    TAG,
-                    "Capture stats: ${lastFrameWidth}x${lastFrameHeight}, " +
-                        "averageFps=${"%.1f".format(java.util.Locale.US, averageFps)}, " +
-                        "lastFrameIntervalMs=${"%.1f".format(java.util.Locale.US, cadenceMs)}"
-                )
-                reportStartedAtMs = nowMs
-                framesSinceReport = 0L
-            }
-            lastFrameTimestampNs = frame.timestamp
-        } catch (error: RuntimeException) {
-            Log.e(TAG, "Failed while consuming a captured frame", error)
-        } finally {
-            frame?.close()
         }
     }
 
@@ -219,9 +164,8 @@ class ScreenCaptureService : Service() {
     private fun releaseCaptureResources() {
         virtualDisplay?.release()
         virtualDisplay = null
-        imageReader?.setOnImageAvailableListener(null, null)
-        imageReader?.close()
-        imageReader = null
+        videoEncoder?.stop()
+        videoEncoder = null
         projection = null
     }
 
