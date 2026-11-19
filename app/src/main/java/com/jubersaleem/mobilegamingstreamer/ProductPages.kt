@@ -56,7 +56,7 @@ fun SettingsPage(
                     FilterChip(
                         selected = themeMode == "CLAY",
                         onClick = { onThemeChange("CLAY") },
-                        label = { Text("Soft Clay", fontWeight = FontWeight.SemiBold) },
+                        label = { Text("Claymorphism", fontWeight = FontWeight.SemiBold) },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -131,7 +131,7 @@ fun LegalPage(title: String, body: String, onBack: () -> Unit) {
     val p = LocalMgsPalette.current
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedButton(onClick = onBack) { Text("← SETTINGS") }
-        PageHeading(title.uppercase(), "Mobile Gaming Streamer • Version 0.5.6")
+        PageHeading(title.uppercase(), "Mobile Gaming Streamer • Version 0.5.7")
         Card(
             shape = RoundedCornerShape(24.dp),
             border = BorderStroke(1.dp, p.edge),
@@ -201,7 +201,7 @@ This policy describes the current development build. It must be reviewed and kep
 • Internal playback audio: if you choose game or mixed audio, the app requests Android playback capture. Android and the game can restrict which audio is capturable; teammate voice chat is not guaranteed to be included.
 • Stream destination and key: the RTMP/RTMPS server address and stream key you enter are used to establish the stream. The key is held in app memory for the active app session and is not intentionally saved to app storage in this build.
 • Optional overlay: if enabled, the floating control displays stream status and controls over other apps.
-• Accessibility service: the service supports microphone capture while a game uses voice chat. It does not retrieve window content, read text on screen, inspect UI nodes, click controls or automate gameplay. It receives Android accessibility lifecycle events to maintain the service.
+• Accessibility service: the service supports microphone capture while a game uses voice chat. It does not retrieve window content, read text on screen, inspect UI nodes, click controls or automate gameplay. It has no active accessibility event subscriptions and does not read screen content, inspect UI controls or automate gameplay.
 • Optional YouTube chat: if you enter a video ID and open chat, a WebView loads YouTube. YouTube may process information under Google's own terms and privacy policy.
 
 2. How streaming works
