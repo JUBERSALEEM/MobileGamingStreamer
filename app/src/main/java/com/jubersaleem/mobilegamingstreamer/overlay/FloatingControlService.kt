@@ -78,6 +78,8 @@ class FloatingControlService : Service() {
         }
         refreshBroadcastState()
         if (bubble == null) createBubble()
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        speakerMuted = audio.getStreamVolume(AudioManager.STREAM_MUSIC) == 0
         renderBroadcastState()
         renderSpeakerState()
         scheduleDim()
