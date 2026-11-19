@@ -55,7 +55,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mobile-gaming-streamer-debug
-          path: app/build/outputs/apk/debug/MobileGamingStreamer-0.5.6.apk
+          path: app/build/outputs/apk/debug/MobileGamingStreamer-0.5.7.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -70,5 +70,5 @@ jobs:
           generate_release_notes: true
           prerelease: true
           make_latest: false
-          files: app/build/outputs/apk/debug/MobileGamingStreamer-0.5.6.apk
+          files: app/build/outputs/apk/debug/MobileGamingStreamer-0.5.7.apk
           fail_on_unmatched_files: true
