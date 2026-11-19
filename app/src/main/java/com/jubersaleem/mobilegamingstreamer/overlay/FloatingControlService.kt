@@ -2,6 +2,9 @@ package com.jubersaleem.mobilegamingstreamer.overlay
 
 import android.app.Service
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.graphics.Typeface
@@ -37,6 +40,31 @@ class FloatingControlService : Service() {
     private var bubbleParams: WindowManager.LayoutParams? = null
     private var panelParams: WindowManager.LayoutParams? = null
     private val dimRunnable = Runnable { bubble?.alpha = 0.38f }
+    private var statusReceiverRegistered = false
+    private var stopButton: Button? = null
+    private var statusLabel: TextView? = null
+
+    private val broadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != RtmpBroadcastService.ACTION_STATUS) return
+            val active = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_ACTIVE, false)
+            val message = intent.getStringExtra(RtmpBroadcastService.EXTRA_STATUS_MESSAGE) ?: "Stream status updated"
+            statusLabel?.text = message
+            if (!active && message.contains("stop", ignoreCase = true) ||
+                !active && message.contains("disconnect", ignoreCase = true) ||
+                !active && message.contains("failed", ignoreCase = true)) {
+                stopSelf()
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        val filter = IntentFilter(RtmpBroadcastService.ACTION_STATUS)
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(broadcastReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        else registerReceiver(broadcastReceiver, filter)
+        statusReceiverRegistered = true
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -135,11 +163,12 @@ class FloatingControlService : Service() {
         root.addView(header)
 
         val status = TextView(this).apply {
-            text = "Live controls"
+            text = "LIVE • Waiting for stream status"
             setTextColor(0xFFE8EEF5.toInt())
             textSize = 11f
             setPadding(0, dp(3), 0, dp(8))
         }
+        statusLabel = status
         root.addView(status)
         val label = TextView(this).apply {
             text = "VIDEO BITRATE"
@@ -149,7 +178,7 @@ class FloatingControlService : Service() {
         }
         root.addView(label)
         val bitrateRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf(1500, 2500, 4000, 6000, 8000).forEach { kbps ->
+        listOf(4000, 6000, 8000, 12000, 16000, 18000).forEach { kbps ->
             val button = Button(this).apply {
                 text = "${kbps / 1000}M"
                 textSize = 10f
@@ -208,10 +237,13 @@ class FloatingControlService : Service() {
             setTextColor(0xFFFFFFFF.toInt())
             setBackgroundColor(0xFFB94D54.toInt())
             setOnClickListener {
-                startService(Intent(this@FloatingControlService, RtmpBroadcastService::class.java).setAction(RtmpBroadcastService.ACTION_STOP))
-                status.text = "Stop command sent"
+                isEnabled = false
+                text = "STOPPING…"
+                status.text = "Sending stop command to RTMP service…"
+                RtmpBroadcastService.requestStop(this@FloatingControlService)
             }
         }
+        stopButton = stop
         root.addView(stop)
 
         val lp = WindowManager.LayoutParams(dp(320), dp(420), type, flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv(), PixelFormat.TRANSLUCENT).apply {
@@ -246,6 +278,10 @@ class FloatingControlService : Service() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
+        if (statusReceiverRegistered) {
+            try { unregisterReceiver(broadcastReceiver) } catch (_: IllegalArgumentException) { }
+            statusReceiverRegistered = false
+        }
         handler.removeCallbacksAndMessages(null)
         chat?.apply { stopLoading(); loadUrl("about:blank"); destroy() }
         chat = null
@@ -253,6 +289,8 @@ class FloatingControlService : Service() {
         bubble?.let { try { wm.removeView(it) } catch (_: Exception) { } }
         panel = null
         bubble = null
+        stopButton = null
+        statusLabel = null
         super.onDestroy()
     }
 }
