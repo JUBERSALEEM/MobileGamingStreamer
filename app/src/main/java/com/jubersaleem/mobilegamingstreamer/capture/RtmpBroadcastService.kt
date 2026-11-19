@@ -169,14 +169,14 @@ class RtmpBroadcastService : Service() {
             val mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
                 ?: throw IllegalStateException("Android did not provide a MediaProjection session")
 
-            val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE) ?: AUDIO_MODE_BOTH
+            val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE) ?: AUDIO_MODE_BALANCED
             val audioSource: AudioSource = when (audioMode) {
                 AUDIO_MODE_MIC -> MicrophoneSource()
                 AUDIO_MODE_GAME -> InternalAudioSource(mediaProjection)
                 else -> MixAudioSource(mediaProjection).apply {
                     // RootEncoder recommends raising mic level because game playback is
                     // commonly louder than the microphone signal in a mixed track.
-                    microphoneVolume = 1.5f
+                    microphoneVolume = 2.0f
                     internalVolume = 1.0f
                 }
             }
@@ -199,6 +199,10 @@ class RtmpBroadcastService : Service() {
             if (!audioPrepared) {
                 throw IllegalStateException("Audio source preparation failed for mode: $audioMode")
             }
+            // Portrait Shorts/Reels canvas: keep landscape gameplay centered in a
+            // 16:9 viewport. RootEncoder clears unused upper/lower canvas to black,
+            // reserving those bands for the overlay/template compositor milestone.
+            if (portrait) stream.getGlInterface().setStreamIsPortrait(false)
             stream.getGlInterface().setForceRender(true, 15)
             display = stream
             publishState(false, "Encoder ready • Connecting…", 0L)
@@ -317,6 +321,7 @@ class RtmpBroadcastService : Service() {
         const val AUDIO_MODE_MIC = "MIC"
         const val AUDIO_MODE_GAME = "GAME"
         const val AUDIO_MODE_BOTH = "BOTH"
+        const val AUDIO_MODE_BALANCED = "BALANCED"
         const val ACTION_STATUS = "com.jubersaleem.mobilegamingstreamer.action.RTMP_STATUS"
         const val EXTRA_STATUS_ACTIVE = "status_active"
         const val EXTRA_STATUS_MESSAGE = "status_message"
