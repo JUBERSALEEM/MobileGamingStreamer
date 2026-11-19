@@ -1,3 +1,19 @@
+## 0.5.9-dev — Keep broadcast running when app task is dismissed
+
+### Fixed
+- Removed the RTMP service behaviour that stopped a live broadcast when the app Activity task was swiped from Recents.
+- Removed the floating-controls service behaviour that sent a stop request when the app task was removed.
+- Closing/minimizing the app or switching away from a selected app is no longer treated as an End Stream command. The foreground RTMP service remains responsible for the active broadcast.
+- Explicit Stop actions in the app, floating panel and persistent broadcast notification continue to end the stream.
+
+### Platform limits
+- Android can still terminate MediaProjection if the user stops screen sharing from system controls, revokes capture permission, force-stops the package in Android Settings, or the OS kills the app process. No app can guarantee a projection survives an actual force-stop or system revocation.
+- If only one app is being captured and it is temporarily not foregrounded, the broadcast service does not intentionally stop; Android may show a blank/paused capture surface depending on the OS and target app state.
+
+### Device validation required
+- Verify that swiping Mobile Gaming Streamer from Recents does not stop RTMP, reopening the app restores the current stream state, and only explicit Stop actions end the stream.
+- Verify single-app capture behaviour on the Galaxy S25 Ultra.
+
 ## 0.5.8-dev — Floating controls restoration hotfix
 
 ### Fixed
