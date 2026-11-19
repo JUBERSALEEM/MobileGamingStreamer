@@ -45,9 +45,10 @@ private val Muted = Color(0xFF91A0AE)
 class MainActivity : ComponentActivity() {
     private var status by mutableStateOf("Ready to stream")
     private var liveBitrate by mutableStateOf(0L)
-    private var page by mutableStateOf("HOME")
+    private var page by mutableStateOf("SETUP")
     private var captureActive by mutableStateOf(false)
     private var broadcastActive by mutableStateOf(false)
+    private var broadcastStarting by mutableStateOf(false)
     private var notificationsAllowed by mutableStateOf(true)
     private var server by mutableStateOf("rtmp://a.rtmp.youtube.com/live2")
     private var key by mutableStateOf("")
@@ -63,12 +64,14 @@ class MainActivity : ComponentActivity() {
             broadcastActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_ACTIVE, false)
             status = intent.getStringExtra(RtmpBroadcastService.EXTRA_STATUS_MESSAGE) ?: status
             liveBitrate = intent.getLongExtra(RtmpBroadcastService.EXTRA_STATUS_BITRATE, 0L)
+            broadcastStarting = !broadcastActive && listOf("Preparing", "Encoder ready", "Connecting", "RTMP connected", "Waiting for", "Stream key accepted", "60 FPS unavailable").any { status.contains(it, ignoreCase = true) }
         }
     }
 
     private fun restoreBroadcastState() {
         val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
         broadcastActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
+        broadcastStarting = false
         status = prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Ready to stream") ?: "Ready to stream"
         liveBitrate = prefs.getLong(RtmpBroadcastService.KEY_BITRATE, 0L)
     }
@@ -109,7 +112,8 @@ class MainActivity : ComponentActivity() {
         if (granted) launchProjectionConsent()
         else {
             pendingLive = false
-            status = "Microphone permission is required for a stable stream with voice audio"
+            broadcastStarting = false
+            status = "Microphone permission is required for voice audio"
         }
     }
 
@@ -118,6 +122,7 @@ class MainActivity : ComponentActivity() {
         if (result.resultCode != RESULT_OK || data == null) {
             status = "Screen sharing permission was not granted"
             pendingLive = false
+            broadcastStarting = false
             return@registerForActivityResult
         }
         if (pendingLive) {
@@ -130,10 +135,15 @@ class MainActivity : ComponentActivity() {
                 putExtra(RtmpBroadcastService.EXTRA_FPS, fps.toInt())
                 putExtra(RtmpBroadcastService.EXTRA_ORIENTATION, orientation)
             }
-            startForegroundService(liveIntent)
-            if (Settings.canDrawOverlays(this)) startService(Intent(this, FloatingControlService::class.java))
-            broadcastActive = false
-            status = "Waiting for encoder initialization"
+            try {
+                startForegroundService(liveIntent)
+                broadcastActive = false
+                broadcastStarting = true
+                status = "Starting stream service • preparing encoders"
+            } catch (error: Exception) {
+                broadcastStarting = false
+                status = "Could not start streaming service: ${error.message ?: error.javaClass.simpleName}"
+            }
             pendingLive = false
         } else {
             val testIntent = Intent(this, ScreenCaptureService::class.java).apply {
@@ -180,23 +190,18 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         if (page == "SETUP") {
-                            OutlinedButton(onClick = { page = "HOME" }) { Text("← BACK TO STUDIO") }
                             BroadcastPanel(server, { server = it }, key, { key = it },
                                 quality, { quality = it }, fps, { fps = it }, orientation, { orientation = it },
-                                broadcastActive,
+                                broadcastActive || broadcastStarting,
                                 onGoLive = {
                                     if (broadcastActive) status = "Broadcast is already running"
                                     else if (server.isBlank() || key.isBlank()) status = "Enter your server URL and stream key"
                                     else if (!server.startsWith("rtmp://") && !server.startsWith("rtmps://")) status = "Server must begin with rtmp:// or rtmps://"
                                     else {
                                         pendingLive = true
-                                        if (!Settings.canDrawOverlays(this@MainActivity)) {
-                                            waitingForOverlayPermission = true
-                                            status = "Allow Display over other apps to show the floating stream bubble"
-                                            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + packageName)))
-                                        } else {
-                                            requestProjection()
-                                        }
+                                        broadcastStarting = true
+                                        status = "Requesting screen/app selection permission…"
+                                        requestProjection()
                                     }
                                 },
                                 onStopLive = { startService(Intent(this@MainActivity, RtmpBroadcastService::class.java).setAction(RtmpBroadcastService.ACTION_STOP)) }
@@ -281,7 +286,7 @@ private fun Header() {
             Text("MOBILE GAMING", color = Muted, fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Bold)
             Text("STREAMER", fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
         }
-        Text("DEV 0.5.0", color = Lime, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("DEV 0.5.2", color = Lime, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -294,7 +299,7 @@ private fun Hero(status: String, capture: Boolean, live: Boolean) {
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("YOUR STREAMING STUDIO", color = Muted, fontSize = 10.sp, letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold)
-                Text(if (live) "LIVE / CONNECTING" else if (capture) "CAPTURING" else "STANDBY",
+                Text(if (live) "LIVE" else if (capture) "CAPTURING" else "STANDBY",
                     color = if (live || capture) Lime else Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
             Text(if (live) "Going\nlive." else if (capture) "Capture\nis running." else "Ready when\nyou are.",
@@ -340,7 +345,7 @@ private fun BroadcastPanel(
                 modifier = Modifier.fillMaxWidth().height(50.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = if (live) Color(0xFFB94D54) else Lime,
                     contentColor = if (live) Color.White else Color(0xFF11170A))
-            ) { Text(if (live) "STOP BROADCAST" else "GO LIVE • SCREEN + MIC", fontWeight = FontWeight.ExtraBold) }
+            ) { Text(if (live) "STOP BROADCAST" else "GO LIVE • SELECT APP", fontWeight = FontWeight.ExtraBold) }
         }
     }
 }
