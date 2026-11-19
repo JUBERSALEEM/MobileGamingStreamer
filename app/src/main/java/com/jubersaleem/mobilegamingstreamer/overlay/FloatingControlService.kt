@@ -1,6 +1,7 @@
 package com.jubersaleem.mobilegamingstreamer.overlay
 
 import android.app.Service
+import android.media.AudioManager
 import android.content.Intent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -42,19 +43,20 @@ class FloatingControlService : Service() {
     private val dimRunnable = Runnable { bubble?.alpha = 0.38f }
     private var statusReceiverRegistered = false
     private var stopButton: Button? = null
+    private var speakerButton: Button? = null
     private var statusLabel: TextView? = null
+    private var broadcastActive = false
+    private var broadcastStarting = false
+    private var broadcastMessage = "Broadcast setup ready"
+    private var speakerMuted = false
 
     private val broadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != RtmpBroadcastService.ACTION_STATUS) return
-            val active = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_ACTIVE, false)
-            val message = intent.getStringExtra(RtmpBroadcastService.EXTRA_STATUS_MESSAGE) ?: "Stream status updated"
-            statusLabel?.text = message
-            if (!active && message.contains("stop", ignoreCase = true) ||
-                !active && message.contains("disconnect", ignoreCase = true) ||
-                !active && message.contains("failed", ignoreCase = true)) {
-                stopSelf()
-            }
+            broadcastActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_ACTIVE, false)
+            broadcastMessage = intent.getStringExtra(RtmpBroadcastService.EXTRA_STATUS_MESSAGE) ?: "Broadcast status updated"
+            broadcastStarting = !broadcastActive && isStartingMessage(broadcastMessage)
+            renderBroadcastState()
         }
     }
 
@@ -74,7 +76,10 @@ class FloatingControlService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        refreshBroadcastState()
         if (bubble == null) createBubble()
+        renderBroadcastState()
+        renderSpeakerState()
         scheduleDim()
         return START_STICKY
     }
@@ -87,9 +92,9 @@ class FloatingControlService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
         val icon = ImageView(this).apply {
-            setImageResource(R.mipmap.ic_launcher)
+            setImageResource(R.drawable.ic_mgs_bubble)
             scaleType = ImageView.ScaleType.FIT_CENTER
-            setPadding(dp(5), dp(5), dp(5), dp(5))
+            setPadding(dp(3), dp(3), dp(3), dp(3))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(0xFF101820.toInt())
@@ -98,7 +103,7 @@ class FloatingControlService : Service() {
             alpha = 1f
             contentDescription = "Open Mobile Gaming Streamer controls"
         }
-        val lp = WindowManager.LayoutParams(dp(58), dp(58), type, secureFlags, PixelFormat.TRANSLUCENT).apply {
+        val lp = WindowManager.LayoutParams(dp(42), dp(42), type, secureFlags, PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.END
             x = dp(12)
             y = dp(180)
@@ -163,7 +168,7 @@ class FloatingControlService : Service() {
         root.addView(header)
 
         val status = TextView(this).apply {
-            text = "LIVE • Waiting for stream status"
+            text = "Broadcast setup ready"
             setTextColor(0xFFE8EEF5.toInt())
             textSize = 11f
             setPadding(0, dp(3), 0, dp(8))
@@ -232,21 +237,40 @@ class FloatingControlService : Service() {
             }
         }
         root.addView(chatButton)
+        val speaker = Button(this).apply {
+            textSize = 11f
+            setOnClickListener { toggleSpeakerMute() }
+        }
+        speakerButton = speaker
+        root.addView(speaker)
+
         val stop = Button(this).apply {
-            text = "■  STOP STREAM"
+            textSize = 12f
             setTextColor(0xFFFFFFFF.toInt())
-            setBackgroundColor(0xFFB94D54.toInt())
             setOnClickListener {
-                isEnabled = false
-                text = "STOPPING…"
-                status.text = "Sending stop command to RTMP service…"
-                RtmpBroadcastService.requestStop(this@FloatingControlService)
+                when {
+                    broadcastActive -> {
+                        isEnabled = false
+                        text = "STOPPING…"
+                        RtmpBroadcastService.requestStop(this@FloatingControlService)
+                    }
+                    broadcastStarting -> {
+                        isEnabled = false
+                        text = "CANCELLING…"
+                        RtmpBroadcastService.requestStop(this@FloatingControlService)
+                    }
+                    else -> {
+                        val launch = Intent(this@FloatingControlService, com.jubersaleem.mobilegamingstreamer.MainActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        startActivity(launch)
+                    }
+                }
             }
         }
         stopButton = stop
         root.addView(stop)
 
-        val lp = WindowManager.LayoutParams(dp(320), dp(420), type, flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv(), PixelFormat.TRANSLUCENT).apply {
+        val lp = WindowManager.LayoutParams(dp(320), dp(480), type, flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv(), PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.END
             x = dp(12)
             y = dp(250)
@@ -256,6 +280,63 @@ class FloatingControlService : Service() {
         panel = root
         root.visibility = View.GONE
         wm.addView(root, lp)
+    }
+
+    private fun refreshBroadcastState() {
+        val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
+        broadcastActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
+        broadcastMessage = prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Broadcast setup ready") ?: "Broadcast setup ready"
+        broadcastStarting = !broadcastActive && isStartingMessage(broadcastMessage)
+        renderBroadcastState()
+    }
+
+    private fun isStartingMessage(message: String): Boolean {
+        val value = message.lowercase()
+        return listOf("preparing", "encoder ready", "connecting", "waiting for", "stream key accepted")
+            .any { value.contains(it) }
+    }
+
+    private fun renderBroadcastState() {
+        statusLabel?.text = when {
+            broadcastActive -> "● LIVE  •  $broadcastMessage"
+            broadcastStarting -> "◌ CONNECTING  •  $broadcastMessage"
+            else -> "○ SETUP  •  $broadcastMessage"
+        }
+        stopButton?.apply {
+            isEnabled = true
+            text = when {
+                broadcastActive -> "■  STOP LIVE STREAM"
+                broadcastStarting -> "×  CANCEL STARTUP"
+                else -> "↗  OPEN BROADCAST SETUP"
+            }
+            setBackgroundColor(if (broadcastActive || broadcastStarting) 0xFFB94D54.toInt() else 0xFFC4FF5C.toInt())
+            setTextColor(if (broadcastActive || broadcastStarting) 0xFFFFFFFF.toInt() else 0xFF11170A.toInt())
+        }
+    }
+
+    private fun renderSpeakerState() {
+        speakerButton?.apply {
+            text = if (speakerMuted) "◖))  SPEAKER MUTED  •  TAP TO UNMUTE" else "◖))  SPEAKER ON  •  TAP TO MUTE"
+            setBackgroundColor(if (speakerMuted) 0xFFB94D54.toInt() else 0xFF263642.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun toggleSpeakerMute() {
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
+        if (!speakerMuted) {
+            val current = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+            prefs.edit().putInt("speaker_previous_music_volume", current.coerceAtLeast(1)).apply()
+            audio.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+            speakerMuted = true
+        } else {
+            val previous = prefs.getInt("speaker_previous_music_volume", audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC) / 2)
+            audio.setStreamVolume(AudioManager.STREAM_MUSIC, previous.coerceIn(1, audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)), 0)
+            speakerMuted = false
+        }
+        renderSpeakerState()
     }
 
     private fun togglePanel() {
@@ -290,6 +371,7 @@ class FloatingControlService : Service() {
         panel = null
         bubble = null
         stopButton = null
+        speakerButton = null
         statusLabel = null
         super.onDestroy()
     }
