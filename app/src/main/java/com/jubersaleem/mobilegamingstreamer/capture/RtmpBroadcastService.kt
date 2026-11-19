@@ -4,7 +4,9 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.view.accessibility.AccessibilityEvent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -15,6 +17,7 @@ import android.provider.Settings
 import android.os.IBinder
 import android.util.DisplayMetrics
 import android.media.projection.MediaProjectionManager
+import android.media.MediaRecorder
 import android.util.Log
 import android.view.WindowManager
 import com.jubersaleem.mobilegamingstreamer.MainActivity
@@ -28,7 +31,7 @@ import com.pedro.encoder.input.sources.video.ScreenSource
 import com.pedro.library.generic.GenericStream
 
 /** RTMP broadcast service with microphone audio and screen video. */
-class RtmpBroadcastService : Service() {
+class RtmpBroadcastService : AccessibilityService() {
     private var display: GenericStream? = null
     private var streamingConfirmed = false
     private var lastBitrate = 0L
@@ -40,7 +43,23 @@ class RtmpBroadcastService : Service() {
     }
     private val notifications by lazy { getSystemService(NotificationManager::class.java) }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        serviceInfo = AccessibilityServiceInfo().apply {
+            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            notificationTimeout = 100
+            packageNames = null
+            flags = 0
+        }
+        getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit()
+            .putBoolean(KEY_ACCESSIBILITY_READY, true).apply()
+        Log.i(TAG, "Accessibility microphone-concurrency service connected")
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) { }
+
+    override fun onInterrupt() { }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -171,9 +190,9 @@ class RtmpBroadcastService : Service() {
 
             val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE) ?: AUDIO_MODE_BALANCED
             val audioSource: AudioSource = when (audioMode) {
-                AUDIO_MODE_MIC -> MicrophoneSource()
+                AUDIO_MODE_MIC -> MicrophoneSource(audioSource = MediaRecorder.AudioSource.MIC)
                 AUDIO_MODE_GAME -> InternalAudioSource(mediaProjection)
-                else -> MixAudioSource(mediaProjection).apply {
+                else -> MixAudioSource(mediaProjection, null, MediaRecorder.AudioSource.MIC).apply {
                     // RootEncoder recommends raising mic level because game playback is
                     // commonly louder than the microphone signal in a mixed track.
                     microphoneVolume = 2.0f
@@ -298,6 +317,7 @@ class RtmpBroadcastService : Service() {
         try { display?.release() } catch (_: Exception) { }
         display = null
         publishState(false, "Broadcast service stopped", 0L)
+        getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putBoolean(KEY_ACCESSIBILITY_READY, false).apply()
         super.onDestroy()
     }
 
@@ -330,6 +350,7 @@ class RtmpBroadcastService : Service() {
         const val KEY_ACTIVE = "active"
         const val KEY_MESSAGE = "message"
         const val KEY_BITRATE = "bitrate"
+        const val KEY_ACCESSIBILITY_READY = "accessibility_ready"
         private const val TAG = "MGS-RTMP"
         private const val CHANNEL_ID = "live_broadcast"
         private const val NOTIFICATION_ID = 1002
