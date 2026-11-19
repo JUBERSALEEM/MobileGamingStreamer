@@ -55,7 +55,7 @@ class RtmpBroadcastService : Service() {
             )
             val checker = object : ConnectChecker {
                 override fun onConnectionStarted(url: String) = update("Connecting to streaming server…")
-                override fun onConnectionSuccess() = update("LIVE • Video broadcast connected")
+                override fun onConnectionSuccess() = update("RTMP connected • Waiting for video bitrate")
                 override fun onConnectionFailed(reason: String) {
                     Log.e(TAG, "RTMP connection failed: $reason")
                     stopBroadcast("Connection failed: $reason")
@@ -75,7 +75,7 @@ class RtmpBroadcastService : Service() {
                 }
             }
 
-            val (screenWidth, screenHeight, dpi) = screenMetrics()
+            val (screenWidth, screenHeight) = screenMetrics()
             val quality = intent.getStringExtra(EXTRA_QUALITY) ?: "1080p"
             val orientation = intent.getStringExtra(EXTRA_ORIENTATION) ?: "AUTO"
             val fps = intent.getIntExtra(EXTRA_FPS, 30).coerceIn(30, 60)
@@ -103,21 +103,25 @@ class RtmpBroadcastService : Service() {
                 else -> 8_000_000
             }
 
-            val rtmp = RtmpDisplay(this, false, checker)
+            // OpenGL is required for MediaProjection display input; force rendering keeps static screens producing frames.
+            val rtmp = RtmpDisplay(this, true, checker)
             rtmp.forceCodecType(CodecUtil.CodecType.HARDWARE, CodecUtil.CodecType.HARDWARE)
             rtmp.setIntentResult(resultCode, resultData)
-            if (!rtmp.prepareVideo(width, height, fps, bitrate, 0, dpi)) {
-                if (fps == 60 && rtmp.prepareVideo(width, height, 30, bitrate, 0, dpi)) {
-                    update("60 FPS unavailable; using 30 FPS")
-                } else {
-                    throw IllegalStateException("This device cannot prepare the selected H.264 stream format")
-                }
+            val prepared = rtmp.prepareVideo(width, height, fps, bitrate, 2, 0)
+            val actualFps = if (prepared) fps else if (
+                fps == 60 && rtmp.prepareVideo(width, height, 30, bitrate, 2, 0)
+            ) {
+                update("60 FPS unavailable; using 30 FPS")
+                30
+            } else {
+                throw IllegalStateException("This device cannot prepare the selected H.264 stream format")
             }
+            rtmp.glInterface.setForceRender(true)
             display = rtmp
             publishState(true, "Encoder ready • Connecting…", 0L)
             update("Encoder ready • Connecting…")
             rtmp.startStream(streamUrl)
-            Log.i(TAG, "RTMP broadcast requested: ${width}x${height} @ ${fps}fps")
+            Log.i(TAG, "RTMP broadcast requested: ${width}x${height} @ ${actualFps}fps")
         } catch (error: Exception) {
             Log.e(TAG, "Unable to start RTMP broadcast", error)
             stopBroadcast("Unable to start: ${error.message ?: "encoder error"}")
@@ -182,7 +186,7 @@ class RtmpBroadcastService : Service() {
     }
 
     @Suppress("DEPRECATION")
-    private fun screenMetrics(): Triple<Int, Int, Int> {
+    private fun screenMetrics(): Pair<Int, Int> {
         val metrics = DisplayMetrics()
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -193,7 +197,7 @@ class RtmpBroadcastService : Service() {
         } else {
             wm.defaultDisplay.getRealMetrics(metrics)
         }
-        return Triple(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
+        return Pair(metrics.widthPixels, metrics.heightPixels)
     }
 
     @Suppress("DEPRECATION")
