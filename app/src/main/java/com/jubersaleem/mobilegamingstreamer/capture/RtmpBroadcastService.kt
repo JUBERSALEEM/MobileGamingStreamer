@@ -360,10 +360,8 @@ class RtmpBroadcastService : Service() {
         if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(key, Intent::class.java)
         else intent.getParcelableExtra(key)
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        stopBroadcast("App closed from recent apps")
-        super.onTaskRemoved(rootIntent)
-    }
+    // Do not end a live broadcast when the launcher removes the Activity task.
+    // The foreground service owns the broadcast until explicit STOP or projection revocation.
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
