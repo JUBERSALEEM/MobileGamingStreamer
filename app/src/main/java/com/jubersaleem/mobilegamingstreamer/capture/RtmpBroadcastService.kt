@@ -29,6 +29,16 @@ class RtmpBroadcastService : Service() {
         when (intent?.action) {
             ACTION_STOP -> stopBroadcast()
             ACTION_START -> startBroadcast(intent)
+            ACTION_SET_BITRATE -> {
+                val requested = intent.getIntExtra(EXTRA_BITRATE, 4_000_000).coerceIn(500_000, 12_000_000)
+                val active = display
+                if (active != null) {
+                    active.setVideoBitrateOnFly(requested)
+                    update("LIVE • Target bitrate ${requested / 1000} kbps")
+                } else {
+                    publishState(false, "No active stream to adjust", 0L)
+                }
+            }
         }
         return START_NOT_STICKY
     }
@@ -215,6 +225,8 @@ class RtmpBroadcastService : Service() {
     companion object {
         const val ACTION_START = "com.jubersaleem.mobilegamingstreamer.action.START_RTMP"
         const val ACTION_STOP = "com.jubersaleem.mobilegamingstreamer.action.STOP_RTMP"
+        const val ACTION_SET_BITRATE = "com.jubersaleem.mobilegamingstreamer.action.SET_BITRATE"
+        const val EXTRA_BITRATE = "video_bitrate"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_STREAM_URL = "stream_url"
