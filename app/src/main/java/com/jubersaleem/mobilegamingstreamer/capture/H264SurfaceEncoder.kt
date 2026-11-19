@@ -128,6 +128,7 @@ class H264SurfaceEncoder(
         val candidates = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
             .filter { info ->
                 info.isEncoder &&
+                    info.isHardwareAccelerated &&
                     info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) } &&
                     info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
                         .colorFormats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
