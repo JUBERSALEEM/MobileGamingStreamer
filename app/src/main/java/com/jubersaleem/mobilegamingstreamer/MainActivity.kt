@@ -240,7 +240,7 @@ class MainActivity : ComponentActivity() {
                         if (page != "SETTINGS" && page != "ABOUT" && page != "TERMS" && page != "PRIVACY") {
                         Hero(status, captureActive, broadcastActive, broadcastStarting)
                         if (!notificationsAllowed) {
-                            Card(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+                            Card(shape = RoundedCornerShape(if (palette.isClay) 30.dp else 12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 20.dp else 1.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
                                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("ENABLE NOTIFICATIONS", color = palette.primary, fontWeight = FontWeight.Bold)
                                     Text("Android notifications show capture and live-stream status, with a stop control.", color = palette.muted)
@@ -383,7 +383,7 @@ private fun Header() {
 @Composable
 private fun Hero(status: String, capture: Boolean, live: Boolean, starting: Boolean) {
     val palette = LocalMgsPalette.current
-    Card(shape = RoundedCornerShape(24.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+    Card(shape = RoundedCornerShape(if (palette.isClay) 34.dp else 24.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 26.dp else 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
         Column(
             Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(palette.highlight, palette.surface, palette.background))).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -412,7 +412,7 @@ private fun BroadcastPanel(
     live: Boolean, onGoLive: () -> Unit, onStopLive: () -> Unit
 ) {
     val palette = LocalMgsPalette.current
-    Card(shape = RoundedCornerShape(22.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+    Card(shape = RoundedCornerShape(if (palette.isClay) 32.dp else 22.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 24.dp else 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Text("BROADCAST SETUP", color = palette.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
             Text("Connect to YouTube or another RTMP platform", color = palette.muted, fontSize = 12.sp)
@@ -459,7 +459,7 @@ private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String
 @Composable
 private fun ModuleStatus(capture: Boolean, live: Boolean) {
     val palette = LocalMgsPalette.current
-    Card(border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = 8.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+    Card(shape = RoundedCornerShape(if (palette.isClay) 30.dp else 12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 22.dp else 8.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("SYSTEM STATUS", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.2.sp)
             StatusRow("Screen capture", if (capture || live) "ACTIVE" else "READY")
