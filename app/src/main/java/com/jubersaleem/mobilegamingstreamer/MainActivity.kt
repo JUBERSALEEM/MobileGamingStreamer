@@ -240,7 +240,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         if (page == "HOME") ModuleStatus(captureActive, broadcastActive)
-                        Text("Video-only development build • Audio mixing is next", color = Muted, fontSize = 11.sp)
+                        Text("Screen video + microphone • Internal game audio is next", color = Muted, fontSize = 11.sp)
                     }
                 }
             }
@@ -340,7 +340,7 @@ private fun BroadcastPanel(
                 modifier = Modifier.fillMaxWidth().height(50.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = if (live) Color(0xFFB94D54) else Lime,
                     contentColor = if (live) Color.White else Color(0xFF11170A))
-            ) { Text(if (live) "STOP BROADCAST" else "GO LIVE • VIDEO ONLY", fontWeight = FontWeight.ExtraBold) }
+            ) { Text(if (live) "STOP BROADCAST" else "GO LIVE • SCREEN + MIC", fontWeight = FontWeight.ExtraBold) }
         }
     }
 }
