@@ -4,9 +4,6 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.AccessibilityServiceInfo
-import android.view.accessibility.AccessibilityEvent
 import android.content.Context
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
@@ -17,6 +14,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.os.IBinder
+import android.app.Service
 import android.util.DisplayMetrics
 import android.media.projection.MediaProjectionManager
 import android.media.projection.MediaProjection
@@ -36,7 +34,7 @@ import com.pedro.encoder.input.sources.video.ScreenSource
 import com.pedro.library.generic.GenericStream
 
 /** RTMP broadcast service with microphone audio and screen video. */
-class RtmpBroadcastService : AccessibilityService() {
+class RtmpBroadcastService : Service() {
     private var display: GenericStream? = null
     private var activeProjection: MediaProjection? = null
     private val projectionCallback = object : MediaProjection.Callback() {
@@ -64,31 +62,27 @@ class RtmpBroadcastService : AccessibilityService() {
         }
     }
 
-    override fun onServiceConnected() {
-        super.onServiceConnected()
-        serviceInfo = AccessibilityServiceInfo().apply {
-            eventTypes = 0
-            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            notificationTimeout = 100
-            packageNames = null
-            flags = 0
-        }
+    override fun onCreate() {
+        super.onCreate()
         val filter = IntentFilter().apply {
-            addAction(ACTION_START)
             addAction(ACTION_STOP)
             addAction(ACTION_SET_BITRATE)
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         else registerReceiver(commandReceiver, filter)
         commandReceiverRegistered = true
-        getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit()
-            .putBoolean(KEY_ACCESSIBILITY_READY, true).apply()
-        Log.i(TAG, "Accessibility microphone-concurrency service connected and command receiver ready")
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) { }
+    override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onInterrupt() { }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_START -> startBroadcast(intent)
+            ACTION_STOP -> stopBroadcast()
+            ACTION_SET_BITRATE -> setBitrate(intent)
+        }
+        return START_NOT_STICKY
+    }
 
     private fun setBitrate(intent: Intent) {
         val requested = intent.getIntExtra(EXTRA_BITRATE, 4_000_000).coerceIn(500_000, 18_000_000)
@@ -280,9 +274,6 @@ class RtmpBroadcastService : AccessibilityService() {
         publishState(false, message, 0L)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
-        // The compatibility service is needed only for the active streaming session.
-        // Disable it after stop so it cannot remain enabled as an idle background service.
-        try { disableSelf() } catch (_: Exception) { }
     }
 
     /**
@@ -386,7 +377,6 @@ class RtmpBroadcastService : AccessibilityService() {
         display = null
         releaseProjection()
         publishState(false, "Broadcast service stopped", 0L)
-        getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putBoolean(KEY_ACCESSIBILITY_READY, false).apply()
         super.onDestroy()
     }
 
