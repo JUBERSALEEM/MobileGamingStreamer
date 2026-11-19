@@ -21,6 +21,8 @@ import android.util.DisplayMetrics
 import android.media.projection.MediaProjectionManager
 import android.media.projection.MediaProjection
 import android.media.MediaRecorder
+import android.media.AudioManager
+import android.media.AudioDeviceInfo
 import android.util.Log
 import android.view.WindowManager
 import com.jubersaleem.mobilegamingstreamer.MainActivity
@@ -214,14 +216,15 @@ class RtmpBroadcastService : AccessibilityService() {
             mediaProjection.registerCallback(projectionCallback, handler)
 
             val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE) ?: AUDIO_MODE_BALANCED
+            val micSource = chooseMicrophoneSource()
             val audioSource: AudioSource = when (audioMode) {
-                AUDIO_MODE_MIC -> MicrophoneSource(audioSource = MediaRecorder.AudioSource.MIC)
+                AUDIO_MODE_MIC -> MicrophoneSource(audioSource = micSource)
                 AUDIO_MODE_GAME -> InternalAudioSource(mediaProjection)
-                AUDIO_MODE_NORMAL -> MixAudioSource(mediaProjection, null, MediaRecorder.AudioSource.MIC).apply {
+                AUDIO_MODE_NORMAL -> MixAudioSource(mediaProjection, null, micSource).apply {
                     microphoneVolume = 1.0f
                     internalVolume = 1.0f
                 }
-                else -> MixAudioSource(mediaProjection, null, MediaRecorder.AudioSource.MIC).apply {
+                else -> MixAudioSource(mediaProjection, null, micSource).apply {
                     // Balanced preset gives voice a little more headroom than game playback.
                     microphoneVolume = 1.6f
                     internalVolume = 1.0f
@@ -276,6 +279,22 @@ class RtmpBroadcastService : AccessibilityService() {
         publishState(false, message, 0L)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /**
+     * Glip-compatible concurrent capture: DEFAULT without a headset, and
+     * VOICE_RECOGNITION when a headset/Bluetooth input is connected.
+     */
+    private fun chooseMicrophoneSource(): Int {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val headsetInputConnected = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).any { device ->
+            device.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                device.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                device.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                (Build.VERSION.SDK_INT >= 31 && device.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+        }
+        return if (headsetInputConnected) MediaRecorder.AudioSource.VOICE_RECOGNITION
+        else MediaRecorder.AudioSource.DEFAULT
     }
 
     private fun releaseProjection() {
