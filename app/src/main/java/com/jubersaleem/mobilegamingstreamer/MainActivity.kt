@@ -117,7 +117,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
-        val expected = ComponentName(this, RtmpBroadcastService::class.java)
+        val expected = ComponentName(this, com.jubersaleem.mobilegamingstreamer.capture.MicCompatibilityService::class.java)
         val enabled = Settings.Secure.getString(
             contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
@@ -158,7 +158,7 @@ class MainActivity : ComponentActivity() {
                 putExtra(RtmpBroadcastService.EXTRA_AUDIO_MODE, audioMode)
             }
             try {
-                sendBroadcast(liveIntent.setPackage(packageName))
+                startForegroundService(liveIntent)
                 broadcastActive = false
                 broadcastStarting = true
                 status = "Starting stream service • preparing encoders"
@@ -197,7 +197,7 @@ class MainActivity : ComponentActivity() {
                         onDismissRequest = { showAccessibilityDisclosure = false; pendingLive = false; broadcastStarting = false },
                         title = { Text("Microphone compatibility service") },
                         text = {
-                            Text("Mobile Gaming Streamer uses Android Accessibility Service only to help keep microphone capture available while a game such as BGMI is using voice chat. The service receives window-state events but does not read screen text or content, inspect UI controls, click, type, or automate gameplay. When you start a stream, the microphone and any capturable game audio are sent to the RTMP destination you enter. You can turn this service off at any time in Android Settings.")
+                            Text("Mobile Gaming Streamer uses Android Accessibility Service only to help keep microphone capture available while a game such as BGMI is using voice chat. The service does not subscribe to accessibility events, read screen text or content, inspect UI controls, click, type, or automate gameplay. When you start a stream, the microphone and any capturable game audio are sent to the RTMP destination you enter. You can turn this service off at any time in Android Settings.")
                         },
                         confirmButton = {
                             Button(onClick = {
