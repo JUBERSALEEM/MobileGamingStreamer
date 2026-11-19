@@ -1,3 +1,11 @@
+## 0.5.3-dev
+
+- Unified the app and floating-control stop actions through the RTMP service stop entry point.
+- Floating controls now listen for RTMP state changes and close when the broadcast stops or fails.
+- Added resolution/frame-rate-aware starting bitrate profiles: 720p (4/6 Mbps), 1080p (8/12 Mbps), and 1440p (14/18 Mbps).
+- Expanded live bitrate adjustment up to 18 Mbps.
+- These changes require physical-device testing; they do not yet prove microphone or internal game-audio capture.
+
 # MobileGamingStreamer — Changelog
 
 Development prerelease builds for device testing.
