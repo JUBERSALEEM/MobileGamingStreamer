@@ -24,7 +24,8 @@ data class MgsPalette(
     val muted: Color,
     val primary: Color,
     val secondary: Color,
-    val edge: Color
+    val edge: Color,
+    val isClay: Boolean = false
 )
 
 val LocalMgsPalette = staticCompositionLocalOf {
@@ -40,14 +41,15 @@ val LocalMgsPalette = staticCompositionLocalOf {
 fun MgsTheme(mode: String, content: @Composable () -> Unit) {
     val palette = if (mode == "CLAY") {
         MgsPalette(
-            background = Color(0xFFE9E5DC),
-            surface = Color(0xFFF4F0E8),
-            highlight = Color(0xFFFFFFFF),
-            text = Color(0xFF26332F),
-            muted = Color(0xFF6C7973),
-            primary = Color(0xFF367B69),
-            secondary = Color(0xFF9275A8),
-            edge = Color(0xFFFFFFFF)
+            background = Color(0xFFE3DED4),
+            surface = Color(0xFFF1ECE2),
+            highlight = Color(0xFFFFFCF5),
+            text = Color(0xFF27332F),
+            muted = Color(0xFF64736C),
+            primary = Color(0xFF2F7968),
+            secondary = Color(0xFF8873A5),
+            edge = Color(0xFFFFFEF9),
+            isClay = true
         )
     } else {
         LocalMgsPalette.current
@@ -75,17 +77,29 @@ fun MgsTheme(mode: String, content: @Composable () -> Unit) {
 @Composable
 fun ClayPanel(
     modifier: Modifier = Modifier,
+    shape: RoundedCornerShape = RoundedCornerShape(32.dp),
     content: @Composable () -> Unit
 ) {
     val palette = LocalMgsPalette.current
-    val shape = RoundedCornerShape(24.dp)
     Box(
         modifier
-            .shadow(13.dp, shape, clip = false)
+            .shadow(26.dp, shape, clip = false)
             .background(
-                Brush.linearGradient(listOf(palette.highlight, palette.surface, palette.surface)),
+                Brush.linearGradient(
+                    listOf(palette.highlight, palette.surface, Color(0xFFE8E2D7))
+                ),
                 shape
             )
-            .border(1.dp, palette.edge, shape)
-    ) { content() }
+            .border(1.4.dp, Brush.linearGradient(listOf(Color.White, palette.edge, Color(0xFFD2C9BB))), shape)
+            .padding(1.dp)
+    ) {
+        Box(
+            Modifier
+                .background(
+                    Brush.linearGradient(listOf(palette.highlight.copy(alpha = 0.72f), palette.surface)),
+                    shape
+                )
+                .border(1.dp, Color.White.copy(alpha = 0.72f), shape)
+        ) { content() }
+    }
 }
