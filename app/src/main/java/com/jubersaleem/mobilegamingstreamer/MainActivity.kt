@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity() {
     private var status by mutableStateOf("Ready to stream")
     private var liveBitrate by mutableStateOf(0L)
     private var page by mutableStateOf("SETUP")
+    private var themeMode by mutableStateOf("CLASSIC")
     private var captureActive by mutableStateOf(false)
     private var broadcastActive by mutableStateOf(false)
     private var broadcastStarting by mutableStateOf(false)
@@ -189,25 +190,36 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33 && !notificationsAllowed) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+        themeMode = getSharedPreferences("mgs_preferences", MODE_PRIVATE).getString("theme_mode", "CLASSIC") ?: "CLASSIC"
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(
-                primary = Lime, onPrimary = Color(0xFF11170A), background = Bg,
-                surface = Panel, onBackground = Color.White, onSurface = Color.White,
-                secondary = Cyan
-            )) {
-                Surface(Modifier.fillMaxSize(), color = Bg) {
+            MgsTheme(mode = themeMode) {
+                val palette = LocalMgsPalette.current
+                Surface(Modifier.fillMaxSize(), color = palette.background) {
                     Column(
                         Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState())
                             .padding(horizontal = 18.dp, vertical = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
                         Header()
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            listOf("SETUP" to "Studio", "SETTINGS" to "Settings", "ABOUT" to "About").forEach { (target, label) ->
+                                FilterChip(selected = page == target, onClick = { page = target }, label = { Text(label, fontSize = 11.sp) }, modifier = Modifier.weight(1f))
+                            }
+                        }
+                        if (page == "SETTINGS") SettingsPage(themeMode, { selected ->
+                            themeMode = selected
+                            getSharedPreferences("mgs_preferences", MODE_PRIVATE).edit().putString("theme_mode", selected).apply()
+                        }, onTerms = { page = "TERMS" }, onPrivacy = { page = "PRIVACY" })
+                        else if (page == "ABOUT") AboutPage(onTerms = { page = "TERMS" }, onPrivacy = { page = "PRIVACY" })
+                        else if (page == "TERMS") LegalPage(title = "Terms & Conditions", body = TermsText, onBack = { page = "SETTINGS" })
+                        else if (page == "PRIVACY") LegalPage(title = "Privacy Policy", body = PrivacyText, onBack = { page = "SETTINGS" })
+                        if (page != "SETTINGS" && page != "ABOUT" && page != "TERMS" && page != "PRIVACY") {
                         Hero(status, captureActive, broadcastActive, broadcastStarting)
                         if (!notificationsAllowed) {
                             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF382B1D))) {
                                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("ENABLE NOTIFICATIONS", color = Lime, fontWeight = FontWeight.Bold)
-                                    Text("Android notifications show capture and live-stream status, with a stop control.", color = Muted)
+                                    Text("Android notifications show capture and live-stream status, with a stop control.", color = palette.muted)
                                     Button(onClick = {
                                         if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                                     }) { Text("ALLOW NOTIFICATIONS") }
@@ -217,8 +229,8 @@ class MainActivity : ComponentActivity() {
                         if (!accessibilityEnabled) {
                             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF30291D))) {
                                 Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("ENABLE IN-GAME MIC COMPATIBILITY", color = Lime, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                                    Text("Android can silence a normal recorder while BGMI is using voice chat. Enable this app's Accessibility service so the stream can capture your microphone concurrently. This service does not read screen content.", color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
+                                    Text("ENABLE IN-GAME MIC COMPATIBILITY", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    Text("Android can silence a normal recorder while BGMI is using voice chat. Enable this app's Accessibility service so the stream can capture your microphone concurrently. This service does not read screen content.", color = palette.muted, fontSize = 11.sp, lineHeight = 15.sp)
                                     Button(onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }, modifier = Modifier.fillMaxWidth()) {
                                         Text("OPEN ACCESSIBILITY SETTINGS")
                                     }
@@ -250,7 +262,7 @@ class MainActivity : ComponentActivity() {
                                 onStopLive = { RtmpBroadcastService.requestStop(this@MainActivity) }
                             )
                             Text("FLOATING CONTROLS", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            Text("Optional: allow Display over other apps. Streaming does not depend on this permission; the small control bubble appears after video is actually being sent.", color = Muted, fontSize = 11.sp)
+                            Text("Optional: allow Display over other apps. Streaming does not depend on this permission; the small control bubble appears after video is actually being sent.", color = palette.muted, fontSize = 11.sp)
                             OutlinedButton(onClick = { enableFloatingControls() }, modifier = Modifier.fillMaxWidth()) {
                                 Text(if (Settings.canDrawOverlays(this@MainActivity)) "SHOW FLOATING CONTROLS" else "ENABLE FLOATING CONTROLS")
                             }
@@ -294,6 +306,7 @@ class MainActivity : ComponentActivity() {
                         }
                         if (page == "HOME") ModuleStatus(captureActive, broadcastActive)
                         Text("Screen video • Microphone / game audio selectable", color = Muted, fontSize = 11.sp)
+                        }
                     }
                 }
             }
@@ -328,33 +341,35 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun Header() {
+    val palette = LocalMgsPalette.current
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Image(painterResource(R.drawable.ic_launcher_foreground), "Mobile Gaming Streamer", Modifier.size(48.dp))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text("MOBILE GAMING", color = Muted, fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Bold)
+            Text("MOBILE GAMING", color = palette.muted, fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Bold)
             Text("STREAMER", fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
         }
-        Text("DEV 0.5.5", color = Lime, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("DEV 0.5.5", color = palette.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
 
 @Composable
 private fun Hero(status: String, capture: Boolean, live: Boolean, starting: Boolean) {
-    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
+    val palette = LocalMgsPalette.current
+    Card(shape = RoundedCornerShape(24.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
         Column(
-            Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF1C3035), Panel, Bg))).padding(20.dp),
+            Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(palette.highlight, palette.surface, palette.background))).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("YOUR STREAMING STUDIO", color = Muted, fontSize = 10.sp, letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold)
                 Text(if (live) "LIVE" else if (starting) "CONNECTING" else if (capture) "CAPTURING" else "STANDBY",
-                    color = if (live || starting || capture) Lime else Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    color = if (live || starting || capture) palette.primary else palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
             Text(if (live) "You're\nlive." else if (starting) "Starting\nstream." else if (capture) "Capture\nis running." else "Ready when\nyou are.",
                 fontSize = 32.sp, lineHeight = 36.sp, fontWeight = FontWeight.ExtraBold)
-            Text(status, color = Muted, fontSize = 12.sp)
-            Text("SCREEN CAPTURE  /  H.264  /  RTMP", color = Lime, fontSize = 9.sp, letterSpacing = 1.3.sp, fontWeight = FontWeight.Bold)
+            Text(status, color = palette.muted, fontSize = 12.sp)
+            Text("SCREEN CAPTURE  /  H.264  /  RTMP", color = palette.primary, fontSize = 9.sp, letterSpacing = 1.3.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -369,9 +384,10 @@ private fun BroadcastPanel(
     audioMode: String, onAudioMode: (String) -> Unit,
     live: Boolean, onGoLive: () -> Unit, onStopLive: () -> Unit
 ) {
-    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
+    val palette = LocalMgsPalette.current
+    Card(shape = RoundedCornerShape(22.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-            Text("BROADCAST SETUP", color = Lime, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
+            Text("BROADCAST SETUP", color = palette.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
             Text("Connect to YouTube or another RTMP platform", color = Muted, fontSize = 12.sp)
             OutlinedTextField(
                 value = server, onValueChange = onServer, modifier = Modifier.fillMaxWidth(),
@@ -415,7 +431,8 @@ private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String
 
 @Composable
 private fun ModuleStatus(capture: Boolean, live: Boolean) {
-    Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
+    val palette = LocalMgsPalette.current
+    Card(border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = 8.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("SYSTEM STATUS", color = Lime, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.2.sp)
             StatusRow("Screen capture", if (capture || live) "ACTIVE" else "READY")
@@ -428,9 +445,10 @@ private fun ModuleStatus(capture: Boolean, live: Boolean) {
 
 @Composable
 private fun StatusRow(label: String, value: String) {
+    val palette = LocalMgsPalette.current
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, color = Muted, fontSize = 12.sp)
-        Text(value, color = if (value == "ACTIVE" || value == "SESSION STARTED" || value == "CONNECTING") Lime else Cyan,
+        Text(value, color = if (value == "ACTIVE" || value == "SESSION STARTED" || value == "CONNECTING") palette.primary else palette.secondary,
             fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
