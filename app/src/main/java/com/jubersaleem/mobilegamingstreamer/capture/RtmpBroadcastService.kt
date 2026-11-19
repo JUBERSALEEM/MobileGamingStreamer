@@ -280,6 +280,9 @@ class RtmpBroadcastService : AccessibilityService() {
         publishState(false, message, 0L)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+        // The compatibility service is needed only for the active streaming session.
+        // Disable it after stop so it cannot remain enabled as an idle background service.
+        try { disableSelf() } catch (_: Exception) { }
     }
 
     /**
