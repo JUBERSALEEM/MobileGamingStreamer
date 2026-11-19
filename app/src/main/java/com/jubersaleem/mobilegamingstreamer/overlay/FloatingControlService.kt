@@ -191,10 +191,7 @@ class FloatingControlService : Service() {
                 textSize = 10f
                 setPadding(dp(1), 0, dp(1), 0)
                 setOnClickListener {
-                    startService(Intent(this@FloatingControlService, RtmpBroadcastService::class.java).apply {
-                        action = RtmpBroadcastService.ACTION_SET_BITRATE
-                        putExtra(RtmpBroadcastService.EXTRA_BITRATE, kbps * 1000)
-                    })
+                    RtmpBroadcastService.requestBitrate(this@FloatingControlService, kbps * 1000)
                     status.text = "Requested ${kbps} kbps video"
                 }
             }
