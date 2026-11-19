@@ -132,8 +132,8 @@ class MainActivity : ComponentActivity() {
             }
             startForegroundService(liveIntent)
             if (Settings.canDrawOverlays(this)) startService(Intent(this, FloatingControlService::class.java))
-            broadcastActive = true
-            status = "Connecting to RTMP server"
+            broadcastActive = false
+            status = "Waiting for encoder initialization"
             pendingLive = false
         } else {
             val testIntent = Intent(this, ScreenCaptureService::class.java).apply {
