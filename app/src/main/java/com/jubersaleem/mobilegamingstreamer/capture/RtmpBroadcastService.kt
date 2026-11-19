@@ -98,7 +98,11 @@ class RtmpBroadcastService : Service() {
                     handler.removeCallbacks(startupTimeout)
                     streamingConfirmed = false
                     lastBitrate = 0L
+                    val disconnected = display
                     display = null
+                    try { disconnected?.release() } catch (error: Exception) {
+                        Log.w(TAG, "Error releasing disconnected stream", error)
+                    }
                     publishState(false, "Broadcast disconnected", 0L)
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
@@ -214,8 +218,8 @@ class RtmpBroadcastService : Service() {
         lastBitrate = 0L
         val active = display
         display = null
-        try { active?.stopStream() } catch (error: Exception) {
-            Log.w(TAG, "Error while stopping RTMP stream", error)
+        try { active?.release() } catch (error: Exception) {
+            Log.w(TAG, "Error while releasing RTMP stream", error)
         }
         publishState(false, message, 0L)
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -287,7 +291,7 @@ class RtmpBroadcastService : Service() {
         handler.removeCallbacksAndMessages(null)
         streamingConfirmed = false
         lastBitrate = 0L
-        try { display?.stopStream() } catch (_: Exception) { }
+        try { display?.release() } catch (_: Exception) { }
         display = null
         publishState(false, "Broadcast service stopped", 0L)
         super.onDestroy()
