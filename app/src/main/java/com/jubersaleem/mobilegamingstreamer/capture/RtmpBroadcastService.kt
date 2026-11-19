@@ -192,10 +192,13 @@ class RtmpBroadcastService : AccessibilityService() {
             val audioSource: AudioSource = when (audioMode) {
                 AUDIO_MODE_MIC -> MicrophoneSource(audioSource = MediaRecorder.AudioSource.MIC)
                 AUDIO_MODE_GAME -> InternalAudioSource(mediaProjection)
+                AUDIO_MODE_NORMAL -> MixAudioSource(mediaProjection, null, MediaRecorder.AudioSource.MIC).apply {
+                    microphoneVolume = 1.0f
+                    internalVolume = 1.0f
+                }
                 else -> MixAudioSource(mediaProjection, null, MediaRecorder.AudioSource.MIC).apply {
-                    // RootEncoder recommends raising mic level because game playback is
-                    // commonly louder than the microphone signal in a mixed track.
-                    microphoneVolume = 2.0f
+                    // Balanced preset gives voice a little more headroom than game playback.
+                    microphoneVolume = 1.6f
                     internalVolume = 1.0f
                 }
             }
@@ -341,6 +344,7 @@ class RtmpBroadcastService : AccessibilityService() {
         const val AUDIO_MODE_MIC = "MIC"
         const val AUDIO_MODE_GAME = "GAME"
         const val AUDIO_MODE_BOTH = "BOTH"
+        const val AUDIO_MODE_NORMAL = "NORMAL"
         const val AUDIO_MODE_BALANCED = "BALANCED"
         const val ACTION_STATUS = "com.jubersaleem.mobilegamingstreamer.action.RTMP_STATUS"
         const val EXTRA_STATUS_ACTIVE = "status_active"
