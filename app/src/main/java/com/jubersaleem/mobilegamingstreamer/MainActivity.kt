@@ -2,6 +2,7 @@ package com.jubersaleem.mobilegamingstreamer
 
 import android.Manifest
 import android.content.Intent
+import android.content.ComponentName
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.IntentFilter
@@ -50,6 +51,7 @@ class MainActivity : ComponentActivity() {
     private var broadcastActive by mutableStateOf(false)
     private var broadcastStarting by mutableStateOf(false)
     private var notificationsAllowed by mutableStateOf(true)
+    private var accessibilityEnabled by mutableStateOf(false)
     private var server by mutableStateOf("rtmp://a.rtmp.youtube.com/live2")
     private var key by mutableStateOf("")
     private var quality by mutableStateOf("1080p")
@@ -58,6 +60,7 @@ class MainActivity : ComponentActivity() {
     private var audioMode by mutableStateOf("BALANCED")
     private var pendingLive by mutableStateOf(false)
     private var waitingForOverlayPermission = false
+    private var waitingForAccessibility = false
 
     private val broadcastStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -93,6 +96,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        accessibilityEnabled = isAccessibilityServiceEnabled()
+        if (waitingForAccessibility) {
+            waitingForAccessibility = false
+            if (accessibilityEnabled) {
+                status = "Microphone concurrency enabled • continue screen capture setup"
+                if (pendingLive) requestProjection()
+            } else {
+                pendingLive = false
+                broadcastStarting = false
+                status = "Accessibility microphone access was not enabled"
+            }
+        }
         if (waitingForOverlayPermission) {
             waitingForOverlayPermission = false
             if (Settings.canDrawOverlays(this)) {
@@ -102,6 +117,15 @@ class MainActivity : ComponentActivity() {
                 status = "Floating bubble permission was not granted"
             }
         }
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val expected = ComponentName(this, RtmpBroadcastService::class.java)
+        val enabled = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ).orEmpty()
+        return enabled.split(':').any { ComponentName.unflattenFromString(it) == expected }
     }
 
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -190,6 +214,17 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+                        if (!accessibilityEnabled) {
+                            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF30291D))) {
+                                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("ENABLE IN-GAME MIC COMPATIBILITY", color = Lime, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    Text("Android can silence a normal recorder while BGMI is using voice chat. Enable this app's Accessibility service so the stream can capture your microphone concurrently. This service does not read screen content.", color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
+                                    Button(onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }, modifier = Modifier.fillMaxWidth()) {
+                                        Text("OPEN ACCESSIBILITY SETTINGS")
+                                    }
+                                }
+                            }
+                        }
                         if (page == "SETUP") {
                             BroadcastPanel(server, { server = it }, key, { key = it },
                                 quality, { quality = it }, fps, { fps = it }, orientation, { orientation = it },
@@ -202,8 +237,14 @@ class MainActivity : ComponentActivity() {
                                     else {
                                         pendingLive = true
                                         broadcastStarting = true
-                                        status = "Requesting screen/app selection permission…"
-                                        requestProjection()
+                                        if (!isAccessibilityServiceEnabled()) {
+                                            waitingForAccessibility = true
+                                            status = "Enable Mobile Gaming Streamer in Accessibility settings, then return"
+                                            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                                        } else {
+                                            status = "Requesting screen/app selection permission…"
+                                            requestProjection()
+                                        }
                                     }
                                 },
                                 onStopLive = { RtmpBroadcastService.requestStop(this@MainActivity) }
@@ -294,7 +335,7 @@ private fun Header() {
             Text("MOBILE GAMING", color = Muted, fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Bold)
             Text("STREAMER", fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
         }
-        Text("DEV 0.5.3", color = Lime, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("DEV 0.5.5", color = Lime, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -348,8 +389,8 @@ private fun BroadcastPanel(
             Text("ORIENTATION", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             ChoiceRow(listOf("AUTO", "LANDSCAPE", "PORTRAIT"), orientation, onOrientation)
             Text("AUDIO SOURCE", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            ChoiceRow(listOf("MIC", "GAME", "BALANCED"), audioMode, onAudioMode)
-            Text(if (audioMode == "MIC") "Microphone only" else if (audioMode == "GAME") "Internal game/device playback only" else "Balanced mix: microphone + game audio; voice is boosted slightly above game sound", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+            ChoiceRow(listOf("MIC", "GAME", "NORMAL", "BALANCED"), audioMode, onAudioMode)
+            Text(when (audioMode) { "MIC" -> "Microphone only"; "GAME" -> "Internal game/device playback only"; "NORMAL" -> "Game playback + microphone at equal level"; else -> "Balanced mix: game playback + microphone, with microphone level boosted" }, color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             Text("Higher resolutions and 60 FPS depend on encoder support, game orientation, network and device temperature.",
                 color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             Button(
