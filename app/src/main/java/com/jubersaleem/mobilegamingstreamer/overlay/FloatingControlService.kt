@@ -59,6 +59,7 @@ class FloatingControlService : Service() {
             broadcastMessage = intent.getStringExtra(RtmpBroadcastService.EXTRA_STATUS_MESSAGE) ?: "Broadcast status updated"
             broadcastStarting = !broadcastActive && isStartingMessage(broadcastMessage)
             renderBroadcastState()
+            if (!broadcastActive && !broadcastStarting && bubble == null) stopSelf()
         }
     }
 
@@ -330,7 +331,20 @@ class FloatingControlService : Service() {
     private fun dismissBubbleByDrag() {
         getSharedPreferences("mgs_preferences", MODE_PRIVATE).edit().putBoolean(KEY_BUBBLE_DISMISSED, true).apply()
         Toast.makeText(this, "Floating controls hidden. Reopen them from the app.", Toast.LENGTH_SHORT).show()
-        stopSelf()
+        if (broadcastActive || broadcastStarting) {
+            removeOverlayViews()
+        } else {
+            stopSelf()
+        }
+    }
+
+    private fun removeOverlayViews() {
+        chat?.apply { stopLoading(); loadUrl("about:blank"); destroy() }
+        chat = null
+        dismissTarget?.let { try { wm.removeView(it) } catch (_: Exception) { } }; dismissTarget = null
+        panel?.let { try { wm.removeView(it) } catch (_: Exception) { } }; panel = null
+        bubble?.let { try { wm.removeView(it) } catch (_: Exception) { } }; bubble = null
+        stopButton = null; speakerButton = null; statusLabel = null
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
