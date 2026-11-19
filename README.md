@@ -7,14 +7,27 @@ An Android-first livestreaming application for mobile gamers. The first developm
 ## Current status
 
 - Native Android app using Kotlin and Jetpack Compose.
-- Initial dark streaming dashboard.
+- Dark gaming-studio dashboard with neon-lime accents and compact module cards.
 - User-approved MediaProjection permission flow.
 - Foreground screen-capture service with persistent notification and stop action.
-- GitHub Actions workflow to build a debug APK.
+- GitHub Actions builds a debug APK on pushes to `main`.
+- Every successful push/manual build on `main` publishes a GitHub prerelease with the APK attached.
+- Pull-request builds create a downloadable Actions artifact but do not publish a Release.
 
-See [the roadmap](docs/ROADMAP.md) for milestones and acceptance criteria.
+See [the roadmap](docs/ROADMAP.md) and [changelog](CHANGELOG.md).
 
-## Build
+## Install the latest test APK from your phone
+
+1. Open this repository in your phone browser: https://github.com/JUBERSALEEM/MobileGamingStreamer
+2. Tap **Releases**.
+3. Open the newest release named **MobileGamingStreamer development build**.
+4. Download `app-debug.apk` from its Assets section.
+5. Open the downloaded APK and allow your browser/file manager to install unknown apps if Android asks.
+6. Install and launch the app.
+
+Each successful build from `main` creates a new prerelease. The release notes include the changelog and GitHub's commit notes. APKs are development builds and may need to be reinstalled over earlier debug builds.
+
+## Build locally
 
 Requirements:
 - JDK 17
