@@ -64,7 +64,7 @@ fun SettingsPage(
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(if (themeMode == "CLAY") "Original Claymorphism is active" else "Classic is active", color = p.text, fontWeight = FontWeight.Bold)
-                        Text(if (themeMode == "CLAY") "Sculpted 3D surfaces, deep soft shadows, raised highlights and inset control wells." else "The original dark studio with neon lime and cyan accents.", color = p.muted, fontSize = 11.sp)
+                        Text(if (themeMode == "CLAY") "Sculpted 3D surfaces, deep soft shadows, raised highlights and sculpted rounded controls." else "The original dark studio with neon lime and cyan accents.", color = p.muted, fontSize = 11.sp)
                     }
                     Card(
                         modifier = Modifier.size(62.dp),
@@ -114,7 +114,7 @@ fun AboutPage(onTerms: () -> Unit, onPrivacy: () -> Unit) {
                 Text("Independent Android app developer • BGMI / PUBG Mobile streamer", color = p.muted, fontSize = 12.sp, lineHeight = 17.sp)
             }
         }
-        Card(shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, p.edge), colors = CardDefaults.cardColors(containerColor = p.surface)) {
+        Card(shape = RoundedCornerShape(if (p.isClay) 30.dp else 24.dp), border = BorderStroke(1.dp, p.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (p.isClay) 18.dp else 1.dp), colors = CardDefaults.cardColors(containerColor = p.surface)) {
             Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (p.isClay) listOf(p.highlight, p.surface, Color(0xFFE8E2D7)) else listOf(p.surface, p.surface)), RoundedCornerShape(if (p.isClay) 30.dp else 0.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("OUR APPROACH", color = p.primary, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
                 Text("Simple controls, clear capture consent and transparent streaming status. The app is under active development; compatibility and audio capture depend on Android, the device, the game and the streaming platform.", color = p.text, fontSize = 12.sp, lineHeight = 18.sp)
