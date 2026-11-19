@@ -8,6 +8,8 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.view.accessibility.AccessibilityEvent
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -49,6 +51,16 @@ class RtmpBroadcastService : AccessibilityService() {
         }
     }
     private val notifications by lazy { getSystemService(NotificationManager::class.java) }
+    private var commandReceiverRegistered = false
+    private val commandReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                ACTION_START -> startBroadcast(intent)
+                ACTION_STOP -> stopBroadcast()
+                ACTION_SET_BITRATE -> setBitrate(intent)
+            }
+        }
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -59,31 +71,32 @@ class RtmpBroadcastService : AccessibilityService() {
             packageNames = null
             flags = 0
         }
+        val filter = IntentFilter().apply {
+            addAction(ACTION_START)
+            addAction(ACTION_STOP)
+            addAction(ACTION_SET_BITRATE)
+        }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        else registerReceiver(commandReceiver, filter)
+        commandReceiverRegistered = true
         getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit()
             .putBoolean(KEY_ACCESSIBILITY_READY, true).apply()
-        Log.i(TAG, "Accessibility microphone-concurrency service connected")
+        Log.i(TAG, "Accessibility microphone-concurrency service connected and command receiver ready")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) { }
 
     override fun onInterrupt() { }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> stopBroadcast()
-            ACTION_START -> startBroadcast(intent)
-            ACTION_SET_BITRATE -> {
-                val requested = intent.getIntExtra(EXTRA_BITRATE, 4_000_000).coerceIn(500_000, 18_000_000)
-                val active = display
-                if (active != null) {
-                    active.setVideoBitrateOnFly(requested)
-                    update("LIVE • Target bitrate ${requested / 1000} kbps")
-                } else {
-                    publishState(false, "No active stream to adjust", 0L)
-                }
-            }
+    private fun setBitrate(intent: Intent) {
+        val requested = intent.getIntExtra(EXTRA_BITRATE, 4_000_000).coerceIn(500_000, 18_000_000)
+        val active = display
+        if (active != null) {
+            active.setVideoBitrateOnFly(requested)
+            update("LIVE • Target bitrate " + (requested / 1000) + " kbps")
+        } else {
+            publishState(false, "No active stream to adjust", 0L)
         }
-        return START_NOT_STICKY
     }
 
     private fun startBroadcast(intent: Intent) {
@@ -289,8 +302,8 @@ class RtmpBroadcastService : AccessibilityService() {
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val stop = PendingIntent.getService(
-            this, 1, Intent(this, RtmpBroadcastService::class.java).setAction(ACTION_STOP),
+        val stop = PendingIntent.getBroadcast(
+            this, 1, Intent(ACTION_STOP).setPackage(packageName),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return Notification.Builder(this, CHANNEL_ID)
@@ -328,6 +341,10 @@ class RtmpBroadcastService : AccessibilityService() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        if (commandReceiverRegistered) {
+            try { unregisterReceiver(commandReceiver) } catch (_: IllegalArgumentException) { }
+            commandReceiverRegistered = false
+        }
         streamingConfirmed = false
         lastBitrate = 0L
         try { display?.release() } catch (_: Exception) { }
@@ -346,7 +363,10 @@ class RtmpBroadcastService : AccessibilityService() {
 
         /** Shared stop entry point used by the app UI, notification and floating controls. */
         fun requestStop(context: Context) {
-            context.startService(Intent(context, RtmpBroadcastService::class.java).setAction(ACTION_STOP))
+            context.sendBroadcast(Intent(ACTION_STOP).setPackage(context.packageName))
+        }
+        fun requestBitrate(context: Context, bitrate: Int) {
+            context.sendBroadcast(Intent(ACTION_SET_BITRATE).setPackage(context.packageName).putExtra(EXTRA_BITRATE, bitrate))
         }
         const val EXTRA_BITRATE = "video_bitrate"
         const val EXTRA_RESULT_CODE = "result_code"
