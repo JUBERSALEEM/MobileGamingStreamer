@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -43,7 +44,7 @@ fun SettingsPage(
             elevation = CardDefaults.cardElevation(defaultElevation = if (p.isClay) 24.dp else 12.dp),
             colors = CardDefaults.cardColors(containerColor = p.surface)
         ) {
-            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (p.isClay) listOf(p.highlight, p.surface, Color(0xFFE8E2D7)) else listOf(p.surface, p.surface)), RoundedCornerShape(if (p.isClay) 30.dp else 0.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("APPEARANCE", color = p.primary, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.4.sp)
                 Text("Choose the surface style used throughout the app.", color = p.muted, fontSize = 12.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -81,7 +82,7 @@ fun SettingsPage(
             elevation = CardDefaults.cardElevation(defaultElevation = 9.dp),
             colors = CardDefaults.cardColors(containerColor = p.surface)
         ) {
-            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (p.isClay) listOf(p.highlight, p.surface, Color(0xFFE8E2D7)) else listOf(p.surface, p.surface)), RoundedCornerShape(if (p.isClay) 30.dp else 0.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("LEGAL & PRIVACY", color = p.primary, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.3.sp)
                 Text("Read how streaming, microphone access, screen capture and app permissions work.", color = p.muted, fontSize = 12.sp)
                 OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("PRIVACY POLICY") }
@@ -103,7 +104,7 @@ fun AboutPage(onTerms: () -> Unit, onPrivacy: () -> Unit) {
             elevation = CardDefaults.cardElevation(defaultElevation = if (p.isClay) 26.dp else 13.dp),
             colors = CardDefaults.cardColors(containerColor = p.surface)
         ) {
-            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (p.isClay) listOf(p.highlight, p.surface, Color(0xFFE8E2D7)) else listOf(p.surface, p.surface)), RoundedCornerShape(if (p.isClay) 34.dp else 0.dp)).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("MOBILE GAMING", color = p.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                 Text("STREAMER", color = p.text, fontSize = 28.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
                 Text("A mobile-first RTMP streaming studio for sharing gameplay with your community.", color = p.muted, fontSize = 13.sp, lineHeight = 19.sp)
@@ -114,7 +115,7 @@ fun AboutPage(onTerms: () -> Unit, onPrivacy: () -> Unit) {
             }
         }
         Card(shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, p.edge), colors = CardDefaults.cardColors(containerColor = p.surface)) {
-            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (p.isClay) listOf(p.highlight, p.surface, Color(0xFFE8E2D7)) else listOf(p.surface, p.surface)), RoundedCornerShape(if (p.isClay) 30.dp else 0.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("OUR APPROACH", color = p.primary, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
                 Text("Simple controls, clear capture consent and transparent streaming status. The app is under active development; compatibility and audio capture depend on Android, the device, the game and the streaming platform.", color = p.text, fontSize = 12.sp, lineHeight = 18.sp)
                 Text("Mobile Gaming Streamer is an independent product and is not affiliated with, endorsed by or sponsored by Krafton, Tencent, BGMI, PUBG MOBILE or Google. All third-party names and marks belong to their respective owners.", color = p.muted, fontSize = 10.sp, lineHeight = 15.sp)
