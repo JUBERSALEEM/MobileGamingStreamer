@@ -161,7 +161,7 @@ class MainActivity : ComponentActivity() {
                 putExtra(RtmpBroadcastService.EXTRA_AUDIO_MODE, audioMode)
             }
             try {
-                startForegroundService(liveIntent)
+                sendBroadcast(liveIntent.setPackage(packageName))
                 broadcastActive = false
                 broadcastStarting = true
                 status = "Starting stream service • preparing encoders"
