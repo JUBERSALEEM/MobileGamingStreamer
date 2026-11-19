@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
     private var fps by mutableStateOf("30")
     private var orientation by mutableStateOf("AUTO")
     private var pendingLive by mutableStateOf(false)
+    private var waitingForOverlayPermission = false
 
     private val broadcastStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -86,8 +87,30 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (waitingForOverlayPermission) {
+            waitingForOverlayPermission = false
+            if (Settings.canDrawOverlays(this)) {
+                status = "Overlay permission granted • continuing stream setup"
+                requestProjection()
+            } else {
+                pendingLive = false
+                status = "Floating bubble permission was not granted"
+            }
+        }
+    }
+
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         notificationsAllowed = it
+    }
+
+    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) launchProjectionConsent()
+        else {
+            pendingLive = false
+            status = "Microphone permission is required for a stable stream with voice audio"
+        }
     }
 
     private val projectionPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -165,7 +188,16 @@ class MainActivity : ComponentActivity() {
                                     if (broadcastActive) status = "Broadcast is already running"
                                     else if (server.isBlank() || key.isBlank()) status = "Enter your server URL and stream key"
                                     else if (!server.startsWith("rtmp://") && !server.startsWith("rtmps://")) status = "Server must begin with rtmp:// or rtmps://"
-                                    else { pendingLive = true; requestProjection() }
+                                    else {
+                                        pendingLive = true
+                                        if (!Settings.canDrawOverlays(this@MainActivity)) {
+                                            waitingForOverlayPermission = true
+                                            status = "Allow Display over other apps to show the floating stream bubble"
+                                            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + packageName)))
+                                        } else {
+                                            requestProjection()
+                                        }
+                                    }
                                 },
                                 onStopLive = { startService(Intent(this@MainActivity, RtmpBroadcastService::class.java).setAction(RtmpBroadcastService.ACTION_STOP)) }
                             )
@@ -226,7 +258,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestProjection() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        launchProjectionConsent()
+    }
+
+    private fun launchProjectionConsent() {
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        status = "Choose the screen or app window to share, then confirm Android screen capture"
         projectionPermission.launch(manager.createScreenCaptureIntent())
     }
 }
