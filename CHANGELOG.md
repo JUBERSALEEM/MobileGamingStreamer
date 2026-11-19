@@ -1,3 +1,26 @@
+# MobileGamingStreamer — Changelog
+
+Development prerelease builds for device testing.
+
+## 0.5.6-dev — About, settings, Soft Clay theme and Play readiness
+
+### Added
+- Added About page crediting Juber Saleem as developer and BGMI / PUBG Mobile streamer.
+- Added Settings navigation with persistent Classic and Soft Clay theme choices.
+- Added a shared theme palette and soft claymorphism surfaces with rounded corners, raised edges, subtle depth and a warm light palette.
+- Added in-app Privacy Policy and Terms & Conditions pages.
+- Added standalone HTML legal pages under docs/ for future GitHub Pages hosting.
+- Added explicit affirmative Accessibility disclosure before launching Android Accessibility settings.
+- Added a Play Store readiness audit covering AccessibilityService, foreground-service declarations, privacy hosting, Data safety, store listing, signing and test requirements.
+- Updated version to 0.5.6 (versionCode 13) and corrected APK artifact/release filename mismatches.
+
+### Review notes
+- targetSdk and compileSdk are API 36.
+- The AccessibilityService is not declared as an accessibility tool. It receives window-state events only and has canRetrieveWindowContent=false; its Play Console declaration and review video are still required.
+- The debug APK is for device testing only. A signed release Android App Bundle and protected upload key are still required for Google Play.
+- The legal HTML files are not publicly hosted until GitHub Pages is enabled and verified.
+- Google Play approval, BGMI audio capture, teammate voice capture, and long-session stability are not certified by this source update.
+
 ## 0.5.4-dev
 
 - Replaced the microphone-only RtmpDisplay audio setup with RootEncoder GenericStream + ScreenSource.
