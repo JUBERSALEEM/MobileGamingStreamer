@@ -55,7 +55,7 @@ class MainActivity : ComponentActivity() {
     private var quality by mutableStateOf("1080p")
     private var fps by mutableStateOf("30")
     private var orientation by mutableStateOf("AUTO")
-    private var audioMode by mutableStateOf("BOTH")
+    private var audioMode by mutableStateOf("BALANCED")
     private var pendingLive by mutableStateOf(false)
     private var waitingForOverlayPermission = false
 
@@ -252,7 +252,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         if (page == "HOME") ModuleStatus(captureActive, broadcastActive)
-                        Text("Screen video + microphone • Internal game audio is next", color = Muted, fontSize = 11.sp)
+                        Text("Screen video • Microphone / game audio selectable", color = Muted, fontSize = 11.sp)
                     }
                 }
             }
@@ -348,8 +348,8 @@ private fun BroadcastPanel(
             Text("ORIENTATION", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             ChoiceRow(listOf("AUTO", "LANDSCAPE", "PORTRAIT"), orientation, onOrientation)
             Text("AUDIO SOURCE", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            ChoiceRow(listOf("MIC", "GAME", "BOTH"), audioMode, onAudioMode)
-            Text(if (audioMode == "MIC") "Microphone only" else if (audioMode == "GAME") "Internal game/device playback only" else "Microphone + game audio mixed; voice is slightly boosted", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+            ChoiceRow(listOf("MIC", "GAME", "BALANCED"), audioMode, onAudioMode)
+            Text(if (audioMode == "MIC") "Microphone only" else if (audioMode == "GAME") "Internal game/device playback only" else "Balanced mix: microphone + game audio; voice is boosted slightly above game sound", color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             Text("Higher resolutions and 60 FPS depend on encoder support, game orientation, network and device temperature.",
                 color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
             Button(
