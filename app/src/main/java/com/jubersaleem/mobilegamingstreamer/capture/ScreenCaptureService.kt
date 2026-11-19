@@ -145,7 +145,7 @@ class ScreenCaptureService : Service() {
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Mobile Gaming Streamer")
             .setContentText("Screen capture is active. Nothing is being broadcast.")
-            .setSmallIcon(android.R.drawable.presence_video_online)
+            .setSmallIcon(com.jubersaleem.mobilegamingstreamer.R.drawable.ic_stat_mgs)
             .setContentIntent(openApp)
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null, "Stop capture", stopIntent).build())
