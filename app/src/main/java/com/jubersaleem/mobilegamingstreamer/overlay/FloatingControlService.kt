@@ -347,9 +347,9 @@ class FloatingControlService : Service() {
         stopButton = null; speakerButton = null; statusLabel = null
     }
 
+    // Removing the app task must not stop an active broadcast. The RTMP
+    // foreground service remains the owner until the user explicitly ends it.
     override fun onTaskRemoved(rootIntent: Intent?) {
-        RtmpBroadcastService.requestStop(this)
-        stopSelf()
         super.onTaskRemoved(rootIntent)
     }
 
