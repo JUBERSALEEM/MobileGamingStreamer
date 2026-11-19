@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
     private var page by mutableStateOf("SETUP")
     private var themeMode by mutableStateOf("CLASSIC")
     private var showAccessibilityDisclosure by mutableStateOf(false)
+    private var accessibilityDisclosureAccepted by mutableStateOf(false)
     private var captureActive by mutableStateOf(false)
     private var broadcastActive by mutableStateOf(false)
     private var broadcastStarting by mutableStateOf(false)
@@ -185,7 +186,9 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33 && !notificationsAllowed) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        themeMode = getSharedPreferences("mgs_preferences", MODE_PRIVATE).getString("theme_mode", "CLASSIC") ?: "CLASSIC"
+        val appPreferences = getSharedPreferences("mgs_preferences", MODE_PRIVATE)
+        themeMode = appPreferences.getString("theme_mode", "CLASSIC") ?: "CLASSIC"
+        accessibilityDisclosureAccepted = appPreferences.getBoolean("accessibility_disclosure_accepted", false)
         setContent {
             MgsTheme(mode = themeMode) {
                 val palette = LocalMgsPalette.current
@@ -199,8 +202,15 @@ class MainActivity : ComponentActivity() {
                         confirmButton = {
                             Button(onClick = {
                                 showAccessibilityDisclosure = false
-                                waitingForAccessibility = true
-                                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                                accessibilityDisclosureAccepted = true
+                                getSharedPreferences("mgs_preferences", MODE_PRIVATE).edit().putBoolean("accessibility_disclosure_accepted", true).apply()
+                                if (isAccessibilityServiceEnabled()) {
+                                    waitingForAccessibility = false
+                                    if (pendingLive) requestProjection()
+                                } else {
+                                    waitingForAccessibility = true
+                                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                                }
                             }) { Text("I AGREE • CONTINUE") }
                         },
                         dismissButton = {
@@ -263,9 +273,13 @@ class MainActivity : ComponentActivity() {
                                     else {
                                         pendingLive = true
                                         broadcastStarting = true
-                                        if (!isAccessibilityServiceEnabled()) {
+                                        if (!accessibilityDisclosureAccepted) {
                                             showAccessibilityDisclosure = true
                                             status = "Review the microphone compatibility disclosure to continue"
+                                        } else if (!isAccessibilityServiceEnabled()) {
+                                            waitingForAccessibility = true
+                                            status = "Enable microphone compatibility in Android Accessibility settings"
+                                            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                                         } else {
                                             status = "Requesting screen/app selection permission…"
                                             requestProjection()
