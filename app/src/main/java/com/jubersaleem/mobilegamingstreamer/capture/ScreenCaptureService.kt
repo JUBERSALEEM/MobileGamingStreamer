@@ -15,6 +15,8 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import com.jubersaleem.mobilegamingstreamer.MainActivity
@@ -59,7 +61,12 @@ class ScreenCaptureService : Service() {
         }, null)
 
         val (width, height, density) = displaySize()
-        imageReader = ImageReader.newInstance(width, height, android.graphics.PixelFormat.RGBA_8888, 2)
+        imageReader = ImageReader.newInstance(width, height, android.graphics.PixelFormat.RGBA_8888, 2).also { reader ->
+            // Drain frames immediately in this foundation milestone so the producer never stalls.
+            reader.setOnImageAvailableListener({ source ->
+                source.acquireLatestImage()?.close()
+            }, Handler(Looper.getMainLooper()))
+        }
         virtualDisplay = projection?.createVirtualDisplay(
             "MobileGamingStreamerCapture",
             width,
