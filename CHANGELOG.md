@@ -1,3 +1,11 @@
+## 0.4.2 — RTMP screen-rendering fix
+
+- Enabled the OpenGL display path for MediaProjection RTMP capture.
+- Enabled continuous forced rendering so static frames are emitted while the screen is unchanged.
+- Corrected stream status wording: RTMP connection is not reported as LIVE until video bitrate is observed.
+- Preserved the actual display density DPI when preparing the encoder.
+- Accessibility is not used as an audio-capture workaround; audio capture will use Android's microphone and playback-capture APIs with explicit permissions.
+
 # MobileGamingStreamer — Changelog
 
 Development builds are published as GitHub prereleases. Device and platform testing is required before production use.
