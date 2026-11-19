@@ -108,7 +108,7 @@ class MainActivity : ComponentActivity() {
         if (waitingForOverlayPermission) {
             waitingForOverlayPermission = false
             if (Settings.canDrawOverlays(this)) {
-                startService(Intent(this, FloatingControlService::class.java))
+                startService(Intent(this, FloatingControlService::class.java).setAction(FloatingControlService.ACTION_SHOW))
                 status = "Floating controls enabled"
             } else {
                 status = "Floating bubble permission was not granted"
