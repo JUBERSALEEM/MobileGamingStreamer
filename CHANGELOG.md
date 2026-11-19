@@ -22,3 +22,23 @@ Development prerelease builds for device testing.
 - The YouTube video ID is not transmitted in RTMP server URLs or stream keys. Automatic chat discovery requires YouTube account OAuth and the YouTube Live Streaming API; a manual ID is retained until that integration is configured.
 - Microphone capture is implemented. Internal game playback audio and mixing with microphone are still a separate milestone; Android may restrict capture for some apps.
 - The overlay is marked secure to keep its UI out of captured video. Verify this on the target Samsung device, as OEM capture behaviour can vary.
+
+
+## 0.5.2-dev — RTMP pipeline and GO LIVE flow corrections
+
+### Fixed
+- Correct the audio codec policy: keep hardware H.264 for screen video but select the first compatible AAC encoder instead of forcing hardware audio encoding. The earlier 0.5.1 changelog described this intended policy, but the service implementation had not actually applied it.
+- Keep the session in a connecting state until RootEncoder reports a positive outgoing bitrate. Connecting or encoder-ready callbacks no longer mark the broadcast LIVE.
+- Add a 25-second startup watchdog. If no outgoing bitrate is detected, stop the failed session and publish a visible failure reason instead of leaving a false live state.
+- Use a steady 15 FPS force-render setting for MediaProjection so static screens continue producing video frames.
+- Calculate the requested output from physical display metrics rather than the launcher activity's window bounds. This avoids choosing portrait dimensions merely because the user launched GO LIVE from the portrait dashboard before selecting a landscape game.
+
+### Changed
+- Make **GO LIVE • SELECT APP** the first screen and the single broadcast entry point. After the user taps it, the app requests Android screen-sharing consent; the user selects BGMI or another app in the system picker.
+- Make overlay permission optional for streaming. The floating bubble is started only after outgoing video bitrate is confirmed, and only if overlay permission is granted.
+- Fix the return-from-Settings flow for enabling floating controls so it no longer accidentally launches a new screen-capture session.
+- Update README to describe implemented functionality and remaining device-validation work accurately.
+
+### Validation status
+- GitHub Actions compilation is required for this commit.
+- Actual RTMP delivery, Samsung MediaProjection app-window capture, overlay exclusion, and microphone capture still require physical-device testing. A successful build is not a streaming certification.
