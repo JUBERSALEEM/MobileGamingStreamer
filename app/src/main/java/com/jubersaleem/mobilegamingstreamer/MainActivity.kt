@@ -203,7 +203,7 @@ class MainActivity : ComponentActivity() {
                                         requestProjection()
                                     }
                                 },
-                                onStopLive = { startService(Intent(this@MainActivity, RtmpBroadcastService::class.java).setAction(RtmpBroadcastService.ACTION_STOP)) }
+                                onStopLive = { RtmpBroadcastService.requestStop(this@MainActivity) }
                             )
                             Text("FLOATING CONTROLS", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             Text("Optional: allow Display over other apps. Streaming does not depend on this permission; the small control bubble appears after video is actually being sent.", color = Muted, fontSize = 11.sp)
@@ -221,7 +221,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Button(onClick = { page = "SETUP" }, modifier = Modifier.weight(1f)) { Text("BROADCAST SETUP") }
-                                        OutlinedButton(onClick = { startService(Intent(this@MainActivity, RtmpBroadcastService::class.java).setAction(RtmpBroadcastService.ACTION_STOP)) }, enabled = broadcastActive, modifier = Modifier.weight(1f)) { Text("STOP LIVE") }
+                                        OutlinedButton(onClick = { RtmpBroadcastService.requestStop(this@MainActivity) }, enabled = broadcastActive || broadcastStarting, modifier = Modifier.weight(1f)) { Text("STOP LIVE") }
                                     }
                                 }
                             }
@@ -291,7 +291,7 @@ private fun Header() {
             Text("MOBILE GAMING", color = Muted, fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Bold)
             Text("STREAMER", fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
         }
-        Text("DEV 0.5.2", color = Lime, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("DEV 0.5.3", color = Lime, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
 
