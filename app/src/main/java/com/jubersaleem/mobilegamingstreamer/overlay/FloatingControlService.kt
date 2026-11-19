@@ -288,6 +288,10 @@ class FloatingControlService : Service() {
         val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
         broadcastActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
         broadcastMessage = prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Broadcast setup ready") ?: "Broadcast setup ready"
+        if (!prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false) &&
+            listOf("stopped", "disconnected").any { broadcastMessage.contains(it, ignoreCase = true) }) {
+            broadcastMessage = "Broadcast setup ready"
+        }
         broadcastStarting = !broadcastActive && isStartingMessage(broadcastMessage)
         renderBroadcastState()
     }
@@ -299,9 +303,12 @@ class FloatingControlService : Service() {
     }
 
     private fun renderBroadcastState() {
+        val errorState = !broadcastActive && !broadcastStarting &&
+            listOf("failed", "error", "invalid", "authentication").any { broadcastMessage.contains(it, ignoreCase = true) }
         statusLabel?.text = when {
             broadcastActive -> "● LIVE  •  $broadcastMessage"
             broadcastStarting -> "◌ CONNECTING  •  $broadcastMessage"
+            errorState -> "⚠ ERROR  •  $broadcastMessage"
             else -> "○ SETUP  •  $broadcastMessage"
         }
         stopButton?.apply {
@@ -309,10 +316,11 @@ class FloatingControlService : Service() {
             text = when {
                 broadcastActive -> "■  STOP LIVE STREAM"
                 broadcastStarting -> "×  CANCEL STARTUP"
+                errorState -> "↻  RETRY / OPEN SETUP"
                 else -> "↗  OPEN BROADCAST SETUP"
             }
-            setBackgroundColor(if (broadcastActive || broadcastStarting) 0xFFB94D54.toInt() else 0xFFC4FF5C.toInt())
-            setTextColor(if (broadcastActive || broadcastStarting) 0xFFFFFFFF.toInt() else 0xFF11170A.toInt())
+            setBackgroundColor(if (broadcastActive || broadcastStarting || errorState) 0xFFB94D54.toInt() else 0xFFC4FF5C.toInt())
+            setTextColor(if (broadcastActive || broadcastStarting || errorState) 0xFFFFFFFF.toInt() else 0xFF11170A.toInt())
         }
     }
 
