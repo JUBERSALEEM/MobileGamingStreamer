@@ -152,28 +152,33 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        BroadcastPanel(
-                            server, { server = it }, key, { key = it },
-                            quality, { quality = it }, fps, { fps = it },
-                            orientation, { orientation = it },
-                            broadcastActive,
-                            onGoLive = {
-                                if (server.isBlank() || key.isBlank()) {
-                                    status = "Enter your server URL and stream key"
-                                } else if (!server.startsWith("rtmp://") && !server.startsWith("rtmps://")) {
-                                    status = "Server must begin with rtmp:// or rtmps://"
-                                } else {
-                                    pendingLive = true
-                                    requestProjection()
+                        if (page == "SETUP") {
+                            OutlinedButton(onClick = { page = "HOME" }) { Text("← BACK TO STUDIO") }
+                            BroadcastPanel(server, { server = it }, key, { key = it },
+                                quality, { quality = it }, fps, { fps = it }, orientation, { orientation = it },
+                                broadcastActive,
+                                onGoLive = {
+                                    if (broadcastActive) status = "Broadcast is already running"
+                                    else if (server.isBlank() || key.isBlank()) status = "Enter your server URL and stream key"
+                                    else if (!server.startsWith("rtmp://") && !server.startsWith("rtmps://")) status = "Server must begin with rtmp:// or rtmps://"
+                                    else { pendingLive = true; requestProjection() }
+                                },
+                                onStopLive = { startService(Intent(this@MainActivity, RtmpBroadcastService::class.java).setAction(RtmpBroadcastService.ACTION_STOP)) }
+                            )
+                        } else {
+                            Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
+                                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text("LIVE SESSION", color = Lime, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    Text(if (broadcastActive) status else "No active broadcast", color = if (broadcastActive) Lime else Muted)
+                                    Text(if (broadcastActive && liveBitrate > 0) "${liveBitrate / 1000} kbps" else if (broadcastActive) "Waiting for bitrate…" else "0 kbps", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(onClick = { page = "SETUP" }, modifier = Modifier.weight(1f)) { Text("BROADCAST SETUP") }
+                                        OutlinedButton(onClick = { startService(Intent(this@MainActivity, RtmpBroadcastService::class.java).setAction(RtmpBroadcastService.ACTION_STOP)) }, enabled = broadcastActive, modifier = Modifier.weight(1f)) { Text("STOP LIVE") }
+                                    }
                                 }
-                            },
-                            onStopLive = {
-                                startService(Intent(this@MainActivity, RtmpBroadcastService::class.java).setAction(RtmpBroadcastService.ACTION_STOP))
-                                broadcastActive = false
-                                status = "Stop requested"
                             }
-                        )
-                        Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
+                        }
+                        if (page == "HOME") Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
                             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                                 Text("CAPTURE TEST", color = Lime, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                 Text("Test the H.264 encoder without connecting to a streaming platform.", color = Muted)
@@ -195,7 +200,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        ModuleStatus(captureActive, broadcastActive)
+                        if (page == "HOME") ModuleStatus(captureActive, broadcastActive)
                         Text("Video-only development build • Audio mixing is next", color = Muted, fontSize = 11.sp)
                     }
                 }
