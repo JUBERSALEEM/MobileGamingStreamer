@@ -25,6 +25,7 @@ import com.pedro.library.rtmp.RtmpDisplay
 class RtmpBroadcastService : Service() {
     private var display: RtmpDisplay? = null
     private var streamingConfirmed = false
+    private var lastBitrate = 0L
     private val handler = Handler(Looper.getMainLooper())
     private val startupTimeout = Runnable {
         if (display != null && !streamingConfirmed) {
@@ -56,6 +57,7 @@ class RtmpBroadcastService : Service() {
     private fun startBroadcast(intent: Intent) {
         handler.removeCallbacks(startupTimeout)
         streamingConfirmed = false
+        lastBitrate = 0L
         display?.let { previous ->
             try { previous.stopStream() } catch (_: Exception) { }
             display = null
@@ -87,6 +89,9 @@ class RtmpBroadcastService : Service() {
                     stopBroadcast("Connection failed: $reason")
                 }
                 override fun onDisconnect() {
+                    handler.removeCallbacks(startupTimeout)
+                    streamingConfirmed = false
+                    lastBitrate = 0L
                     display = null
                     publishState(false, "Broadcast disconnected", 0L)
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -100,12 +105,14 @@ class RtmpBroadcastService : Service() {
                     if (bitrate > 0L) {
                         val firstConfirmation = !streamingConfirmed
                         streamingConfirmed = true
+                        lastBitrate = bitrate
                         handler.removeCallbacks(startupTimeout)
                         update("LIVE • ${bitrate / 1000} kbps", bitrate)
                         if (firstConfirmation && Settings.canDrawOverlays(this@RtmpBroadcastService)) {
                             startService(Intent(this@RtmpBroadcastService, com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService::class.java))
                         }
                     } else {
+                        lastBitrate = 0L
                         update("Connected • Waiting for outgoing video", 0L)
                     }
                 }
@@ -172,6 +179,7 @@ class RtmpBroadcastService : Service() {
     private fun stopBroadcast(message: String = "Broadcast stopped") {
         handler.removeCallbacks(startupTimeout)
         streamingConfirmed = false
+        lastBitrate = 0L
         val active = display
         display = null
         try { active?.stopStream() } catch (error: Exception) {
@@ -183,7 +191,7 @@ class RtmpBroadcastService : Service() {
     }
 
     private fun update(message: String, bitrate: Long = 0L) {
-        publishState(streamingConfirmed && bitrate > 0L, message, bitrate)
+        publishState(streamingConfirmed && lastBitrate > 0L, message, if (bitrate > 0L) bitrate else lastBitrate)
         notifications.notify(NOTIFICATION_ID, notification(message))
     }
 
@@ -251,6 +259,7 @@ class RtmpBroadcastService : Service() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         streamingConfirmed = false
+        lastBitrate = 0L
         try { display?.stopStream() } catch (_: Exception) { }
         display = null
         publishState(false, "Broadcast service stopped", 0L)
