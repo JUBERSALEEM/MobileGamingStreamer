@@ -57,7 +57,7 @@ import androidx.compose.ui.window.DialogProperties
 enum class ClayButtonStyle { Filled, Raised, Inset }
 
 /** Semantic tones for clay pills and badges. */
-enum class ClayTone { Live, Active, Idle, Accent }
+enum class ClayTone { Live, Active, Idle, Accent, Alert }
 
 /** One destination of the clay navigation dock. */
 data class ClayNavItem(
@@ -512,6 +512,7 @@ fun ClayStatusPill(
         ClayTone.Active -> Color(0xFFD7EDE2) to Color(0xFF2E7A5C)
         ClayTone.Idle -> p.inset to p.muted
         ClayTone.Accent -> Color(0xFFE4DFF6) to p.secondary
+        ClayTone.Alert -> Color(0xFFF9DCDA) to p.danger
     }
     Row(
         modifier = modifier

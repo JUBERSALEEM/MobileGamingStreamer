@@ -28,4 +28,12 @@ class MicrophoneAudioSourcePolicyTest {
             MicrophoneAudioSourcePolicy.select(accessibilityConnected = false, externalInputConnected = false)
         )
     }
+
+    @Test
+    fun withoutAccessibilityExternalHeadsetStillUsesMicrophoneFallback() {
+        assertEquals(
+            MediaRecorder.AudioSource.MIC,
+            MicrophoneAudioSourcePolicy.select(accessibilityConnected = false, externalInputConnected = true)
+        )
+    }
 }

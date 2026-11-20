@@ -14,6 +14,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -28,7 +29,12 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.jubersaleem.mobilegamingstreamer.R
+import com.jubersaleem.mobilegamingstreamer.BroadcastStatusKind
 import com.jubersaleem.mobilegamingstreamer.capture.RtmpBroadcastService
+import com.jubersaleem.mobilegamingstreamer.classifyBroadcastStatus
+import com.jubersaleem.mobilegamingstreamer.isStartingBroadcastMessage
+import com.jubersaleem.mobilegamingstreamer.capture.SpeakerMutePolicy
+import com.jubersaleem.mobilegamingstreamer.capture.SpeakerMuteState
 import kotlin.math.abs
 
 /** Compact recorder-style bubble. The expanded controls are shown only on user tap. */
@@ -50,7 +56,7 @@ class FloatingControlService : Service() {
     private var broadcastActive = false
     private var broadcastStarting = false
     private var broadcastMessage = "Broadcast setup ready"
-    private var speakerMuted = false
+    private var speakerMuteState = SpeakerMuteState()
     private var streamAudioMuted = false
     private var streamAudioButton: Button? = null
 
@@ -59,7 +65,7 @@ class FloatingControlService : Service() {
             if (intent?.action != RtmpBroadcastService.ACTION_STATUS) return
             broadcastActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_ACTIVE, false)
             broadcastMessage = intent.getStringExtra(RtmpBroadcastService.EXTRA_STATUS_MESSAGE) ?: "Broadcast status updated"
-            broadcastStarting = !broadcastActive && isStartingMessage(broadcastMessage)
+            broadcastStarting = !broadcastActive && isStartingBroadcastMessage(broadcastMessage)
             renderBroadcastState()
             if (!broadcastActive && !broadcastStarting && bubble == null) stopSelf()
         }
@@ -87,8 +93,7 @@ class FloatingControlService : Service() {
         if (prefs.getBoolean(KEY_BUBBLE_DISMISSED, false)) { stopSelf(); return START_NOT_STICKY }
         refreshBroadcastState()
         if (bubble == null) createBubble()
-        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        speakerMuted = audio.getStreamVolume(AudioManager.STREAM_MUSIC) == 0
+        adoptSpeakerMuteOwnership()
         streamAudioMuted = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE).getBoolean(RtmpBroadcastService.KEY_STREAM_AUDIO_MUTED, false)
         renderBroadcastState()
         renderSpeakerState()
@@ -391,19 +396,12 @@ class FloatingControlService : Service() {
             listOf("stopped", "disconnected").any { broadcastMessage.contains(it, ignoreCase = true) }) {
             broadcastMessage = "Broadcast setup ready"
         }
-        broadcastStarting = !broadcastActive && isStartingMessage(broadcastMessage)
+        broadcastStarting = !broadcastActive && isStartingBroadcastMessage(broadcastMessage)
         renderBroadcastState()
     }
 
-    private fun isStartingMessage(message: String): Boolean {
-        val value = message.lowercase()
-        return listOf("preparing", "encoder ready", "connecting", "waiting for", "stream key accepted")
-            .any { value.contains(it) }
-    }
-
     private fun renderBroadcastState() {
-        val errorState = !broadcastActive && !broadcastStarting &&
-            listOf("failed", "error", "invalid", "authentication").any { broadcastMessage.contains(it, ignoreCase = true) }
+        val errorState = classifyBroadcastStatus(broadcastMessage, broadcastActive, broadcastStarting) == BroadcastStatusKind.ERROR
         statusLabel?.text = when {
             broadcastActive -> "● LIVE  •  $broadcastMessage"
             broadcastStarting -> "◌ CONNECTING  •  $broadcastMessage"
@@ -433,11 +431,46 @@ class FloatingControlService : Service() {
     }
 
     private fun renderSpeakerState() {
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val muted = SpeakerMutePolicy.displayMuted(audio.getStreamVolume(AudioManager.STREAM_MUSIC))
         speakerButton?.apply {
-            text = if (speakerMuted) "◖))  SPEAKER MUTED  •  TAP TO UNMUTE" else "◖))  SPEAKER ON  •  TAP TO MUTE"
-            background = overlayButtonBackground(if (speakerMuted) 0xFFB94D54.toInt() else 0xFF8E82C9.toInt())
+            text = if (muted) "◖))  LOCAL SPEAKER MUTED  •  TAP TO UNMUTE" else "◖))  LOCAL SPEAKER ON  •  TAP TO MUTE"
+            contentDescription = if (muted) {
+                "Local speaker is muted. Tap to restore the previous volume. Stream audio is unaffected."
+            } else {
+                "Local speaker is on. Tap to mute this device only. Stream audio is unaffected."
+            }
+            background = overlayButtonBackground(if (muted) 0xFFB94D54.toInt() else 0xFF8E82C9.toInt())
             setTextColor(0xFFFFFFFF.toInt())
         }
+    }
+
+    /**
+     * Local speaker mute only moves the device music stream; the outgoing
+     * stream mix is controlled separately by the stream-audio button.
+     */
+    private fun musicVolumes(): Triple<AudioManager, Int, Int> {
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return Triple(audio, audio.getStreamVolume(AudioManager.STREAM_MUSIC), audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC))
+    }
+
+    private fun adoptSpeakerMuteOwnership() {
+        val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
+        val (_, current, max) = musicVolumes()
+        speakerMuteState = SpeakerMutePolicy.onStart(
+            prefs.getBoolean(KEY_SPEAKER_MUTE_OWNED, false),
+            prefs.getInt(KEY_SPEAKER_PREVIOUS_VOLUME, 0),
+            current,
+            max
+        )
+        persistSpeakerMuteState()
+    }
+
+    private fun persistSpeakerMuteState() {
+        getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE).edit()
+            .putBoolean(KEY_SPEAKER_MUTE_OWNED, speakerMuteState.owned)
+            .putInt(KEY_SPEAKER_PREVIOUS_VOLUME, speakerMuteState.savedVolume)
+            .apply()
     }
 
     private fun renderStreamAudioState() {
@@ -448,20 +481,12 @@ class FloatingControlService : Service() {
         }
     }
 
-    @Suppress("DEPRECATION")
     private fun toggleSpeakerMute() {
-        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
-        if (!speakerMuted) {
-            val current = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
-            prefs.edit().putInt("speaker_previous_music_volume", current.coerceAtLeast(1)).apply()
-            audio.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
-            speakerMuted = true
-        } else {
-            val previous = prefs.getInt("speaker_previous_music_volume", audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC) / 2)
-            audio.setStreamVolume(AudioManager.STREAM_MUSIC, previous.coerceIn(1, audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)), 0)
-            speakerMuted = false
-        }
+        val (audio, current, max) = musicVolumes()
+        val result = SpeakerMutePolicy.onToggle(speakerMuteState, current, max)
+        result.applyVolume?.let { audio.setStreamVolume(AudioManager.STREAM_MUSIC, it, 0) }
+        speakerMuteState = result.state
+        persistSpeakerMuteState()
         renderSpeakerState()
     }
 
@@ -469,6 +494,9 @@ class FloatingControlService : Service() {
         val expanded = panel?.visibility == View.VISIBLE
         panel?.visibility = if (expanded) View.GONE else View.VISIBLE
         bubble?.visibility = if (expanded) View.VISIBLE else View.GONE
+        // The volume may have moved via hardware buttons while the panel was
+        // closed; re-read it so the speaker button never shows a stale state.
+        if (!expanded) renderSpeakerState()
         if (expanded) scheduleDim()
     }
 
@@ -510,14 +538,39 @@ class FloatingControlService : Service() {
             setPadding(dp(10), 0, dp(10), 0)
         }
 
+    /**
+     * Never leave the device silent because the overlay went away: if this
+     * service muted the music stream and still owns that mute, restore the
+     * recorded volume exactly once. Hardware-button changes win over the
+     * recorded value, and failures are logged, never swallowed.
+     */
+    private fun restoreSpeakerVolumeIfOwned() {
+        try {
+            val (audio, current, max) = musicVolumes()
+            val result = SpeakerMutePolicy.onDestroy(speakerMuteState, current, max)
+            result.applyVolume?.let {
+                audio.setStreamVolume(AudioManager.STREAM_MUSIC, it, 0)
+                Log.i(TAG, "Restored local music volume to $it on overlay destroy")
+            }
+            speakerMuteState = result.state
+            persistSpeakerMuteState()
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not restore local music volume on overlay destroy", error)
+        }
+    }
+
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     companion object {
         const val ACTION_SHOW = "com.jubersaleem.mobilegamingstreamer.action.SHOW_FLOATING_CONTROLS"
         const val KEY_BUBBLE_DISMISSED = "floating_bubble_dismissed"
+        const val KEY_SPEAKER_MUTE_OWNED = "speaker_mute_owned"
+        const val KEY_SPEAKER_PREVIOUS_VOLUME = "speaker_previous_music_volume"
+        private const val TAG = "MGS-FloatingControls"
     }
 
     override fun onDestroy() {
+        restoreSpeakerVolumeIfOwned()
         if (statusReceiverRegistered) {
             try { unregisterReceiver(broadcastReceiver) } catch (_: IllegalArgumentException) { }
             statusReceiverRegistered = false

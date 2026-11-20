@@ -24,6 +24,7 @@ import android.media.AudioManager
 import android.media.AudioDeviceInfo
 import android.util.Log
 import android.view.WindowManager
+import com.jubersaleem.mobilegamingstreamer.AudioRouteLabels
 import com.jubersaleem.mobilegamingstreamer.MainActivity
 import com.jubersaleem.mobilegamingstreamer.StreamUrlValidator
 import com.pedro.common.ConnectChecker
@@ -38,6 +39,8 @@ import com.pedro.library.generic.GenericStream
 class RtmpBroadcastService : Service() {
     private var display: GenericStream? = null
     private var activeAudioSource: AudioSource? = null
+    private var activeMicSource: Int = AudioRouteLabels.SOURCE_NONE
+    private var activeHeadset: Boolean = false
     private var activeProjection: MediaProjection? = null
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -179,6 +182,9 @@ class RtmpBroadcastService : Service() {
                     lastBitrate = 0L
                     val disconnected = display
                     display = null
+                    activeAudioSource = null
+                    activeMicSource = AudioRouteLabels.SOURCE_NONE
+                    activeHeadset = false
                     try { disconnected?.release() } catch (error: Exception) {
                         Log.w(TAG, "Error releasing disconnected stream", error)
                     }
@@ -246,6 +252,10 @@ class RtmpBroadcastService : Service() {
             )
             Log.i(TAG, "Microphone route: accessibility=" + accessibilityMicConnected +
                 " externalInput=" + (preferredInput != null) + " audioSource=" + micSource)
+            // The audio route is fixed when the session starts; a headset
+            // connected or removed mid-session takes effect on the next GO LIVE.
+            activeMicSource = if (audioMode == AUDIO_MODE_GAME) AudioRouteLabels.SOURCE_NONE else micSource
+            activeHeadset = preferredInput != null
             val audioSource: AudioSource = when (audioMode) {
                 AUDIO_MODE_MIC -> ProcessedMixAudioSource(mediaProjection, false, micSource).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.0f) }
                 AUDIO_MODE_GAME -> InternalAudioSource(mediaProjection)
@@ -327,6 +337,8 @@ class RtmpBroadcastService : Service() {
         val active = display
         display = null
         activeAudioSource = null
+        activeMicSource = AudioRouteLabels.SOURCE_NONE
+        activeHeadset = false
         try { active?.release() } catch (error: Exception) {
             Log.w(TAG, "Error while releasing RTMP stream", error)
         }
@@ -381,6 +393,9 @@ class RtmpBroadcastService : Service() {
         val aec = voice?.aecAttached == true
         val ns = voice?.nsAttached == true
         val voiceOptimized = voice?.voiceOptimizerActive == true
+        val captureRunning = activeAudioSource?.isRunning() == true
+        val streamMuted = getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_STREAM_AUDIO_MUTED, false)
         getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_ACTIVE, active)
             .putString(KEY_MESSAGE, message)
@@ -394,6 +409,10 @@ class RtmpBroadcastService : Service() {
             putExtra(EXTRA_STATUS_AEC, aec)
             putExtra(EXTRA_STATUS_NS, ns)
             putExtra(EXTRA_STATUS_VOICE, voiceOptimized)
+            putExtra(EXTRA_STATUS_MIC_SOURCE, activeMicSource)
+            putExtra(EXTRA_STATUS_HEADSET, activeHeadset)
+            putExtra(EXTRA_STATUS_STREAM_MUTED, streamMuted)
+            putExtra(EXTRA_STATUS_CAPTURE, captureRunning)
         })
     }
 
@@ -454,6 +473,8 @@ class RtmpBroadcastService : Service() {
         try { display?.release() } catch (_: Exception) { }
         display = null
         activeAudioSource = null
+        activeMicSource = AudioRouteLabels.SOURCE_NONE
+        activeHeadset = false
         releaseProjection()
         publishState(false, "Broadcast service stopped", 0L)
         super.onDestroy()
@@ -498,6 +519,10 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_STATUS_AEC = "status_aec"
         const val EXTRA_STATUS_NS = "status_ns"
         const val EXTRA_STATUS_VOICE = "status_voice_optimized"
+        const val EXTRA_STATUS_MIC_SOURCE = "status_mic_source"
+        const val EXTRA_STATUS_HEADSET = "status_headset"
+        const val EXTRA_STATUS_STREAM_MUTED = "status_stream_muted"
+        const val EXTRA_STATUS_CAPTURE = "status_capture_running"
         const val STATE_PREFS = "broadcast_state"
         const val KEY_ACTIVE = "active"
         const val KEY_MESSAGE = "message"
