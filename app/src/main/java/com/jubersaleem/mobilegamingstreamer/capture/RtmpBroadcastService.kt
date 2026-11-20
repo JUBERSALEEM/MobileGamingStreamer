@@ -50,7 +50,9 @@ class RtmpBroadcastService : Service() {
     private var streamingConfirmed = false
     private var lastBitrate = 0L
     private var lastPositiveBitrateAt = 0L
+    private var lastPositiveFpsAt = 0L
     private var stopping = false
+    private val healthMonitor = StreamHealthMonitor()
     private val handler = Handler(Looper.getMainLooper())
     private val startupTimeout = Runnable {
         if (display != null && recoveryDriver.isStartupBoundActive(streamingConfirmed)) {
@@ -109,6 +111,9 @@ class RtmpBroadcastService : Service() {
                 }
                 WatchdogAction.NONE -> { }
             }
+            // Observational health sampling on the existing tick. No new loop:
+            // this line is reached only when the watchdog above did not stop.
+            sampleStreamHealth()
             handler.postDelayed(this, STREAM_HEALTH_CHECK_INTERVAL_MS)
         }
     }
@@ -166,11 +171,13 @@ class RtmpBroadcastService : Service() {
         handler.removeCallbacks(streamHealthWatchdog)
         handler.removeCallbacks(sessionHeartbeat)
         recoveryDriver.startSession()
+        healthMonitor.startSession(SystemClock.elapsedRealtime())
         // Suppress callbacks from a previous stream while its resources are released.
         stopping = true
         streamingConfirmed = false
         lastBitrate = 0L
         lastPositiveBitrateAt = 0L
+        lastPositiveFpsAt = 0L
         display?.let { previous ->
             try { previous.release() } catch (_: Exception) { }
             display = null
@@ -258,6 +265,7 @@ class RtmpBroadcastService : Service() {
                     handler.removeCallbacks(streamHealthWatchdog)
                     handler.removeCallbacks(sessionHeartbeat)
                     recoveryDriver.onStop()
+                    healthMonitor.onStopped()
                     streamingConfirmed = false
                     lastBitrate = 0L
                     val disconnected = display
@@ -399,6 +407,12 @@ class RtmpBroadcastService : Service() {
             display = stream
             stream.setFpsListener { outputFps ->
                 handler.post {
+                    // Encoder-output cadence for health sampling, tracked in
+                    // every phase (including reconnecting) for the stalled
+                    // encoder-versus-transmission distinction.
+                    if (display === stream && outputFps > 0) {
+                        lastPositiveFpsAt = SystemClock.elapsedRealtime()
+                    }
                     if (display === stream && streamingConfirmed && recoveryDriver.state.phase != StreamPhase.RECONNECTING) {
                         update("LIVE • $activeProfileLabel • ${outputFps} FPS • ${lastBitrate / 1000} kbps", lastBitrate)
                     }
@@ -421,6 +435,38 @@ class RtmpBroadcastService : Service() {
         }
     }
 
+    /**
+     * Feed one observational health sample from the live pipeline. Runs only
+     * on the existing watchdog tick; a sampling failure skips the tick and
+     * never affects the session. Health transitions are logged for device
+     * debugging and ride along the next status broadcast as an extra.
+     */
+    private fun sampleStreamHealth() {
+        val stream = display ?: return
+        val previous = healthMonitor.state
+        val sample = try {
+            val client = stream.getStreamClient()
+            StreamHealthSample(
+                nowMs = SystemClock.elapsedRealtime(),
+                bitrateBps = lastBitrate,
+                sentVideoTotal = client.getSentVideoFrames(),
+                sentAudioTotal = client.getSentAudioFrames(),
+                droppedVideoTotal = client.getDroppedVideoFrames(),
+                droppedAudioTotal = client.getDroppedAudioFrames(),
+                queueItems = client.getItemsInCache(),
+                queueBytesOut = client.getQueueBytesOut(),
+                congested = client.hasCongestion(),
+                lastPositiveBitrateMs = lastPositiveBitrateAt,
+                lastEncoderFpsMs = lastPositiveFpsAt,
+                recovering = recoveryDriver.state.phase == StreamPhase.RECONNECTING
+            )
+        } catch (_: Exception) {
+            return
+        }
+        val next = healthMonitor.onSample(sample)
+        if (next != previous) Log.i(TAG, "Stream health: $previous -> $next")
+    }
+
     private fun stopBroadcast(message: String = "Broadcast stopped") {
         if (stopping) return
         stopping = true
@@ -428,6 +474,7 @@ class RtmpBroadcastService : Service() {
         handler.removeCallbacks(streamHealthWatchdog)
         handler.removeCallbacks(sessionHeartbeat)
         recoveryDriver.onStop()
+        healthMonitor.onStopped()
         streamingConfirmed = false
         lastBitrate = 0L
         val active = display
@@ -499,12 +546,14 @@ class RtmpBroadcastService : Service() {
             .putBoolean(KEY_ACTIVE, active)
             .putString(KEY_MESSAGE, message)
             .putLong(KEY_BITRATE, bitrate)
+            .putString(KEY_HEALTH, healthMonitor.state.name)
             .putLong(KEY_HEARTBEAT, System.currentTimeMillis())
             .apply()
         sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).apply {
             putExtra(EXTRA_STATUS_ACTIVE, active)
             putExtra(EXTRA_STATUS_MESSAGE, message)
             putExtra(EXTRA_STATUS_BITRATE, bitrate)
+            putExtra(EXTRA_STATUS_HEALTH, healthMonitor.state.name)
             putExtra(EXTRA_STATUS_AEC, aec)
             putExtra(EXTRA_STATUS_NS, ns)
             putExtra(EXTRA_STATUS_VOICE, voiceOptimized)
@@ -564,6 +613,7 @@ class RtmpBroadcastService : Service() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         recoveryDriver.onDestroyed()
+        healthMonitor.onStopped()
         if (commandReceiverRegistered) {
             try { unregisterReceiver(commandReceiver) } catch (_: IllegalArgumentException) { }
             commandReceiverRegistered = false
@@ -623,10 +673,12 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_STATUS_HEADSET = "status_headset"
         const val EXTRA_STATUS_STREAM_MUTED = "status_stream_muted"
         const val EXTRA_STATUS_CAPTURE = "status_capture_running"
+        const val EXTRA_STATUS_HEALTH = "status_health"
         const val STATE_PREFS = "broadcast_state"
         const val KEY_ACTIVE = "active"
         const val KEY_MESSAGE = "message"
         const val KEY_BITRATE = "bitrate"
+        const val KEY_HEALTH = "health"
         const val KEY_HEARTBEAT = "service_heartbeat"
         private const val STREAM_HEALTH_CHECK_INTERVAL_MS = 5_000L
         private const val STARTUP_TIMEOUT_MS = 25_000L
