@@ -36,6 +36,7 @@ import com.pedro.library.generic.GenericStream
 /** RTMP broadcast service with microphone audio and screen video. */
 class RtmpBroadcastService : Service() {
     private var display: GenericStream? = null
+    private var activeAudioSource: AudioSource? = null
     private var activeProjection: MediaProjection? = null
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -58,6 +59,7 @@ class RtmpBroadcastService : Service() {
                 ACTION_START -> startBroadcast(intent)
                 ACTION_STOP -> stopBroadcast()
                 ACTION_SET_BITRATE -> setBitrate(intent)
+                ACTION_SET_STREAM_AUDIO_MUTED -> setStreamAudioMuted(intent.getBooleanExtra(EXTRA_STREAM_AUDIO_MUTED, false))
             }
         }
     }
@@ -67,6 +69,7 @@ class RtmpBroadcastService : Service() {
         val filter = IntentFilter().apply {
             addAction(ACTION_STOP)
             addAction(ACTION_SET_BITRATE)
+            addAction(ACTION_SET_STREAM_AUDIO_MUTED)
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         else registerReceiver(commandReceiver, filter)
@@ -80,6 +83,7 @@ class RtmpBroadcastService : Service() {
             ACTION_START -> intent?.let { startBroadcast(it) }
             ACTION_STOP -> stopBroadcast()
             ACTION_SET_BITRATE -> intent?.let { setBitrate(it) }
+            ACTION_SET_STREAM_AUDIO_MUTED -> intent?.let { setStreamAudioMuted(it.getBooleanExtra(EXTRA_STREAM_AUDIO_MUTED, false)) }
         }
         return START_NOT_STICKY
     }
@@ -211,20 +215,29 @@ class RtmpBroadcastService : Service() {
             mediaProjection.registerCallback(projectionCallback, handler)
 
             val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE) ?: AUDIO_MODE_BALANCED
-            val micSource = chooseMicrophoneSource()
+            val micSource = MediaRecorder.AudioSource.DEFAULT
+            val preferredInput = choosePreferredMicrophoneDevice()
             val audioSource: AudioSource = when (audioMode) {
-                AUDIO_MODE_MIC -> MicrophoneSource(audioSource = micSource)
+                AUDIO_MODE_MIC -> MicrophoneSource(audioSource = micSource).apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) setPreferredDevice(preferredInput)
+                }
                 AUDIO_MODE_GAME -> InternalAudioSource(mediaProjection)
                 AUDIO_MODE_NORMAL -> MixAudioSource(mediaProjection, null, micSource).apply {
+                    setPreferredDevice(preferredInput)
                     microphoneVolume = 1.0f
                     internalVolume = 1.0f
                 }
                 else -> MixAudioSource(mediaProjection, null, micSource).apply {
+                    setPreferredDevice(preferredInput)
                     // Balanced preset gives voice a little more headroom than game playback.
                     microphoneVolume = 1.6f
                     internalVolume = 1.0f
                 }
             }
+
+            activeAudioSource = audioSource
+            val streamMuted = getSharedPreferences(STATE_PREFS, MODE_PRIVATE).getBoolean(KEY_STREAM_AUDIO_MUTED, false)
+            if (streamMuted) setAudioSourceMuted(audioSource, true)
 
             val stream = GenericStream(
                 this,
@@ -240,6 +253,7 @@ class RtmpBroadcastService : Service() {
             }
             val echoCancellation = audioMode != AUDIO_MODE_GAME
             val noiseSuppression = audioMode != AUDIO_MODE_GAME
+            Log.i(TAG, "Audio effects requested: AEC=$echoCancellation, NS=$noiseSuppression; microphone source=DEFAULT")
             val audioPrepared = stream.prepareAudio(44_100, true, 128_000, echoCancellation, noiseSuppression)
             if (!audioPrepared) {
                 throw IllegalStateException("Audio source preparation failed for mode: $audioMode")
@@ -267,6 +281,7 @@ class RtmpBroadcastService : Service() {
         lastBitrate = 0L
         val active = display
         display = null
+        activeAudioSource = null
         try { active?.release() } catch (error: Exception) {
             Log.w(TAG, "Error while releasing RTMP stream", error)
         }
@@ -277,19 +292,30 @@ class RtmpBroadcastService : Service() {
     }
 
     /**
-     * Glip-compatible concurrent capture: DEFAULT without a headset, and
-     * VOICE_RECOGNITION when a headset/Bluetooth input is connected.
+     * DEFAULT allows Android's platform AEC/NS effects to be attached by RootEncoder.
+     * VOICE_RECOGNITION commonly bypasses or disables those effects.
      */
-    private fun chooseMicrophoneSource(): Int {
+    private fun choosePreferredMicrophoneDevice(): AudioDeviceInfo? {
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val headsetInputConnected = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).any { device ->
+        return audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { device ->
             device.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
                 device.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
                 device.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
                 (Build.VERSION.SDK_INT >= 31 && device.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
         }
-        return if (headsetInputConnected) MediaRecorder.AudioSource.VOICE_RECOGNITION
-        else MediaRecorder.AudioSource.DEFAULT
+    }
+
+    private fun setAudioSourceMuted(source: AudioSource?, muted: Boolean) {
+        when (source) {
+            is MicrophoneSource -> if (muted) source.mute() else source.unMute()
+            is MixAudioSource -> if (muted) source.mute() else source.unMute()
+        }
+    }
+
+    private fun setStreamAudioMuted(muted: Boolean) {
+        getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putBoolean(KEY_STREAM_AUDIO_MUTED, muted).apply()
+        setAudioSourceMuted(activeAudioSource, muted)
+        update(if (muted) "LIVE • Stream audio muted" else "LIVE • Stream audio unmuted")
     }
 
     private fun releaseProjection() {
@@ -373,6 +399,7 @@ class RtmpBroadcastService : Service() {
         lastBitrate = 0L
         try { display?.release() } catch (_: Exception) { }
         display = null
+        activeAudioSource = null
         releaseProjection()
         publishState(false, "Broadcast service stopped", 0L)
         super.onDestroy()
@@ -382,6 +409,9 @@ class RtmpBroadcastService : Service() {
         const val ACTION_START = "com.jubersaleem.mobilegamingstreamer.action.START_RTMP"
         const val ACTION_STOP = "com.jubersaleem.mobilegamingstreamer.action.STOP_RTMP"
         const val ACTION_SET_BITRATE = "com.jubersaleem.mobilegamingstreamer.action.SET_BITRATE"
+        const val ACTION_SET_STREAM_AUDIO_MUTED = "com.jubersaleem.mobilegamingstreamer.action.SET_STREAM_AUDIO_MUTED"
+        const val EXTRA_STREAM_AUDIO_MUTED = "stream_audio_muted"
+        const val KEY_STREAM_AUDIO_MUTED = "stream_audio_muted"
 
         /** Shared stop entry point used by the app UI, notification and floating controls. */
         fun requestStop(context: Context) {
@@ -389,6 +419,10 @@ class RtmpBroadcastService : Service() {
         }
         fun requestBitrate(context: Context, bitrate: Int) {
             context.sendBroadcast(Intent(ACTION_SET_BITRATE).setPackage(context.packageName).putExtra(EXTRA_BITRATE, bitrate))
+        }
+        fun requestStreamAudioMuted(context: Context, muted: Boolean) {
+            context.sendBroadcast(Intent(ACTION_SET_STREAM_AUDIO_MUTED).setPackage(context.packageName)
+                .putExtra(EXTRA_STREAM_AUDIO_MUTED, muted))
         }
         const val EXTRA_BITRATE = "video_bitrate"
         const val EXTRA_RESULT_CODE = "result_code"
