@@ -72,6 +72,20 @@ class StudioStatusTest {
     }
 
     @Test
+    fun announcementsAreConcisePerState() {
+        assertEquals("You are live", broadcastAnnouncement(BroadcastStatusKind.LIVE, "LIVE • 8123 kbps"))
+        assertEquals(
+            "Connecting to stream",
+            broadcastAnnouncement(BroadcastStatusKind.STARTING, "Connecting to streaming server…")
+        )
+        assertEquals(
+            "Broadcast error. Connection failed: auth error.",
+            broadcastAnnouncement(BroadcastStatusKind.ERROR, "Connection failed: auth error.")
+        )
+        assertEquals("Broadcast stopped", broadcastAnnouncement(BroadcastStatusKind.STANDBY, "Broadcast stopped"))
+    }
+
+    @Test
     fun sourceConstantsMatchFramework() {
         assertEquals(MediaRecorder.AudioSource.DEFAULT, AudioRouteLabels.SOURCE_DEFAULT)
         assertEquals(MediaRecorder.AudioSource.MIC, AudioRouteLabels.SOURCE_MIC)

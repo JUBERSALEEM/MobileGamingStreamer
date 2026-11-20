@@ -35,6 +35,26 @@ fun isStartingBroadcastMessage(message: String): Boolean =
     STARTING_KEYWORDS.any { message.contains(it, ignoreCase = true) }
 
 /**
+ * Displayed product version. This must match `versionName` in
+ * `app/build.gradle.kts`; `scripts/verify_release_readiness.py` enforces it
+ * so the in-app build badge and legal pages can never drift from the release.
+ */
+const val MgsVersionName = "0.5.22"
+
+/**
+ * One concise TalkBack announcement per broadcast-state transition. The
+ * activity calls this only when [classifyBroadcastStatus] changes, so the
+ * two-second bitrate ticks never spam the accessibility stream.
+ */
+fun broadcastAnnouncement(kind: BroadcastStatusKind, message: String): String =
+    when (kind) {
+        BroadcastStatusKind.LIVE -> "You are live"
+        BroadcastStatusKind.STARTING -> "Connecting to stream"
+        BroadcastStatusKind.ERROR -> "Broadcast error. $message"
+        BroadcastStatusKind.STANDBY -> "Broadcast stopped"
+    }
+
+/**
  * Classifies a status line. A confirmed live session always wins; a starting
  * phase wins over stale text; otherwise error keywords surface failures
  * instead of leaving the UI on a misleading standby label.

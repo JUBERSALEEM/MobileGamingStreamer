@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
     private var audioMode by mutableStateOf("BALANCED")
     private var pendingLive by mutableStateOf(false)
     private var waitingForOverlayPermission = false
+    private var lastAnnouncedKind = BroadcastStatusKind.STANDBY
 
     private val broadcastStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -65,6 +66,11 @@ class MainActivity : ComponentActivity() {
             streamAudioMuted = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_STREAM_MUTED, false)
             audioCaptureActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_CAPTURE, false)
             broadcastStarting = !broadcastActive && isStartingBroadcastMessage(status)
+            val kind = classifyBroadcastStatus(status, broadcastActive, broadcastStarting)
+            if (kind != lastAnnouncedKind) {
+                lastAnnouncedKind = kind
+                window.decorView?.announceForAccessibility(broadcastAnnouncement(kind, status))
+            }
         }
     }
 
@@ -82,6 +88,8 @@ class MainActivity : ComponentActivity() {
             prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Ready to stream") ?: "Ready to stream"
         }
         liveBitrate = if (broadcastActive) prefs.getLong(RtmpBroadcastService.KEY_BITRATE, 0L) else 0L
+        // Seed the announcement tracker silently so a cold start never speaks.
+        lastAnnouncedKind = classifyBroadcastStatus(status, broadcastActive, broadcastStarting)
     }
 
     @Suppress("UnspecifiedRegisterReceiverFlag")
