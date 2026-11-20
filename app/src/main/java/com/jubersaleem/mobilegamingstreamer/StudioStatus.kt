@@ -39,7 +39,7 @@ fun isStartingBroadcastMessage(message: String): Boolean =
  * `app/build.gradle.kts`; `scripts/verify_release_readiness.py` enforces it
  * so the in-app build badge and legal pages can never drift from the release.
  */
-const val MgsVersionName = "0.5.22"
+const val MgsVersionName = "0.5.23"
 
 /**
  * One concise TalkBack announcement per broadcast-state transition. The
