@@ -65,17 +65,17 @@ val LocalMgsPalette = staticCompositionLocalOf {
 fun MgsTheme(mode: String, content: @Composable () -> Unit) {
     val palette = if (mode == "CLAY") {
         MgsPalette(
-            background = Color(0xFFE5DFD5),
-            surface = Color(0xFFEEE9E0),
-            highlight = Color(0xFFFFFCF6),
-            text = Color(0xFF28342F),
-            muted = Color(0xFF65736B),
-            primary = Color(0xFF286D5D),
-            secondary = Color(0xFF806B9D),
-            edge = Color(0xFFFDF9F1),
-            clayShadow = Color(0xFFB8AFA3),
-            clayEdge = Color(0xFFD0C8BC),
-            inset = Color(0xFFE1DBD1),
+            background = Color(0xFFE9E6F2),
+            surface = Color(0xFFF3F0FA),
+            highlight = Color(0xFFFFFFFF),
+            text = Color(0xFF25243A),
+            muted = Color(0xFF66647D),
+            primary = Color(0xFFE77F78),
+            secondary = Color(0xFF7666B5),
+            edge = Color(0xFFFFFFFF),
+            clayShadow = Color(0xFFB6B0C8),
+            clayEdge = Color(0xFFD5D0E2),
+            inset = Color(0xFFE4E0EF),
             isClay = true
         )
     } else {
@@ -136,17 +136,17 @@ fun MgsCard(
                 .dropShadow(
                     shape,
                     Shadow(
-                        radius = 24.dp,
-                        color = p.clayShadow.copy(alpha = 0.66f),
-                        offset = DpOffset(10.dp, 12.dp)
+                        radius = 22.dp,
+                        color = p.clayShadow.copy(alpha = 0.58f),
+                        offset = DpOffset(9.dp, 10.dp)
                     )
                 )
                 .dropShadow(
                     shape,
                     Shadow(
                         radius = 22.dp,
-                        color = Color.White.copy(alpha = 0.94f),
-                        offset = DpOffset((-8).dp, (-8).dp)
+                        color = Color.White.copy(alpha = 0.96f),
+                        offset = DpOffset((-7).dp, (-7).dp)
                     )
                 )
                 .clip(shape)
