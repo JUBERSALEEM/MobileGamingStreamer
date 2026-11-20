@@ -53,7 +53,7 @@ fun SettingsPage(
                         selected = themeMode == "CLASSIC",
                         onClick = { onThemeChange("CLASSIC") },
                         label = { Text("Classic", fontWeight = FontWeight.SemiBold) },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).then(clayRaisedModifier(RoundedCornerShape(18.dp)))
                     )
                     FilterChip(
                         selected = themeMode == "CLAY",
@@ -86,9 +86,9 @@ fun SettingsPage(
             Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("LEGAL & PRIVACY", color = p.primary, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.3.sp)
                 Text("Read how streaming, microphone access, screen capture and app permissions work.", color = p.muted, fontSize = 12.sp)
-                OutlinedButton(onClick = onAbout, modifier = Modifier.fillMaxWidth()) { Text("ABOUT MOBILE GAMING STREAMER") }
-                OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("PRIVACY POLICY") }
-                OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("TERMS & CONDITIONS") }
+                OutlinedButton(onClick = onAbout, modifier = Modifier.fillMaxWidth().then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("ABOUT MOBILE GAMING STREAMER") }
+                OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth().then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("PRIVACY POLICY") }
+                OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth().then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("TERMS & CONDITIONS") }
             }
         }
         Text("Theme preference is saved on this device. No account is required.", color = p.muted, fontSize = 10.sp)
@@ -133,7 +133,7 @@ fun AboutPage(onTerms: () -> Unit, onPrivacy: () -> Unit) {
 fun LegalPage(title: String, body: String, onBack: () -> Unit) {
     val p = LocalMgsPalette.current
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedButton(onClick = onBack) { Text("← SETTINGS") }
+        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("← SETTINGS") }
         PageHeading(title.uppercase(), "Mobile Gaming Streamer • Version 0.5.10")
         MgsCard(
             shape = RoundedCornerShape(24.dp),
