@@ -347,7 +347,7 @@ class MainActivity : ComponentActivity() {
                                                         captureActive = false
                                                         status = "Capture stopped"
                                                     },
-                                                    enabled = captureActive, modifier = Modifier.weight(1f)
+                                                    enabled = captureActive, modifier = Modifier.weight(1f).then(clayRaisedModifier(RoundedCornerShape(18.dp)))
                                                 ) { Text("STOP TEST") }
                                             }
                                         }
@@ -375,7 +375,7 @@ class MainActivity : ComponentActivity() {
                                             MgsButton(onClick = { page = "STREAM" }, modifier = Modifier.fillMaxWidth()) { Text("OPEN STREAM SETTINGS") }
                                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                                 MgsButton(onClick = { startBroadcastFlow() }, enabled = !broadcastActive && !broadcastStarting, modifier = Modifier.weight(1f)) { Text("GO LIVE") }
-                                                OutlinedButton(onClick = { RtmpBroadcastService.requestStop(this@MainActivity) }, enabled = broadcastActive || broadcastStarting, modifier = Modifier.weight(1f)) { Text("STOP LIVE") }
+                                                OutlinedButton(onClick = { RtmpBroadcastService.requestStop(this@MainActivity) }, enabled = broadcastActive || broadcastStarting, modifier = Modifier.weight(1f).then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("STOP LIVE") }
                                             }
                                         }
                                     }
