@@ -1,3 +1,23 @@
+## 0.5.11-dev — Microphone input routing and stream audio controls
+
+### Fixed
+- Use Android's DEFAULT microphone source so the platform echo-cancellation and noise-suppression effects can attach where supported, instead of switching to VOICE_RECOGNITION when a headset is connected.
+- Select a connected wired, USB or Bluetooth headset microphone as the preferred input device when Android exposes one.
+- Keep microphone processing separate from input-device selection; headset detection no longer changes the Android audio source mode.
+
+### Added
+- Add a dedicated floating control to mute/unmute the stream's microphone-containing audio source.
+- Keep the existing local speaker-volume control separate from the new stream-audio mute control.
+- Preserve the floating bubble, stream lifecycle and explicit End Stream controls.
+
+### Important behaviour
+- The stream-audio mute control applies to microphone-only and mixed microphone/game audio sources. It is not a master mute for internal-game-audio-only mode.
+- Echo cancellation and noise suppression are requests to Android's audio effects; actual effectiveness depends on the device, route and microphone/speaker acoustics.
+
+### Validation
+- CI compilation is required for this version.
+- Galaxy S25 Ultra tests are still required for speaker echo, microphone quality, BGMI game audio, teammate voice chat and long-session stability.
+
 ## 0.5.10-dev — Required stream-key prompt and complete Claymorphism surface system
 
 ### Fixed
@@ -126,7 +146,6 @@ Development prerelease builds for device testing.
 - Microphone capture is implemented. Internal game playback audio and mixing with microphone are still a separate milestone; Android may restrict capture for some apps.
 - The overlay is marked secure to keep its UI out of captured video. Verify this on the target Samsung device, as OEM capture behaviour can vary.
 
-
 ## 0.5.2-dev — RTMP pipeline and GO LIVE flow corrections
 
 ### Fixed
@@ -144,4 +163,4 @@ Development prerelease builds for device testing.
 
 ### Validation status
 - GitHub Actions compilation is required for this commit.
-- Actual RTMP delivery, Samsung MediaProjection app-window capture, overlay exclusion, and microphone capture still require physical-device testing. A successful build is not a streaming certification.
+- Actual RTMP delivery, Samsung MediaProjection app-window capture, overlay exclusion, and microphone capture still require physical-device testing. A successful APK build is not a streaming certification.
