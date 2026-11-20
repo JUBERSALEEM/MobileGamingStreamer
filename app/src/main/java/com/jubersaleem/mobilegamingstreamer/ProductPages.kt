@@ -115,7 +115,7 @@ fun AboutPage(onTerms: () -> Unit, onPrivacy: () -> Unit) {
             }
         }
         MgsCard(shape = RoundedCornerShape(if (p.isClay) 30.dp else 24.dp), border = BorderStroke(1.dp, p.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (p.isClay) 18.dp else 1.dp), colors = CardDefaults.cardColors(containerColor = p.surface)) {
-            Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (p.isClay) listOf(p.highlight, p.surface, Color(0xFFE8E2D7)) else listOf(p.surface, p.surface)), RoundedCornerShape(if (p.isClay) 30.dp else 0.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("OUR APPROACH", color = p.primary, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
                 Text("Simple controls, clear capture consent and transparent streaming status. The app is under active development; compatibility and audio capture depend on Android, the device, the game and the streaming platform.", color = p.text, fontSize = 12.sp, lineHeight = 18.sp)
                 Text("Mobile Gaming Streamer is an independent product and is not affiliated with, endorsed by or sponsored by Krafton, Tencent, BGMI, PUBG MOBILE or Google. All third-party names and marks belong to their respective owners.", color = p.muted, fontSize = 10.sp, lineHeight = 15.sp)
