@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.activity.compose.setContent
@@ -191,6 +192,12 @@ class MainActivity : ComponentActivity() {
         key = if (rememberStreamKey) StreamKeyVault.load(this).orEmpty() else ""
         setContent {
             MgsTheme(mode = themeMode) {
+                BackHandler(enabled = page != "STUDIO") {
+                    page = when (page) {
+                        "ABOUT", "TERMS", "PRIVACY" -> "SETTINGS"
+                        else -> "STUDIO"
+                    }
+                }
                 val palette = LocalMgsPalette.current
                 if (showAccessibilityDisclosure) {
                     AlertDialog(
@@ -333,7 +340,7 @@ class MainActivity : ComponentActivity() {
                                             Text("CAPTURE TEST", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                             Text("Test the H.264 encoder without connecting to a streaming platform.", color = palette.muted)
                                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                MgsButton(onClick = { pendingLive = false; requestProjection() }, enabled = !captureActive && !broadcastActive && !broadcastStarting, modifier = Modifier.weight(1f)) { Text("START TEST") }
+                                                MgsButton(onClick = { pendingLive = false; requestProjection() }, enabled = !captureActive && !broadcastActive, modifier = Modifier.weight(1f)) { Text("START TEST") }
                                                 OutlinedButton(
                                                     onClick = {
                                                         startService(Intent(this@MainActivity, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_STOP))
