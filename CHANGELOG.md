@@ -5,6 +5,7 @@
 - The service does not retrieve window content, inspect screen text, perform gestures or automate other apps; it listens only for window-state events required by the accessibility-service declaration.
 - Route microphone recording through a manager created by the connected accessibility-service path.
 - Select Android microphone sources using the observed Glip pattern: DEFAULT with the accessibility bridge and built-in microphone, VOICE_RECOGNITION with an external headset, and MIC as the fallback when the bridge is disabled.
+- Keep AEC/NS from suppressing acoustically captured phone-speaker voice on the built-in speaker route; the existing high-pass filter and independent internal-playback mixer remain active.
 - Add an in-app setup control that opens Android Accessibility settings and reports whether the bridge is enabled.
 - Add unit tests for all three microphone-source selection cases.
 
