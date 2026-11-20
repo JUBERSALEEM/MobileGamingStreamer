@@ -496,7 +496,7 @@ private fun Header(onSettings: () -> Unit) {
             TextButton(onClick = onSettings) { Text("⚙", color = palette.primary, fontSize = 23.sp) }
             Column(horizontalAlignment = Alignment.End) {
                 Text("BUILD", color = palette.muted, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Text("0.5.25", color = palette.primary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                Text("0.5.22", color = palette.primary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
             }
         }
     }
