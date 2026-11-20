@@ -33,7 +33,8 @@ fun SettingsPage(
     themeMode: String,
     onThemeChange: (String) -> Unit,
     onTerms: () -> Unit,
-    onPrivacy: () -> Unit
+    onPrivacy: () -> Unit,
+    onAbout: () -> Unit
 ) {
     val p = LocalMgsPalette.current
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -63,8 +64,8 @@ fun SettingsPage(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(if (themeMode == "CLAY") "Soft Clay studio is active" else "Classic studio is active", color = p.text, fontWeight = FontWeight.Bold)
-                        Text(if (themeMode == "CLAY") "Pastel clay surfaces, layered highlights, recessed controls and a warmer streaming workspace." else "The original dark studio with neon lime and cyan accents.", color = p.muted, fontSize = 11.sp)
+                        Text(if (themeMode == "CLAY") "Claymorphism studio is active" else "Classic studio is active", color = p.text, fontWeight = FontWeight.Bold)
+                        Text(if (themeMode == "CLAY") "Sculpted raised surfaces, dual soft shadows, recessed controls and tactile pressed states throughout the app." else "The original dark studio with neon lime and cyan accents.", color = p.muted, fontSize = 11.sp)
                     }
                     MgsCard(
                         modifier = Modifier.size(62.dp),
@@ -85,6 +86,7 @@ fun SettingsPage(
             Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("LEGAL & PRIVACY", color = p.primary, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.3.sp)
                 Text("Read how streaming, microphone access, screen capture and app permissions work.", color = p.muted, fontSize = 12.sp)
+                OutlinedButton(onClick = onAbout, modifier = Modifier.fillMaxWidth()) { Text("ABOUT MOBILE GAMING STREAMER") }
                 OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("PRIVACY POLICY") }
                 OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("TERMS & CONDITIONS") }
             }
