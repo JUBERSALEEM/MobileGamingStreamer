@@ -6,7 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
-import com.pedro.encoder.input.sources.audio.GetMicrophoneData
+import com.pedro.encoder.input.audio.GetMicrophoneData
 
 /**
  * Opt-in Android accessibility bridge used only for concurrent microphone capture
