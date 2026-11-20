@@ -261,7 +261,8 @@ class MainActivity : ComponentActivity() {
                                         getSharedPreferences("mgs_preferences", MODE_PRIVATE).edit().putString("theme_mode", selected).apply()
                                     },
                                     onTerms = { page = "TERMS" },
-                                    onPrivacy = { page = "PRIVACY" }
+                                    onPrivacy = { page = "PRIVACY" },
+                                    onAbout = { page = "ABOUT" }
                                 )
                                 "ABOUT" -> AboutPage(onTerms = { page = "TERMS" }, onPrivacy = { page = "PRIVACY" })
                                 "TERMS" -> LegalPage(title = "Terms & Conditions", body = TermsText, onBack = { page = "SETTINGS" })
