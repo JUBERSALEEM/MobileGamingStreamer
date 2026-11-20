@@ -113,9 +113,9 @@ jobs:
           echo "Gradle signing report:"
           SIGNING_REPORT="$(gradle :app:signingReport --no-daemon)"
           echo "$SIGNING_REPORT"
-          printf '%s\\n' "$SIGNING_REPORT" | grep -F "Store: $GITHUB_WORKSPACE/debug-signing/debug.keystore"
-          printf '%s\\n' "$SIGNING_REPORT" | grep -F "Alias: androiddebugkey"
-          if printf '%s\\n' "$SIGNING_REPORT" | grep -F "Error: Missing keystore"; then
+          echo "$SIGNING_REPORT" | grep -F "Store: $GITHUB_WORKSPACE/debug-signing/debug.keystore"
+          echo "$SIGNING_REPORT" | grep -F "Alias: androiddebugkey"
+          if echo "$SIGNING_REPORT" | grep -F "Error: Missing keystore"; then
             echo "::error::Gradle did not load the pinned debug keystore."
             exit 1
           fi
