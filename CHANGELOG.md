@@ -1,7 +1,7 @@
 ## 0.5.21-dev — APK installation and signing continuity
 
 ### Fixed
-- Pin one development signing identity in the repository so every pull-request, branch-push and manually dispatched APK uses the same certificate.
+- Pin one development signing identity in the repository, explicitly configure Android Gradle Plugin to sign debug APKs with it, and use that certificate for every pull-request, branch-push and manually dispatched APK.
 - Verify the APK certificate fingerprint against the pinned keystore before packaging or publishing.
 - Keep the requested 60 FPS across lower-resolution hardware fallbacks before dropping to 30 FPS, and cover fallback ordering/orientation with unit tests.
 - Remove event-scoped Actions cache signing-key drift from the distributable build path.

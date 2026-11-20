@@ -111,7 +111,14 @@ jobs:
           echo "Cached keystore fingerprint:"
           keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | grep -E 'Owner:|SHA256:'
           echo "Gradle signing report:"
-          gradle :app:signingReport --no-daemon
+          SIGNING_REPORT="$(gradle :app:signingReport --no-daemon)"
+          echo "$SIGNING_REPORT"
+          printf '%s\\n' "$SIGNING_REPORT" | grep -F "Store: $GITHUB_WORKSPACE/debug-signing/debug.keystore"
+          printf '%s\\n' "$SIGNING_REPORT" | grep -F "Alias: androiddebugkey"
+          if printf '%s\\n' "$SIGNING_REPORT" | grep -F "Error: Missing keystore"; then
+            echo "::error::Gradle did not load the pinned debug keystore."
+            exit 1
+          fi
 
       - name: Verify release-readiness declarations
         run: python3 scripts/verify_release_readiness.py
@@ -129,8 +136,8 @@ jobs:
           test -x "$APKSIGNER"
           CERT_OUTPUT="$("$APKSIGNER" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk)"
           echo "$CERT_OUTPUT"
-          EXPECTED="$(keytool -exportcert -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | sha256sum | awk '{print toupper($1)}')"
-          ACTUAL="$(printf '%s\n' "$CERT_OUTPUT" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print toupper($2)}')"
+          EXPECTED="$(keytool -exportcert -keystore "$GITHUB_WORKSPACE/debug-signing/debug.keystore" -storepass android -alias androiddebugkey | sha256sum | awk '{print toupper($1)}')"
+          ACTUAL="$(printf '%s\n' "$CERT_OUTPUT" | awk -F': ' '/certificate SHA-256 digest:/ {print toupper($2); exit}')"
           if [ -z "$ACTUAL" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
             echo "::error::APK signer does not match the pinned debug keystore."
             exit 1
