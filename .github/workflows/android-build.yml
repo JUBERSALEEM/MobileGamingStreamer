@@ -76,14 +76,24 @@ jobs:
 
       # Temporary recovery step: preserve the exact signing key used by the last installable PR build.
       # This lets us pin that key in the repository and stop relying on event-scoped Actions caches.
-      - name: Export PR debug signing key for signing continuity recovery
-        if: github.event_name == 'pull_request'
+      - name: Export debug signing key for signing continuity verification
         uses: actions/upload-artifact@v4
         with:
           name: mgs-debug-signing-key-recovery
           path: ~/.android/debug.keystore
           if-no-files-found: error
           retention-days: 7
+
+      - name: Verify Gradle debug signing identity
+        shell: bash
+        run: |
+          echo "HOME=$HOME"
+          echo "ANDROID_USER_HOME=${ANDROID_USER_HOME:-<unset>}"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>}"
+          echo "Cached keystore fingerprint:"
+          keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | grep -E 'Owner:|SHA256:'
+          echo "Gradle signing report:"
+          gradle :app:signingReport --no-daemon
 
       - name: Verify release-readiness declarations
         run: python3 scripts/verify_release_readiness.py
@@ -93,6 +103,13 @@ jobs:
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --no-daemon
+
+      - name: Verify APK signing certificate
+        shell: bash
+        run: |
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
       - name: Rename APK using app version
         id: apk
