@@ -21,6 +21,7 @@
 <ul>
 <li><strong>Screen video:</strong> Android MediaProjection captures the screen or app window that you explicitly select after Android displays its system screen-sharing consent prompt.</li>
 <li><strong>Microphone audio:</strong> when you choose a microphone-containing audio mode and grant Android's microphone permission, the app captures microphone input. This can include your voice and nearby sounds.</li>
+<li><strong>Accessibility microphone compatibility:</strong> if you enable “Mobile Gaming Streamer microphone compatibility” in Android Accessibility settings, the app uses an AccessibilityService as part of its concurrent microphone-capture path while a game uses voice chat. The service listens for window-state changes only; it does not retrieve window content, read screen text, perform gestures or automate other apps. You can disable it at any time in Android Accessibility settings. Microphone audio is still subject to Android's device and audio-input sharing policies.</li>
 <li><strong>Internal playback audio:</strong> when you choose GAME or a mixed audio mode, the app requests Android playback capture. Android, the device manufacturer and the source app/game can restrict capture. Teammate voice chat is not guaranteed to be included.</li>
 <li><strong>RTMP destination and stream key:</strong> the server address and key you enter are used to connect to your selected streaming endpoint. If “Remember key securely on this device” is enabled, the app encrypts the key using AES-GCM with a non-exportable AES key held by Android Keystore; only the encrypted payload is stored in app-private preferences. If the option is disabled, the app clears the saved encrypted value and does not intentionally persist the key. The key is also present in app memory while needed for the session.</li>
 <li><strong>Optional floating controls:</strong> if you grant Display over other apps permission, the app can show its movable control bubble and panel over other apps. The overlay is marked secure to request exclusion from screen capture; actual behaviour can vary by Android/OEM implementation.</li>
@@ -40,8 +41,9 @@
 <li><strong>POST_NOTIFICATIONS:</strong> show the ongoing broadcast notification and its stop action where Android requires notification permission.</li>
 <li><strong>INTERNET:</strong> connect to the RTMP/RTMPS endpoint and load optional YouTube Live Chat.</li>
 <li><strong>MODIFY_AUDIO_SETTINGS:</strong> support the local speaker-volume control.</li>
+<li><strong>Accessibility Service (optional, user-enabled):</strong> supports concurrent microphone capture during in-game voice chat. It is not used to read screen content or control other apps.</li>
 </ul>
-<p>No AccessibilityService is declared in the current Android manifest. The app does not use an AccessibilityService in this build.</p>
+<p>The Android manifest declares an optional AccessibilityService for microphone compatibility. It is inactive until the user explicitly enables it in Android settings. Its configuration does not permit retrieval of window content, and its event handler does not inspect or act on screen content.</p>
 <h2>5. Sharing and retention</h2>
 <p>Audiovisual content is transmitted to the destination you choose. The destination provider controls its own retention, access, publication and deletion practices. The app does not operate a separate stream archive or developer analytics backend in this build. Android may retain system diagnostics according to device settings. The encrypted stream key and local preferences remain in app-private storage until cleared by the app, Android data clearing, or uninstall.</p>
 <h2>6. Security</h2>
