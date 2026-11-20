@@ -1,3 +1,19 @@
+## 0.5.14-dev — Phase 2 encoder fallback and stream health
+
+### Added
+- Ordered hardware H.264 profile fallback when the requested resolution/FPS cannot be prepared.
+- Fallback ladder preserves the requested profile first, then tries lower FPS and/or lower resolution.
+- Live output FPS telemetry alongside the selected encoder profile and outgoing bitrate.
+- Clear retry guidance after RTMP connection failure or disconnection.
+
+### Important platform constraint
+- Automatic reconnection is not attempted with a previously used MediaProjection token. Android 14+ limits a projection session to one VirtualDisplay creation; a fresh user-approved capture session is required for a safe new attempt.
+
+### Still requires physical-device validation
+- 720p/1080p/1440p at 30/60 FPS on the Galaxy S25 Ultra.
+- Selected-app capture resizing, rotation, sustained FPS, thermal behaviour and actual network recovery.
+- The FPS counter measures outgoing frames; it is not a dropped-frame counter.
+
 ## 0.5.13-dev — Phase 1 reliability and audio correctness
 
 ### Fixed

@@ -35,6 +35,16 @@ import com.pedro.library.generic.GenericStream
 
 /** RTMP broadcast service with microphone audio and screen video. */
 class RtmpBroadcastService : Service() {
+    private data class VideoProfile(
+        val quality: String,
+        val fps: Int,
+        val width: Int,
+        val height: Int,
+        val bitrate: Int
+    ) {
+        val label: String get() = "$quality @ ${fps}fps"
+    }
+
     private var display: GenericStream? = null
     private var activeAudioSource: AudioSource? = null
     private var activeProjection: MediaProjection? = null
@@ -138,12 +148,13 @@ class RtmpBroadcastService : Service() {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                 }
             )
-            val checker = object : ConnectChecker {
+            var activeProfileLabel = "Preparing video profile"
+        val checker = object : ConnectChecker {
                 override fun onConnectionStarted(url: String) = update("Connecting to streaming server…")
                 override fun onConnectionSuccess() = update("RTMP connected • Waiting for video frames")
                 override fun onConnectionFailed(reason: String) {
                     Log.e(TAG, "RTMP connection failed: $reason")
-                    stopBroadcast("Connection failed: $reason")
+                    stopBroadcast("Connection failed: $reason. Open the app and tap GO LIVE to grant a fresh screen-capture session and retry.")
                 }
                 override fun onDisconnect() {
                     handler.removeCallbacks(startupTimeout)
@@ -156,7 +167,7 @@ class RtmpBroadcastService : Service() {
                         Log.w(TAG, "Error releasing disconnected stream", error)
                     }
                     releaseProjection()
-                    publishState(false, "Broadcast disconnected", 0L)
+                    publishState(false, "Broadcast disconnected. Tap GO LIVE to start a fresh capture session.", 0L)
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                 }
@@ -186,33 +197,13 @@ class RtmpBroadcastService : Service() {
             val quality = intent.getStringExtra(EXTRA_QUALITY) ?: "1080p"
             val orientation = intent.getStringExtra(EXTRA_ORIENTATION) ?: "AUTO"
             val fps = intent.getIntExtra(EXTRA_FPS, 30).coerceIn(30, 60)
-            val maxLongEdge = when (quality) {
-                "720p" -> 1280
-                "1440p" -> 2560
-                else -> 1920
-            }
-
-            // Use standard 16:9 landscape or 9:16 portrait output dimensions.
             // Portrait is a real vertical canvas, not a rotated landscape resolution.
             val portrait = when (orientation) {
                 "PORTRAIT" -> true
                 "LANDSCAPE" -> false
                 else -> screenHeight > screenWidth
             }
-            val width: Int
-            val height: Int
-            if (portrait) {
-                width = ((maxLongEdge * 9f / 16f).toInt() / 2) * 2
-                height = maxLongEdge
-            } else {
-                width = maxLongEdge
-                height = ((maxLongEdge * 9f / 16f).toInt() / 2) * 2
-            }
-            val bitrate = when (quality) {
-                "720p" -> if (fps >= 60) 6_000_000 else 4_000_000
-                "1440p" -> if (fps >= 60) 18_000_000 else 14_000_000
-                else -> if (fps >= 60) 12_000_000 else 8_000_000
-            }
+            val profileCandidates = buildVideoProfiles(quality, fps, portrait)
 
             // RtmpDisplay.prepareAudio() captures ONLY the microphone. It never configures
             // AudioPlaybackCapture, which is why BGMI gunshots/game effects were absent.
@@ -257,10 +248,23 @@ class RtmpBroadcastService : Service() {
             )
             stream.forceCodecType(CodecUtil.CodecType.HARDWARE, CodecUtil.CodecType.FIRST_COMPATIBLE_FOUND)
 
-            val videoPrepared = stream.prepareVideo(width, height, bitrate, fps, 2, 0)
-            if (!videoPrepared) {
-                throw IllegalStateException("H.264 video encoder preparation failed for ${width}x${height} @ ${fps} FPS")
+            var selectedProfile: VideoProfile? = null
+            for (candidate in profileCandidates) {
+                val prepared = try {
+                    stream.prepareVideo(candidate.width, candidate.height, candidate.bitrate, candidate.fps, 2, 0)
+                } catch (error: Exception) {
+                    Log.w(TAG, "Encoder rejected ${candidate.label}; trying next profile", error)
+                    false
+                }
+                if (prepared) {
+                    selectedProfile = candidate
+                    break
+                }
+                Log.w(TAG, "Hardware H.264 encoder cannot prepare ${candidate.label}; trying fallback")
             }
+            val activeProfile = selectedProfile
+                ?: throw IllegalStateException("No supported hardware H.264 profile found. Try 720p30 or check device encoder support.")
+            activeProfileLabel = activeProfile.label
             val echoCancellation = audioMode != AUDIO_MODE_GAME
             val noiseSuppression = audioMode != AUDIO_MODE_GAME
             Log.i(TAG, "Audio effects requested: AEC=$echoCancellation, NS=$noiseSuppression; microphone source=DEFAULT")
@@ -274,16 +278,58 @@ class RtmpBroadcastService : Service() {
             stream.getGlInterface().setStreamIsPortrait(portrait)
             stream.getGlInterface().setForceRender(true, 15)
             display = stream
+            stream.setFpsListener { outputFps ->
+                handler.post {
+                    if (display === stream && streamingConfirmed) {
+                        update("LIVE • $activeProfileLabel • ${outputFps} FPS • ${lastBitrate / 1000} kbps", lastBitrate)
+                    }
+                }
+            }
             handler.removeCallbacks(sessionHeartbeat)
             handler.post(sessionHeartbeat)
-            publishState(false, "Encoder ready • Connecting…", 0L)
-            update("Encoder ready • Connecting…")
+            publishState(false, "Encoder ready • $activeProfileLabel • Connecting…", 0L)
+            update("Encoder ready • $activeProfileLabel • Connecting…")
             stream.startStream(streamUrl)
             handler.postDelayed(startupTimeout, 25_000L)
-            Log.i(TAG, "RTMP broadcast requested: ${width}x${height} @ ${fps}fps, orientation=${if (portrait) "PORTRAIT" else "LANDSCAPE"}, audio=$audioMode, dpi=$dpi")
+            Log.i(TAG, "RTMP broadcast requested: $activeProfileLabel, orientation=${if (portrait) "PORTRAIT" else "LANDSCAPE"}, audio=$audioMode, dpi=$dpi")
         } catch (error: Exception) {
             Log.e(TAG, "Unable to start RTMP broadcast", error)
             stopBroadcast("Unable to start: ${error.message ?: "encoder error"}")
+        }
+    }
+
+    private fun buildVideoProfiles(quality: String, requestedFps: Int, portrait: Boolean): List<VideoProfile> {
+        val qualityOrder = when (quality) {
+            "1440p" -> listOf("1440p", "1080p", "720p")
+            "720p" -> listOf("720p")
+            else -> listOf("1080p", "720p")
+        }
+        return buildList {
+            qualityOrder.forEachIndexed { index, candidateQuality ->
+                val fpsOptions = if (index == 0) {
+                    listOf(requestedFps, 30).distinct()
+                } else if (requestedFps >= 60) {
+                    listOf(60, 30)
+                } else {
+                    listOf(30)
+                }
+                fpsOptions.forEach { candidateFps ->
+                    val longEdge = when (candidateQuality) {
+                        "720p" -> 1280
+                        "1440p" -> 2560
+                        else -> 1920
+                    }
+                    val shortEdge = ((longEdge * 9f / 16f).toInt() / 2) * 2
+                    val width = if (portrait) shortEdge else longEdge
+                    val height = if (portrait) longEdge else shortEdge
+                    val bitrate = when (candidateQuality) {
+                        "720p" -> if (candidateFps >= 60) 6_000_000 else 4_000_000
+                        "1440p" -> if (candidateFps >= 60) 18_000_000 else 14_000_000
+                        else -> if (candidateFps >= 60) 12_000_000 else 8_000_000
+                    }
+                    add(VideoProfile(candidateQuality, candidateFps, width, height, bitrate))
+                }
+            }
         }
     }
 

@@ -34,16 +34,16 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 - [x] Initial adaptive 60/30 FPS selection and bounded 1920-pixel capture output
 - [x] Encoded output drain and encoder FPS/bitrate diagnostics (encoded data is currently discarded)
 - [x] Add initial 720p/1080p/1440p, 30/60 FPS and orientation selections
-- [ ] Validate each profile against real device codec capabilities
+- [ ] Validate each profile against real device codec capabilities (fallback ladder added; physical matrix still pending)
 - [x] Add RootEncoder RTMP video-only transport foundation
 - [ ] Verify RTMP/RTMPS connection and YouTube ingest on physical device
 - [ ] Add secure stream-key storage and connection recovery
-- [ ] Reconnection, network monitoring, and dropped-frame metrics
+- [ ] Automatic RTMP reconnection and dropped-frame metrics (fresh MediaProjection consent is required for a new screen-capture session)
 
 ### M4 — Streamer experience
 - [x] Floating controls with user-granted overlay permission
 - [ ] Overlay editor and animated assets
-- [ ] Stream health dashboard
+- [x] Basic live output FPS and bitrate telemetry (full stream-health dashboard remains pending)
 - [ ] Optional alerts and platform integrations
 
 ### M5 — Accessibility and compatibility
