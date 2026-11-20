@@ -18,7 +18,7 @@ An Android-first mobile livestreaming app. The first device-validation target is
 - The app only reports LIVE after a positive outgoing bitrate callback. A 25-second startup watchdog reports a failure if video bitrate never appears.
 - Optional draggable floating controls; the bubble is launched after outgoing video bitrate is confirmed. Overlay permission is not required to start streaming.
 - Floating controls provide stop, bitrate and separate stream-audio mute controls. The local speaker-volume control remains separate. The stream-audio mute applies to microphone-only and mixed sources, not internal-game-audio-only mode.
-- Android's DEFAULT microphone source is used so platform echo cancellation/noise suppression can attach where supported; a connected headset microphone is selected as the preferred input when Android exposes one. Actual effect performance must be tested on the device.
+- Android's DEFAULT microphone source is used so platform echo cancellation/noise suppression can attach where supported; a connected headset microphone is selected as the preferred input when Android exposes one. On top of that, an on-device studio voice chain shapes the microphone before mixing: noise gate, automatic gain, soft-knee compressor and presence EQ, with live AEC/NS/voice status shown on the Audio page. Actual effect performance must be tested on the device.
 - YouTube chat currently requires a manually entered video ID; automatic account discovery is not implemented yet.
 - Internal playback capture and microphone mixing are implemented in the pipeline, but BGMI gunshot audio and teammate voice inclusion still require physical-device verification. Android playback capture policies may exclude some game/voice-chat audio.
 

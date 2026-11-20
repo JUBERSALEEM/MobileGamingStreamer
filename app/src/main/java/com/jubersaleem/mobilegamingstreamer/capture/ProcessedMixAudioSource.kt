@@ -21,7 +21,7 @@ class ProcessedMixAudioSource(
  private val microphoneAudioSource: Int = MediaRecorder.AudioSource.MIC
 ) : AudioSource() {
  private val micFrames=ArrayBlockingQueue<Frame>(4);private val gameFrames=ArrayBlockingQueue<Frame>(4)
- private var highPass:MicrophoneHighPass?=null
+ private var voiceChain:VoiceOptimizer?=null
  private var micManager:SafeMicrophoneManager?=null
  @Volatile private var preferredInput:AudioDeviceInfo?=null
  @Volatile private var output:GetMicrophoneData?=null
@@ -34,7 +34,7 @@ class ProcessedMixAudioSource(
  private var ns:NoiseSuppressor?=null
  private val micCallback=object:GetMicrophoneData{
   override fun inputPCMData(frame:Frame){
-   val data=highPass?.process(frame.buffer,frame.offset,frame.size)?:frame.buffer.copyOfRange(frame.offset,frame.offset+frame.size)
+   val data=voiceChain?.process(frame.buffer,frame.offset,frame.size)?:frame.buffer.copyOfRange(frame.offset,frame.offset+frame.size)
    val clean=Frame(data,0,data.size,frame.timeStamp)
    if(includeGamePlayback)offerLatest(micFrames,clean)
    else output?.inputPCMData(Frame(if(muted)ByteArray(clean.size)else Pcm16AudioMixer.mix(clean.buffer,null,micGain,0f),0,clean.size,clean.timeStamp))
@@ -44,7 +44,7 @@ class ProcessedMixAudioSource(
   override fun inputPCMData(frame:Frame){val data=frame.buffer.copyOfRange(frame.offset,frame.offset+frame.size);offerLatest(gameFrames,Frame(data,0,data.size,frame.timeStamp))}
  })
  override fun create(sampleRate:Int,isStereo:Boolean,echoCanceler:Boolean,noiseSuppressor:Boolean):Boolean{
-  highPass=MicrophoneHighPass(sampleRate,if(isStereo)2 else 1,MIC_HIGHPASS_HZ)
+  voiceChain=VoiceOptimizer(sampleRate,if(isStereo)2 else 1,MIC_HIGHPASS_HZ)
   val accessibilityService = MgsMicAccessibilityService.instance
   micManager = accessibilityService?.createMicrophoneManager(micCallback) ?: SafeMicrophoneManager(micCallback)
   val mic = micManager ?: return false
@@ -67,9 +67,13 @@ class ProcessedMixAudioSource(
    val cfg=AudioPlaybackCaptureConfiguration.Builder(projection).addMatchingUsage(AudioAttributes.USAGE_MEDIA).addMatchingUsage(AudioAttributes.USAGE_GAME).addMatchingUsage(AudioAttributes.USAGE_UNKNOWN).build()
    if(!gameManager.createInternalMicrophone(cfg,sampleRate,isStereo,false,false)){Log.e(TAG,"Playback AudioRecord init failed");releaseResources();return false}
   }
-  Log.i(TAG,"Split inputs ready rate="+sampleRate+" game="+includeGamePlayback+" micSource="+microphoneAudioSource+" accessibility="+(accessibilityService != null)+" preserveSpeaker="+preserveSpeakerPlayback+" AEC="+(aec?.enabled==true)+" NS="+(ns?.enabled==true)+" highpass="+MIC_HIGHPASS_HZ+"Hz playbackDSP=off")
+  Log.i(TAG,"Split inputs ready rate="+sampleRate+" game="+includeGamePlayback+" micSource="+microphoneAudioSource+" accessibility="+(accessibilityService != null)+" preserveSpeaker="+preserveSpeakerPlayback+" AEC="+(aec?.enabled==true)+" NS="+(ns?.enabled==true)+" voiceChain=gate+agc+compressor+presence highpass="+MIC_HIGHPASS_HZ+"Hz playbackDSP=off")
   return true
  }
+ /** Live effect state reported to the UI while broadcasting. */
+ val aecAttached:Boolean get()=aec?.enabled==true
+ val nsAttached:Boolean get()=ns?.enabled==true
+ val voiceOptimizerActive:Boolean get()=voiceChain!=null
  fun setPreferredDevice(device:AudioDeviceInfo?):Boolean {
   preferredInput=device
   return micManager?.setPreferredDevice(device) ?: true
@@ -91,7 +95,7 @@ class ProcessedMixAudioSource(
  private fun offerLatest(q:ArrayBlockingQueue<Frame>,f:Frame){if(!q.offer(f)){q.poll();q.offer(f)}}
  override fun stop(){running=false;mixerThread?.interrupt();releaseResources();try{mixerThread?.join(300)}catch(_:InterruptedException){Thread.currentThread().interrupt()};mixerThread=null;micFrames.clear();gameFrames.clear();output=null}
  private fun releaseResources(){
-  runCatching{aec?.enabled=false};runCatching{ns?.enabled=false};runCatching{aec?.release()};runCatching{ns?.release()};aec=null;ns=null
+  runCatching{aec?.enabled=false};runCatching{ns?.enabled=false};runCatching{aec?.release()};runCatching{ns?.release()};aec=null;ns=null;voiceChain=null
   micManager?.safeStop();micManager=null
   if(includeGamePlayback)gameManager.safeStop()
  }

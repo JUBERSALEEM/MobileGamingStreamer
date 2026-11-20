@@ -33,6 +33,9 @@ class MainActivity : ComponentActivity() {
     private var broadcastStarting by mutableStateOf(false)
     private var notificationsAllowed by mutableStateOf(true)
     private var accessibilityMicEnabled by mutableStateOf(false)
+    private var aecActive by mutableStateOf(false)
+    private var nsActive by mutableStateOf(false)
+    private var voiceOptimizationActive by mutableStateOf(false)
     private var showAccessibilityDisclosure by mutableStateOf(false)
     private var server by mutableStateOf("rtmp://a.rtmp.youtube.com/live2")
     private var key by mutableStateOf("")
@@ -50,6 +53,9 @@ class MainActivity : ComponentActivity() {
             broadcastActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_ACTIVE, false)
             status = intent.getStringExtra(RtmpBroadcastService.EXTRA_STATUS_MESSAGE) ?: status
             liveBitrate = intent.getLongExtra(RtmpBroadcastService.EXTRA_STATUS_BITRATE, 0L)
+            aecActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_AEC, false)
+            nsActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_NS, false)
+            voiceOptimizationActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_VOICE, false)
             broadcastStarting = !broadcastActive && listOf("Preparing", "Encoder ready", "Connecting", "RTMP connected", "Waiting for", "Stream key accepted", "60 FPS unavailable").any { status.contains(it, ignoreCase = true) }
         }
     }
@@ -189,6 +195,9 @@ class MainActivity : ComponentActivity() {
                         liveBitrate = liveBitrate,
                         notificationsAllowed = notificationsAllowed,
                         accessibilityMicEnabled = accessibilityMicEnabled,
+                        aecActive = aecActive,
+                        nsActive = nsActive,
+                        voiceOptimizationActive = voiceOptimizationActive,
                         floatingControlsAvailable = Settings.canDrawOverlays(this@MainActivity),
                         server = server,
                         key = key,

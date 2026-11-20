@@ -377,6 +377,10 @@ class RtmpBroadcastService : Service() {
     }
 
     private fun publishState(active: Boolean, message: String, bitrate: Long) {
+        val voice = activeAudioSource as? ProcessedMixAudioSource
+        val aec = voice?.aecAttached == true
+        val ns = voice?.nsAttached == true
+        val voiceOptimized = voice?.voiceOptimizerActive == true
         getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_ACTIVE, active)
             .putString(KEY_MESSAGE, message)
@@ -387,6 +391,9 @@ class RtmpBroadcastService : Service() {
             putExtra(EXTRA_STATUS_ACTIVE, active)
             putExtra(EXTRA_STATUS_MESSAGE, message)
             putExtra(EXTRA_STATUS_BITRATE, bitrate)
+            putExtra(EXTRA_STATUS_AEC, aec)
+            putExtra(EXTRA_STATUS_NS, ns)
+            putExtra(EXTRA_STATUS_VOICE, voiceOptimized)
         })
     }
 
@@ -488,6 +495,9 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_STATUS_ACTIVE = "status_active"
         const val EXTRA_STATUS_MESSAGE = "status_message"
         const val EXTRA_STATUS_BITRATE = "status_bitrate"
+        const val EXTRA_STATUS_AEC = "status_aec"
+        const val EXTRA_STATUS_NS = "status_ns"
+        const val EXTRA_STATUS_VOICE = "status_voice_optimized"
         const val STATE_PREFS = "broadcast_state"
         const val KEY_ACTIVE = "active"
         const val KEY_MESSAGE = "message"

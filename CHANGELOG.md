@@ -8,6 +8,9 @@
 - Keep AEC/NS from suppressing acoustically captured phone-speaker voice on the built-in speaker route; the existing high-pass filter and independent internal-playback mixer remain active.
 - Add an in-app setup control that opens Android Accessibility settings and reports whether the bridge is enabled.
 - Add unit tests for all three microphone-source selection cases.
+- Add an on-device studio voice chain for the microphone path: noise gate with hysteresis, slow automatic gain, soft-knee compressor and presence EQ on top of the existing high-pass filter and platform AEC/NS.
+- Report live echo-cancellation, noise-suppression and voice-optimizer state from the broadcast service to a new Voice Optimization card on the Audio page.
+- Add JVM unit tests for every voice-chain stage: gate open/close/release, AGC boost/freeze/unity, compressor curve, presence EQ response, full-chain level and stereo handling.
 
 ### Changed
 - Redesign every page, menu, dialog, card, input, button and navigation surface with the full claymorphism pattern: raised clay cards with soft opposing shadows, recessed wells for fields and selectors, and tactile pressed/selected states.

@@ -459,6 +459,9 @@ fun AudioMixerPage(
     audioMode: String,
     onAudioMode: (String) -> Unit,
     accessibilityMicEnabled: Boolean,
+    aecActive: Boolean,
+    nsActive: Boolean,
+    voiceOptimizationActive: Boolean,
     onEnableAccessibility: () -> Unit
 ) {
     val p = LocalMgsPalette.current
@@ -504,6 +507,61 @@ fun AudioMixerPage(
                 }
                 Text(
                     text = "Actual playback capture depends on Android, the game and device support.",
+                    color = p.muted,
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp
+                )
+            }
+        }
+
+        ClaySurface(shape = RoundedCornerShape(30.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        ClaySectionLabel("Voice optimization")
+                        Text(
+                            text = "Studio voice chain",
+                            color = p.text,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                    ClayStatusPill(
+                        label = if (voiceOptimizationActive) "ACTIVE" else "STANDBY",
+                        tone = if (voiceOptimizationActive) ClayTone.Active else ClayTone.Idle
+                    )
+                }
+                Text(
+                    text = "Your microphone is shaped like a broadcast voice: background hum is gated out, quiet commentary is lifted to a steady level, shouts are evened out and speech clarity is lifted over game audio.",
+                    color = p.muted,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ClayStatusPill(
+                        label = if (aecActive) "ECHO CANCELLED" else "ECHO: DEVICE",
+                        tone = if (aecActive) ClayTone.Active else ClayTone.Idle,
+                        modifier = Modifier.weight(1f)
+                    )
+                    ClayStatusPill(
+                        label = if (nsActive) "NOISE CUT" else "NOISE: BASIC",
+                        tone = if (nsActive) ClayTone.Active else ClayTone.Idle,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Text(
+                    text = "Echo cancellation and noise suppression attach automatically when Android exposes them on the microphone. Live status appears here while broadcasting with a microphone mode.",
                     color = p.muted,
                     fontSize = 10.sp,
                     lineHeight = 14.sp

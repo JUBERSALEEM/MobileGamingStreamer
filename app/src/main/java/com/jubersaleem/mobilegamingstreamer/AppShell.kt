@@ -52,6 +52,9 @@ data class StudioUiState(
     val liveBitrate: Long = 0L,
     val notificationsAllowed: Boolean = true,
     val accessibilityMicEnabled: Boolean = false,
+    val aecActive: Boolean = false,
+    val nsActive: Boolean = false,
+    val voiceOptimizationActive: Boolean = false,
     val floatingControlsAvailable: Boolean = false,
     val server: String = "",
     val key: String = "",
@@ -191,6 +194,9 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
                         audioMode = state.audioMode,
                         onAudioMode = actions.onAudioModeChange,
                         accessibilityMicEnabled = state.accessibilityMicEnabled,
+                        aecActive = state.aecActive,
+                        nsActive = state.nsActive,
+                        voiceOptimizationActive = state.voiceOptimizationActive,
                         onEnableAccessibility = actions.onEnableAccessibility
                     )
                     "TOOLS" -> ToolsPage(
