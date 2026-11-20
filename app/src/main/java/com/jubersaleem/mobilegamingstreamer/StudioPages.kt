@@ -28,7 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -84,7 +84,7 @@ fun StudioHomePage(
                     .fillMaxWidth()
                     .background(
                         Brush.linearGradient(
-                            listOf(Color(0xFFFFFCFF), Color(0xFFEDE8FA), Color(0xFFE6F1EC))
+                            listOf(p.elevated, p.primarySoft, p.accentSoft)
                         )
                     )
                     .padding(20.dp),
@@ -120,9 +120,14 @@ fun StudioHomePage(
                         broadcastActive -> "YOU'RE LIVE"
                         broadcastStarting -> "GETTING YOU ON AIR"
                         captureActive -> "CAPTURE SESSION ACTIVE"
+                        kind == BroadcastStatusKind.ERROR -> "SOMETHING NEEDS ATTENTION"
                         else -> "READY WHEN YOU ARE"
                     },
-                    color = p.secondary,
+                    color = when {
+                        broadcastActive -> p.accentDeep
+                        kind == BroadcastStatusKind.ERROR -> p.dangerDeep
+                        else -> p.text
+                    },
                     fontSize = 29.sp,
                     lineHeight = 33.sp,
                     fontWeight = FontWeight.Black,
@@ -167,7 +172,7 @@ fun StudioHomePage(
                         ClaySectionLabel("Live session")
                         Text(
                             text = if (broadcastActive || broadcastStarting) status else "No active broadcast",
-                            color = if (broadcastActive) p.primary else p.muted,
+                            color = if (broadcastActive) p.accentDeep else p.muted,
                             fontSize = 13.sp,
                             lineHeight = 18.sp,
                             fontWeight = FontWeight.SemiBold
@@ -181,7 +186,8 @@ fun StudioHomePage(
                         },
                         color = p.text,
                         fontSize = 24.sp,
-                        fontWeight = FontWeight.Black
+                        fontWeight = FontWeight.Black,
+                        fontFamily = FontFamily.Monospace
                     )
                 }
                 ClayGroove()
@@ -294,13 +300,14 @@ fun StreamWorkspacePage(
                     }
                     ClayStatusPill(
                         label = if (rememberStreamKey) "KEY SAVED" else "KEY IN MEMORY",
-                        tone = if (rememberStreamKey) ClayTone.Active else ClayTone.Idle
+                        tone = if (rememberStreamKey) ClayTone.Active else ClayTone.Accent
                     )
                 }
                 ClayTextField(
                     value = server,
                     onValueChange = onServer,
                     label = "RTMP server URL",
+                    mono = true,
                     leadingIcon = Icons.Rounded.Videocam
                 )
                 ClayTextField(
@@ -308,6 +315,7 @@ fun StreamWorkspacePage(
                     onValueChange = onKey,
                     label = "Private stream key",
                     password = true,
+                    mono = true,
                     leadingIcon = Icons.Rounded.Lock
                 )
                 ClayToggleRow(
@@ -343,11 +351,10 @@ fun StreamWorkspacePage(
                             fontWeight = FontWeight.Black
                         )
                     }
-                    Icon(
-                        imageVector = Icons.Rounded.Speed,
-                        contentDescription = null,
-                        modifier = Modifier.size(22.dp),
-                        tint = p.secondary
+                    ClayIconBadge(
+                        icon = Icons.Rounded.Speed,
+                        containerColor = p.accentSoft,
+                        contentColor = p.accentDeep
                     )
                 }
                 ClayOptionGroup("Resolution", listOf("720p", "1080p", "1440p"), quality, onQuality)
@@ -378,11 +385,10 @@ fun StreamWorkspacePage(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Mic,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = p.primary
+                    ClayIconBadge(
+                        icon = Icons.Rounded.Mic,
+                        containerColor = p.accentSoft,
+                        contentColor = p.accentDeep
                     )
                     Column(
                         modifier = Modifier.weight(1f),
@@ -558,12 +564,24 @@ fun AudioMixerPage(
                 ) {
                     ClayStatusPill(
                         label = if (aecActive) "ECHO CANCELLED" else "ECHO: DEVICE",
-                        tone = if (aecActive) ClayTone.Active else ClayTone.Idle,
+                        tone = if (aecActive) {
+                            ClayTone.Active
+                        } else if (audioCaptureActive) {
+                            ClayTone.Warning
+                        } else {
+                            ClayTone.Idle
+                        },
                         modifier = Modifier.weight(1f)
                     )
                     ClayStatusPill(
                         label = if (nsActive) "NOISE CUT" else "NOISE: BASIC",
-                        tone = if (nsActive) ClayTone.Active else ClayTone.Idle,
+                        tone = if (nsActive) {
+                            ClayTone.Active
+                        } else if (audioCaptureActive) {
+                            ClayTone.Warning
+                        } else {
+                            ClayTone.Idle
+                        },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -649,6 +667,7 @@ fun AudioMixerPage(
 fun ToolsPage(
     captureActive: Boolean,
     broadcastActive: Boolean,
+    broadcastStarting: Boolean,
     floatingControlsAvailable: Boolean,
     onEnableFloatingControls: () -> Unit,
     onStartCaptureTest: () -> Unit,
@@ -684,7 +703,7 @@ fun ToolsPage(
                     }
                     ClayStatusPill(
                         label = if (floatingControlsAvailable) "READY" else "PERMISSION NEEDED",
-                        tone = if (floatingControlsAvailable) ClayTone.Active else ClayTone.Idle
+                        tone = if (floatingControlsAvailable) ClayTone.Active else ClayTone.Warning
                     )
                 }
                 Text(
@@ -725,11 +744,10 @@ fun ToolsPage(
                             fontWeight = FontWeight.Black
                         )
                     }
-                    Icon(
-                        imageVector = Icons.Rounded.Refresh,
-                        contentDescription = null,
-                        modifier = Modifier.size(22.dp),
-                        tint = p.secondary
+                    ClayIconBadge(
+                        icon = Icons.Rounded.Refresh,
+                        containerColor = p.accentSoft,
+                        contentColor = p.accentDeep
                     )
                 }
                 Text(
@@ -769,7 +787,15 @@ fun ToolsPage(
                 Spacer(Modifier.height(2.dp))
                 ClayKeyValueRow("Screen capture", if (captureActive || broadcastActive) "ACTIVE" else "READY", captureActive || broadcastActive)
                 ClayKeyValueRow("H.264 encoder", if (captureActive || broadcastActive) "SESSION STARTED" else "READY", captureActive || broadcastActive)
-                ClayKeyValueRow("RTMP transport", if (broadcastActive) "CONNECTING" else "READY TO CONNECT", broadcastActive)
+                ClayKeyValueRow(
+                    "RTMP transport",
+                    when {
+                        broadcastActive -> "STREAMING"
+                        broadcastStarting -> "CONNECTING"
+                        else -> "READY TO CONNECT"
+                    },
+                    broadcastActive || broadcastStarting
+                )
                 ClayKeyValueRow("Microphone / game audio", "DEVICE DEPENDENT")
             }
         }
