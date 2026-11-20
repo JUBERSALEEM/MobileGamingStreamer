@@ -36,16 +36,6 @@ import com.pedro.library.generic.GenericStream
 
 /** RTMP broadcast service with microphone audio and screen video. */
 class RtmpBroadcastService : Service() {
-    private data class VideoProfile(
-        val quality: String,
-        val fps: Int,
-        val width: Int,
-        val height: Int,
-        val bitrate: Int
-    ) {
-        val label: String get() = "$quality @ ${fps}fps"
-    }
-
     private var display: GenericStream? = null
     private var activeAudioSource: AudioSource? = null
     private var activeProjection: MediaProjection? = null
@@ -234,7 +224,7 @@ class RtmpBroadcastService : Service() {
                 "LANDSCAPE" -> false
                 else -> screenHeight > screenWidth
             }
-            val profileCandidates = buildVideoProfiles(quality, fps, portrait)
+            val profileCandidates = VideoProfileSelector.build(quality, fps, portrait)
 
             // RtmpDisplay.prepareAudio() captures ONLY the microphone. It never configures
             // AudioPlaybackCapture, which is why BGMI gunshots/game effects were absent.
@@ -283,10 +273,6 @@ class RtmpBroadcastService : Service() {
             val activeProfile = selectedProfile
                 ?: throw IllegalStateException("No supported hardware H.264 profile found. Try 720p30 or check device encoder support.")
             activeProfileLabel = activeProfile.label
-            // Match the GL capture cadence and presentation timestamps to the selected encoder FPS.
-            // MediaProjection can follow the device refresh rate (for example 120 Hz); without
-            // pacing, excess frames can overload the encoder and produce uneven live motion.
-            stream.forceFpsLimit(true)
             val echoCancellation = audioMode != AUDIO_MODE_GAME
             val noiseSuppression = audioMode != AUDIO_MODE_GAME
             Log.i(TAG, "Audio effects requested: AEC=$echoCancellation, NS=$noiseSuppression; microphone source=DEFAULT")
@@ -318,41 +304,6 @@ class RtmpBroadcastService : Service() {
         } catch (error: Exception) {
             Log.e(TAG, "Unable to start RTMP broadcast", error)
             stopBroadcast("Unable to start: ${error.message ?: "encoder error"}")
-        }
-    }
-
-    private fun buildVideoProfiles(quality: String, requestedFps: Int, portrait: Boolean): List<VideoProfile> {
-        val qualityOrder = when (quality) {
-            "1440p" -> listOf("1440p", "1080p", "720p")
-            "720p" -> listOf("720p")
-            else -> listOf("1080p", "720p")
-        }
-        return buildList {
-            qualityOrder.forEachIndexed { index, candidateQuality ->
-                val fpsOptions = if (index == 0) {
-                    listOf(requestedFps, 30).distinct()
-                } else if (requestedFps >= 60) {
-                    listOf(60, 30)
-                } else {
-                    listOf(30)
-                }
-                fpsOptions.forEach { candidateFps ->
-                    val longEdge = when (candidateQuality) {
-                        "720p" -> 1280
-                        "1440p" -> 2560
-                        else -> 1920
-                    }
-                    val shortEdge = ((longEdge * 9f / 16f).toInt() / 2) * 2
-                    val width = if (portrait) shortEdge else longEdge
-                    val height = if (portrait) longEdge else shortEdge
-                    val bitrate = when (candidateQuality) {
-                        "720p" -> if (candidateFps >= 60) 6_000_000 else 4_000_000
-                        "1440p" -> if (candidateFps >= 60) 18_000_000 else 14_000_000
-                        else -> if (candidateFps >= 60) 12_000_000 else 8_000_000
-                    }
-                    add(VideoProfile(candidateQuality, candidateFps, width, height, bitrate))
-                }
-            }
         }
     }
 

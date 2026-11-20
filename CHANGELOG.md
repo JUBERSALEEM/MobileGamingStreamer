@@ -3,6 +3,7 @@
 ### Fixed
 - Pin one development signing identity in the repository so every pull-request, branch-push and manually dispatched APK uses the same certificate.
 - Verify the APK certificate fingerprint against the pinned keystore before packaging or publishing.
+- Keep the requested 60 FPS across lower-resolution hardware fallbacks before dropping to 30 FPS, and cover fallback ordering/orientation with unit tests.
 - Remove event-scoped Actions cache signing-key drift from the distributable build path.
 - Because the historical 0.5.19 and 0.5.20 APKs were already signed with different certificates, users upgrading from either historical build may need one uninstall/reinstall to move onto the pinned identity.
 
