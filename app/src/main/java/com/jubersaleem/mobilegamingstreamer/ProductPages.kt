@@ -59,7 +59,7 @@ fun SettingsPage(
                         selected = themeMode == "CLAY",
                         onClick = { onThemeChange("CLAY") },
                         label = { Text("Claymorphism", fontWeight = FontWeight.SemiBold) },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).then(clayRaisedModifier(RoundedCornerShape(18.dp)))
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -123,8 +123,8 @@ fun AboutPage(onTerms: () -> Unit, onPrivacy: () -> Unit) {
                 Text("Mobile Gaming Streamer is an independent product and is not affiliated with, endorsed by or sponsored by Krafton, Tencent, BGMI, PUBG MOBILE or Google. All third-party names and marks belong to their respective owners.", color = p.muted, fontSize = 10.sp, lineHeight = 15.sp)
             }
         }
-        OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("PRIVACY POLICY") }
-        OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("TERMS & CONDITIONS") }
+        OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth().then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("PRIVACY POLICY") }
+        OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth().then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("TERMS & CONDITIONS") }
         Text("Developer project: github.com/JUBERSALEEM/MobileGamingStreamer", color = p.muted, fontSize = 10.sp)
     }
 }
