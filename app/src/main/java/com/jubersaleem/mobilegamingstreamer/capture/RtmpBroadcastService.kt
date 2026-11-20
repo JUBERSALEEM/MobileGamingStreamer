@@ -285,7 +285,7 @@ class RtmpBroadcastService : Service() {
             activeProfileLabel = activeProfile.label
             val echoCancellation = audioMode != AUDIO_MODE_GAME
             val noiseSuppression = audioMode != AUDIO_MODE_GAME
-            Log.i(TAG, "Audio effects requested: AEC=$echoCancellation, NS=$noiseSuppression; microphone source=DEFAULT")
+            Log.i(TAG, "Audio effects requested: AEC=$echoCancellation, NS=$noiseSuppression; microphone source=$micSource; accessibility=$accessibilityMicConnected")
             val audioPrepared = stream.prepareAudio(48_000, true, 128_000, echoCancellation, noiseSuppression)
             if (!audioPrepared) {
                 throw IllegalStateException("Audio source preparation failed for mode: $audioMode")
