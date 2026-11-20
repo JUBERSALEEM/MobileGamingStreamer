@@ -33,6 +33,9 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
+            // Keep a stable signing identity for this installable development release.
+            // This uses the repository's existing debug key, not a production Play key.
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
