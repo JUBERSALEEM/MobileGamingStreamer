@@ -1,3 +1,17 @@
+## 0.5.22-dev — Glip-style concurrent microphone capture
+
+### Added
+- Add an explicit, user-enabled Android Accessibility Service for the concurrent microphone-capture path used by Glip/RootEncoder.
+- The service does not retrieve window content, inspect screen text, perform gestures or automate other apps; it listens only for window-state events required by the accessibility-service declaration.
+- Route microphone recording through a manager created by the connected accessibility-service path.
+- Select Android microphone sources using the observed Glip pattern: DEFAULT with the accessibility bridge and built-in microphone, VOICE_RECOGNITION with an external headset, and MIC as the fallback when the bridge is disabled.
+- Add an in-app setup control that opens Android Accessibility settings and reports whether the bridge is enabled.
+- Add unit tests for all three microphone-source selection cases.
+
+### Verification boundary
+- CI verifies compilation, tests, lint and APK packaging. Actual concurrent BGMI voice-chat capture, speaker audio pickup, echo behaviour and YouTube audio output still require testing on the Galaxy S25 Ultra.
+- Android playback capture remains subject to the game's playback usage and capture policy. Accessibility microphone sharing does not grant unrestricted access to protected playback streams.
+
 ## 0.5.21-dev — APK installation and signing continuity
 
 ### Fixed
