@@ -11,6 +11,9 @@ package com.jubersaleem.mobilegamingstreamer
  */
 enum class BroadcastStatusKind { STANDBY, STARTING, LIVE, ERROR }
 
+// "reconnect" covers the socket-recovery lines ("Reconnecting…",
+// "Reconnected …"). Deliberately NOT "retry": the terminal failure line ends
+// with "…and retry." and must keep classifying as ERROR, not STARTING.
 private val STARTING_KEYWORDS = listOf(
     "preparing",
     "encoder ready",
@@ -18,6 +21,7 @@ private val STARTING_KEYWORDS = listOf(
     "rtmp connected",
     "waiting for",
     "stream key accepted",
+    "reconnect",
     "60 fps unavailable"
 )
 

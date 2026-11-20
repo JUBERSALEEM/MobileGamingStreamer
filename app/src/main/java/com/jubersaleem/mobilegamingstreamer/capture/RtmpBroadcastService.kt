@@ -51,12 +51,18 @@ class RtmpBroadcastService : Service() {
     private var lastBitrate = 0L
     private var lastPositiveBitrateAt = 0L
     private var stopping = false
+    private var recovery = StreamRecoveryState()
+    private var pendingRetryReason = ""
     private val handler = Handler(Looper.getMainLooper())
     private val startupTimeout = Runnable {
-        if (display != null && !streamingConfirmed) {
+        if (display != null && !streamingConfirmed && recovery.phase != StreamPhase.RECONNECTING) {
             stopBroadcast("No outgoing video bitrate after 25 seconds. Encoder or RTMP startup failed.")
         }
     }
+    // Socket-only recovery: re-establishes the RTMP connection through
+    // RootEncoder's retry API. Capture, encoders, mixer and the
+    // MediaProjection session are never touched on this path.
+    private val reconnectRunnable = Runnable { firePendingRetry() }
     private val sessionHeartbeat = object : Runnable {
         override fun run() {
             if (display != null) {
@@ -67,13 +73,23 @@ class RtmpBroadcastService : Service() {
     }
     // A live stream can silently stall after the startup watchdog has been cancelled.
     // Stop a stalled session with an actionable message; a new attempt needs fresh Android consent.
+    // While a reconnect episode is open, bitrate silence is expected: only the
+    // overall episode bound can stop the session, never the stall rule.
     private val streamHealthWatchdog = object : Runnable {
         override fun run() {
             if (display == null || stopping) return
-            if (streamingConfirmed && lastPositiveBitrateAt > 0L &&
-                SystemClock.elapsedRealtime() - lastPositiveBitrateAt >= STREAM_STALL_TIMEOUT_MS) {
-                stopBroadcast("Stream output stalled for 20 seconds. Check your network, then tap GO LIVE and approve a fresh screen-capture session.")
-                return
+            when (StreamConnectionPolicy.decideWatchdog(
+                recovery, streamingConfirmed, lastPositiveBitrateAt, SystemClock.elapsedRealtime()
+            )) {
+                WatchdogAction.STOP_STALLED -> {
+                    stopBroadcast("Stream output stalled for 20 seconds. Check your network, then tap GO LIVE and approve a fresh screen-capture session.")
+                    return
+                }
+                WatchdogAction.STOP_RECONNECT_TIMEOUT -> {
+                    stopBroadcast(StreamConnectionPolicy.exhaustedMessage())
+                    return
+                }
+                WatchdogAction.NONE -> { }
             }
             handler.postDelayed(this, STREAM_HEALTH_CHECK_INTERVAL_MS)
         }
@@ -131,11 +147,14 @@ class RtmpBroadcastService : Service() {
         handler.removeCallbacks(startupTimeout)
         handler.removeCallbacks(streamHealthWatchdog)
         handler.removeCallbacks(sessionHeartbeat)
+        handler.removeCallbacks(reconnectRunnable)
         // Suppress callbacks from a previous stream while its resources are released.
         stopping = true
         streamingConfirmed = false
         lastBitrate = 0L
         lastPositiveBitrateAt = 0L
+        recovery = StreamRecoveryState(phase = StreamPhase.STARTING)
+        pendingRetryReason = ""
         display?.let { previous ->
             try { previous.release() } catch (_: Exception) { }
             display = null
@@ -167,10 +186,40 @@ class RtmpBroadcastService : Service() {
             var activeProfileLabel = "Preparing video profile"
         val checker = object : ConnectChecker {
                 override fun onConnectionStarted(url: String) = update("Connecting to streaming server…")
-                override fun onConnectionSuccess() = update("RTMP connected • Waiting for video frames")
+                override fun onConnectionSuccess() {
+                    val wasReconnecting = recovery.phase == StreamPhase.RECONNECTING
+                    recovery = StreamConnectionPolicy.onConnectionSuccess(recovery)
+                    if (!streamingConfirmed) {
+                        // A reconnected socket still has to produce frames; re-arm
+                        // the startup bound that scheduling a retry had removed.
+                        handler.removeCallbacks(startupTimeout)
+                        handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
+                    }
+                    if (wasReconnecting) update("Reconnected • Waiting for video frames")
+                    else update("RTMP connected • Waiting for video frames")
+                }
                 override fun onConnectionFailed(reason: String) {
                     Log.e(TAG, "RTMP connection failed: $reason")
-                    stopBroadcast("Connection failed: $reason. Open the app and tap GO LIVE to grant a fresh screen-capture session and retry.")
+                    when (val action = StreamConnectionPolicy.decideConnectionFailed(
+                        recovery, stopping, display != null, activeProjection != null, reason
+                    )) {
+                        is RecoveryAction.ScheduleRetry -> {
+                            recovery = StreamConnectionPolicy.onRetryScheduled(
+                                recovery, SystemClock.elapsedRealtime()
+                            )
+                            pendingRetryReason = reason
+                            lastBitrate = 0L
+                            lastPositiveBitrateAt = 0L
+                            handler.removeCallbacks(startupTimeout)
+                            handler.removeCallbacks(streamHealthWatchdog)
+                            handler.postDelayed(streamHealthWatchdog, STREAM_HEALTH_CHECK_INTERVAL_MS)
+                            update(StreamConnectionPolicy.reconnectMessage(action.attempt), 0L)
+                            handler.removeCallbacks(reconnectRunnable)
+                            handler.postDelayed(reconnectRunnable, action.delayMs)
+                        }
+                        is RecoveryAction.Stop -> stopBroadcast(action.message)
+                        RecoveryAction.Ignore -> { }
+                    }
                 }
                 override fun onDisconnect() {
                     if (stopping) return
@@ -178,6 +227,8 @@ class RtmpBroadcastService : Service() {
                     handler.removeCallbacks(startupTimeout)
                     handler.removeCallbacks(streamHealthWatchdog)
                     handler.removeCallbacks(sessionHeartbeat)
+                    handler.removeCallbacks(reconnectRunnable)
+                    recovery = StreamConnectionPolicy.onStopped(recovery)
                     streamingConfirmed = false
                     lastBitrate = 0L
                     val disconnected = display
@@ -308,7 +359,7 @@ class RtmpBroadcastService : Service() {
             display = stream
             stream.setFpsListener { outputFps ->
                 handler.post {
-                    if (display === stream && streamingConfirmed) {
+                    if (display === stream && streamingConfirmed && recovery.phase != StreamPhase.RECONNECTING) {
                         update("LIVE • $activeProfileLabel • ${outputFps} FPS • ${lastBitrate / 1000} kbps", lastBitrate)
                     }
                 }
@@ -317,13 +368,35 @@ class RtmpBroadcastService : Service() {
             handler.post(sessionHeartbeat)
             publishState(false, "Encoder ready • $activeProfileLabel • Connecting…", 0L)
             update("Encoder ready • $activeProfileLabel • Connecting…")
+            // Library-level backstop for the policy above: RootEncoder refuses
+            // further reTry calls once this counter is consumed, so the two
+            // bounds always agree even if a callback arrives unexpectedly.
+            stream.getStreamClient().setReTries(StreamConnectionPolicy.MAX_ATTEMPTS)
             stream.startStream(streamUrl)
-            handler.postDelayed(startupTimeout, 25_000L)
+            handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
             Log.i(TAG, "RTMP broadcast requested: $activeProfileLabel, orientation=${if (portrait) "PORTRAIT" else "LANDSCAPE"}, audio=$audioMode, dpi=$dpi")
         } catch (error: Exception) {
             Log.e(TAG, "Unable to start RTMP broadcast", error)
             stopBroadcast("Unable to start: ${error.message ?: "encoder error"}")
         }
+    }
+
+    /**
+     * Fires one scheduled socket-only reconnect attempt. Only the RTMP
+     * connection is re-established; capture, encoders, mixer and the
+     * MediaProjection session keep running untouched.
+     */
+    private fun firePendingRetry() {
+        val stream = display
+        if (stream == null || stopping) return
+        val attempt = recovery.attemptsUsed + 1
+        recovery = StreamConnectionPolicy.onRetryFired(recovery, attempt)
+        val accepted = try {
+            stream.getStreamClient().reTry(0L, pendingRetryReason)
+        } catch (_: Exception) {
+            false
+        }
+        if (!accepted) stopBroadcast(StreamConnectionPolicy.exhaustedMessage())
     }
 
     private fun stopBroadcast(message: String = "Broadcast stopped") {
@@ -332,6 +405,9 @@ class RtmpBroadcastService : Service() {
         handler.removeCallbacks(startupTimeout)
         handler.removeCallbacks(streamHealthWatchdog)
         handler.removeCallbacks(sessionHeartbeat)
+        handler.removeCallbacks(reconnectRunnable)
+        recovery = StreamConnectionPolicy.onStopped(recovery)
+        pendingRetryReason = ""
         streamingConfirmed = false
         lastBitrate = 0L
         val active = display
@@ -384,7 +460,10 @@ class RtmpBroadcastService : Service() {
     }
 
     private fun update(message: String, bitrate: Long = 0L) {
-        publishState(streamingConfirmed && lastBitrate > 0L, message, if (bitrate > 0L) bitrate else lastBitrate)
+        // A session whose socket dropped is never reported live, even though
+        // the confirmation flag from before the outage is retained.
+        val live = streamingConfirmed && lastBitrate > 0L && recovery.phase != StreamPhase.RECONNECTING
+        publishState(live, message, if (bitrate > 0L) bitrate else lastBitrate)
         notifications.notify(NOTIFICATION_ID, notification(message))
     }
 
@@ -529,7 +608,7 @@ class RtmpBroadcastService : Service() {
         const val KEY_BITRATE = "bitrate"
         const val KEY_HEARTBEAT = "service_heartbeat"
         private const val STREAM_HEALTH_CHECK_INTERVAL_MS = 5_000L
-        private const val STREAM_STALL_TIMEOUT_MS = 20_000L
+        private const val STARTUP_TIMEOUT_MS = 25_000L
         private const val TAG = "MGS-RTMP"
         private const val CHANNEL_ID = "live_broadcast"
         private const val NOTIFICATION_ID = 1002

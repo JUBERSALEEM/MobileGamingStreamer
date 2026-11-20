@@ -72,6 +72,43 @@ class StudioStatusTest {
     }
 
     @Test
+    fun reconnectProgressMessagesAreStarting() {
+        listOf(
+            com.jubersaleem.mobilegamingstreamer.capture.StreamConnectionPolicy.reconnectMessage(1),
+            com.jubersaleem.mobilegamingstreamer.capture.StreamConnectionPolicy.reconnectMessage(5),
+            "Reconnected • Waiting for video frames"
+        ).forEach { message ->
+            assertTrue(message, isStartingBroadcastMessage(message))
+            assertEquals(
+                message, BroadcastStatusKind.STARTING,
+                classifyBroadcastStatus(message, active = false, starting = true)
+            )
+        }
+    }
+
+    @Test
+    fun exhaustedRecoveryIsErrorNotStarting() {
+        val exhausted = com.jubersaleem.mobilegamingstreamer.capture.StreamConnectionPolicy.exhaustedMessage()
+        assertFalse(exhausted, isStartingBroadcastMessage(exhausted))
+        assertEquals(
+            BroadcastStatusKind.ERROR,
+            classifyBroadcastStatus(exhausted, active = false, starting = false)
+        )
+    }
+
+    @Test
+    fun terminalFailureKeepsErrorClassification() {
+        val terminal = com.jubersaleem.mobilegamingstreamer.capture.StreamConnectionPolicy.terminalFailureMessage(
+            "Endpoint malformed, should be: rtmp://ip:port/appname/streamname"
+        )
+        assertFalse(terminal, isStartingBroadcastMessage(terminal))
+        assertEquals(
+            BroadcastStatusKind.ERROR,
+            classifyBroadcastStatus(terminal, active = false, starting = false)
+        )
+    }
+
+    @Test
     fun announcementsAreConcisePerState() {
         assertEquals("You are live", broadcastAnnouncement(BroadcastStatusKind.LIVE, "LIVE • 8123 kbps"))
         assertEquals(

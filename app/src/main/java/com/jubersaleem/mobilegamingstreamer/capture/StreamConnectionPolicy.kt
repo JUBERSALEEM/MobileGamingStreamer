@@ -13,6 +13,38 @@ package com.jubersaleem.mobilegamingstreamer.capture
 enum class StreamPhase { IDLE, STARTING, LIVE, RECONNECTING, STOPPING, STOPPED }
 
 /**
+ * Socket-recovery progress for one failure episode.
+ *
+ * @param phase explicit connection phase; RECONNECTING marks a live session
+ * whose RTMP socket dropped and is being re-established.
+ * @param attemptsUsed reconnect attempts already consumed in this episode.
+ * @param retryPending true while a backoff is scheduled but not yet fired.
+ * @param episodeStartMs monotonic timestamp of the first failure, or 0 when
+ * no episode is open. The watchdog enforces the overall episode bound from it.
+ */
+data class StreamRecoveryState(
+    val phase: StreamPhase = StreamPhase.IDLE,
+    val attemptsUsed: Int = 0,
+    val retryPending: Boolean = false,
+    val episodeStartMs: Long = 0L
+)
+
+/** Pure decision for a connection-failure callback. */
+sealed interface RecoveryAction {
+    /** Schedule attempt [attempt] after [delayMs]; the socket alone is retried. */
+    data class ScheduleRetry(val attempt: Int, val delayMs: Long) : RecoveryAction
+
+    /** End the session with [message]; no further retry is allowed. */
+    data class Stop(val message: String) : RecoveryAction
+
+    /** Late or duplicate callback; leave the session untouched. */
+    data object Ignore : RecoveryAction
+}
+
+/** Pure watchdog decision. */
+enum class WatchdogAction { NONE, STOP_STALLED, STOP_RECONNECT_TIMEOUT }
+
+/**
  * Bounded RTMP reconnect policy for long gaming sessions.
  *
  * Recovery reuses the live MediaProjection session and the running
@@ -76,5 +108,100 @@ object StreamConnectionPolicy {
 
     /** Status line published when the episode exhausts its attempts. */
     fun exhaustedMessage(): String =
-        "Reconnection failed after $MAX_ATTEMPTS attempts. Check your network, then tap GO LIVE for a fresh session."
+        "Unable to restore the connection after $MAX_ATTEMPTS attempts. Check your network, then tap GO LIVE for a fresh session."
+
+    /**
+     * Terminal failure line, preserved exactly from the pre-recovery
+     * behaviour. Retried failures never use this text; only failures the
+     * policy classifies as non-retryable do.
+     */
+    fun terminalFailureMessage(reason: String): String =
+        "Connection failed: $reason. Open the app and tap GO LIVE to grant a fresh screen-capture session and retry."
+
+    /** Shared "capture permission ended" line; recovery never retries without a live projection. */
+    const val PROJECTION_ENDED_MESSAGE = "Screen capture permission ended"
+
+    /** Bitrate silence that classifies a confirmed session as stalled. */
+    const val STREAM_STALL_TIMEOUT_MS = 20_000L
+
+    /**
+     * Pure decision for an RTMP connection-failure callback.
+     *
+     * @param state current recovery snapshot.
+     * @param stopping true once the user/system stop path owns the session.
+     * @param hasStream false when the stream object is already gone (late callback).
+     * @param hasProjection false when capture consent ended (never retry without it).
+     */
+    fun decideConnectionFailed(
+        state: StreamRecoveryState,
+        stopping: Boolean,
+        hasStream: Boolean,
+        hasProjection: Boolean,
+        reason: String
+    ): RecoveryAction {
+        if (stopping || state.phase == StreamPhase.STOPPING || state.phase == StreamPhase.STOPPED) {
+            return RecoveryAction.Ignore
+        }
+        if (!hasStream) return RecoveryAction.Ignore
+        // A duplicate failure while a backoff is already in flight must not
+        // consume an extra attempt or reschedule the pending one.
+        if (state.retryPending) return RecoveryAction.Ignore
+        if (!hasProjection) return RecoveryAction.Stop(PROJECTION_ENDED_MESSAGE)
+        if (!isRetryableReason(reason)) return RecoveryAction.Stop(terminalFailureMessage(reason))
+        val attempt = state.attemptsUsed + 1
+        if (attempt > MAX_ATTEMPTS) return RecoveryAction.Stop(exhaustedMessage())
+        return RecoveryAction.ScheduleRetry(attempt, retryDelayMs(attempt))
+    }
+
+    /** Snapshot update when a retry backoff is scheduled. */
+    fun onRetryScheduled(state: StreamRecoveryState, nowMs: Long): StreamRecoveryState =
+        state.copy(
+            phase = StreamPhase.RECONNECTING,
+            retryPending = true,
+            episodeStartMs = if (state.episodeStartMs == 0L) nowMs else state.episodeStartMs
+        )
+
+    /** Snapshot update when a scheduled backoff fires and consumes its attempt. */
+    fun onRetryFired(state: StreamRecoveryState, attempt: Int): StreamRecoveryState =
+        state.copy(attemptsUsed = attempt, retryPending = false)
+
+    /**
+     * Snapshot update on RTMP connection success. A success that ends a
+     * reconnect episode resets the episode; any other success leaves the
+     * snapshot untouched.
+     */
+    fun onConnectionSuccess(state: StreamRecoveryState): StreamRecoveryState =
+        if (state.phase == StreamPhase.RECONNECTING) StreamRecoveryState(phase = StreamPhase.STARTING)
+        else state
+
+    /** Snapshot update when the stop path takes ownership (also cancels a pending retry). */
+    fun onStopped(state: StreamRecoveryState): StreamRecoveryState =
+        state.copy(phase = StreamPhase.STOPPING, retryPending = false)
+
+    /**
+     * Pure watchdog decision. While reconnecting, only the overall episode
+     * bound can stop the session — bitrate silence is expected and must not
+     * trigger the stall stop. Otherwise the historical stall rule applies.
+     */
+    fun decideWatchdog(
+        state: StreamRecoveryState,
+        streamingConfirmed: Boolean,
+        lastPositiveAtMs: Long,
+        nowMs: Long
+    ): WatchdogAction {
+        if (state.phase == StreamPhase.RECONNECTING) {
+            return if (state.episodeStartMs > 0L && nowMs - state.episodeStartMs >= OVERALL_TIMEOUT_MS) {
+                WatchdogAction.STOP_RECONNECT_TIMEOUT
+            } else {
+                WatchdogAction.NONE
+            }
+        }
+        return if (streamingConfirmed && lastPositiveAtMs > 0L &&
+            nowMs - lastPositiveAtMs >= STREAM_STALL_TIMEOUT_MS
+        ) {
+            WatchdogAction.STOP_STALLED
+        } else {
+            WatchdogAction.NONE
+        }
+    }
 }
