@@ -1,3 +1,20 @@
+## 0.5.16-dev — Phase 2 live stream health watchdog
+
+### Added
+- Monitor outgoing bitrate after the first successful live confirmation.
+- Detect a live output stall lasting 20 seconds and stop the stalled session with a clear retry instruction.
+- Require a fresh user-approved MediaProjection session for a retry; never silently reuse an Android projection token.
+- Guard disconnect callbacks during intentional stop so a late callback cannot overwrite the user's final stop reason.
+
+### Verified in code
+- Ordered hardware H.264 preparation fallback across requested and lower supported profiles.
+- Outgoing FPS and bitrate telemetry; FPS is not represented as a dropped-frame count.
+- Explicit retry guidance for RTMP connection/authentication failures.
+
+### Physical validation still required
+- Rotation, selected-app resizing, sustained FPS, thermal behaviour, real network-loss recovery and long-session stability on Galaxy S25 Ultra.
+- Android 14+ MediaProjection token restrictions prevent safe automatic recreation of the capture VirtualDisplay from a previously used token.
+
 ## 0.5.15-dev — Phase 3 secure RTMP destination and key handling
 
 ### Fixed

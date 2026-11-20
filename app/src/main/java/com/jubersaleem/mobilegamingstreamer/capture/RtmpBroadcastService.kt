@@ -12,6 +12,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.os.IBinder
 import android.app.Service
@@ -55,6 +56,8 @@ class RtmpBroadcastService : Service() {
     }
     private var streamingConfirmed = false
     private var lastBitrate = 0L
+    private var lastPositiveBitrateAt = 0L
+    private var stopping = false
     private val handler = Handler(Looper.getMainLooper())
     private val startupTimeout = Runnable {
         if (display != null && !streamingConfirmed) {
@@ -67,6 +70,19 @@ class RtmpBroadcastService : Service() {
                 getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putLong(KEY_HEARTBEAT, System.currentTimeMillis()).apply()
                 handler.postDelayed(this, 2_000L)
             }
+        }
+    }
+    // A live stream can silently stall after the startup watchdog has been cancelled.
+    // Stop a stalled session with an actionable message; a new attempt needs fresh Android consent.
+    private val streamHealthWatchdog = object : Runnable {
+        override fun run() {
+            if (display == null || stopping) return
+            if (streamingConfirmed && lastPositiveBitrateAt > 0L &&
+                SystemClock.elapsedRealtime() - lastPositiveBitrateAt >= STREAM_STALL_TIMEOUT_MS) {
+                stopBroadcast("Stream output stalled for 20 seconds. Check your network, then tap GO LIVE and approve a fresh screen-capture session.")
+                return
+            }
+            handler.postDelayed(this, STREAM_HEALTH_CHECK_INTERVAL_MS)
         }
     }
     private val notifications by lazy { getSystemService(NotificationManager::class.java) }
@@ -119,8 +135,12 @@ class RtmpBroadcastService : Service() {
 
     private fun startBroadcast(intent: Intent) {
         handler.removeCallbacks(startupTimeout)
+        handler.removeCallbacks(streamHealthWatchdog)
+        handler.removeCallbacks(sessionHeartbeat)
+        stopping = false
         streamingConfirmed = false
         lastBitrate = 0L
+        lastPositiveBitrateAt = 0L
         display?.let { previous ->
             try { previous.release() } catch (_: Exception) { }
             display = null
@@ -157,7 +177,10 @@ class RtmpBroadcastService : Service() {
                     stopBroadcast("Connection failed: $reason. Open the app and tap GO LIVE to grant a fresh screen-capture session and retry.")
                 }
                 override fun onDisconnect() {
+                    if (stopping) return
+                    stopping = true
                     handler.removeCallbacks(startupTimeout)
+                    handler.removeCallbacks(streamHealthWatchdog)
                     handler.removeCallbacks(sessionHeartbeat)
                     streamingConfirmed = false
                     lastBitrate = 0L
@@ -180,7 +203,12 @@ class RtmpBroadcastService : Service() {
                         val firstConfirmation = !streamingConfirmed
                         streamingConfirmed = true
                         lastBitrate = bitrate
+                        lastPositiveBitrateAt = SystemClock.elapsedRealtime()
                         handler.removeCallbacks(startupTimeout)
+                        if (firstConfirmation) {
+                            handler.removeCallbacks(streamHealthWatchdog)
+                            handler.postDelayed(streamHealthWatchdog, STREAM_HEALTH_CHECK_INTERVAL_MS)
+                        }
                         update("LIVE • ${bitrate / 1000} kbps", bitrate)
                         if (firstConfirmation && Settings.canDrawOverlays(this@RtmpBroadcastService) &&
                             !getSharedPreferences("mgs_preferences", MODE_PRIVATE).getBoolean(com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService.KEY_BUBBLE_DISMISSED, false)) {
@@ -334,7 +362,10 @@ class RtmpBroadcastService : Service() {
     }
 
     private fun stopBroadcast(message: String = "Broadcast stopped") {
+        if (stopping) return
+        stopping = true
         handler.removeCallbacks(startupTimeout)
+        handler.removeCallbacks(streamHealthWatchdog)
         handler.removeCallbacks(sessionHeartbeat)
         streamingConfirmed = false
         lastBitrate = 0L
@@ -507,6 +538,8 @@ class RtmpBroadcastService : Service() {
         const val KEY_MESSAGE = "message"
         const val KEY_BITRATE = "bitrate"
         const val KEY_HEARTBEAT = "service_heartbeat"
+        private const val STREAM_HEALTH_CHECK_INTERVAL_MS = 5_000L
+        private const val STREAM_STALL_TIMEOUT_MS = 20_000L
         private const val TAG = "MGS-RTMP"
         private const val CHANNEL_ID = "live_broadcast"
         private const val NOTIFICATION_ID = 1002
