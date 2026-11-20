@@ -55,7 +55,11 @@ class ProcessedMixAudioSource(
    return false
   }
   val sessionId=mic.microphoneSessionId()
-  if(sessionId!=null){
+  // On the built-in speaker route, the microphone must retain teammate voice played
+  // acoustically by the phone. AEC/NS can classify that speaker output as echo/noise
+  // and remove it, so keep the raw speaker path for the Glip-compatible route.
+  val preserveSpeakerPlayback = accessibilityService != null && preferredInput == null
+  if(sessionId!=null && !preserveSpeakerPlayback){
    if(echoCanceler&&AcousticEchoCanceler.isAvailable())aec=runCatching{AcousticEchoCanceler.create(sessionId)?.apply{enabled=true}}.getOrNull()
    if(noiseSuppressor&&NoiseSuppressor.isAvailable())ns=runCatching{NoiseSuppressor.create(sessionId)?.apply{enabled=true}}.getOrNull()
   }
@@ -63,7 +67,7 @@ class ProcessedMixAudioSource(
    val cfg=AudioPlaybackCaptureConfiguration.Builder(projection).addMatchingUsage(AudioAttributes.USAGE_MEDIA).addMatchingUsage(AudioAttributes.USAGE_GAME).addMatchingUsage(AudioAttributes.USAGE_UNKNOWN).build()
    if(!gameManager.createInternalMicrophone(cfg,sampleRate,isStereo,false,false)){Log.e(TAG,"Playback AudioRecord init failed");releaseResources();return false}
   }
-  Log.i(TAG,"Split inputs ready rate="+sampleRate+" game="+includeGamePlayback+" micSource="+microphoneAudioSource+" accessibility="+(accessibilityService != null)+" AEC="+(aec?.enabled==true)+" NS="+(ns?.enabled==true)+" highpass="+MIC_HIGHPASS_HZ+"Hz playbackDSP=off")
+  Log.i(TAG,"Split inputs ready rate="+sampleRate+" game="+includeGamePlayback+" micSource="+microphoneAudioSource+" accessibility="+(accessibilityService != null)+" preserveSpeaker="+preserveSpeakerPlayback+" AEC="+(aec?.enabled==true)+" NS="+(ns?.enabled==true)+" highpass="+MIC_HIGHPASS_HZ+"Hz playbackDSP=off")
   return true
  }
  fun setPreferredDevice(device:AudioDeviceInfo?):Boolean {
