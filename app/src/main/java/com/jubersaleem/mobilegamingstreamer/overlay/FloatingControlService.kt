@@ -65,6 +65,7 @@ class FloatingControlService : Service() {
         }
     }
 
+    @Suppress("UnspecifiedRegisterReceiverFlag")
     override fun onCreate() {
         super.onCreate()
         val filter = IntentFilter(RtmpBroadcastService.ACTION_STATUS)

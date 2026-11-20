@@ -99,6 +99,7 @@ class RtmpBroadcastService : Service() {
         }
     }
 
+    @Suppress("UnspecifiedRegisterReceiverFlag")
     override fun onCreate() {
         super.onCreate()
         val filter = IntentFilter().apply {
