@@ -1,3 +1,22 @@
+## 0.5.17-dev — Phase 3 studio polish and Phase 4 release-readiness checks
+
+### Phase 3 — Studio experience
+- Animate broadcast status transitions and the broadcast workspace's content-size changes.
+- Apply the selected Claymorphism or Classic theme to the floating control panel surface and state controls.
+- Preserve the floating bubble, drag-to-dismiss, bitrate presets, local speaker mute, stream-audio mute, YouTube chat and explicit stop/cancel actions.
+
+### Phase 4 — Release-readiness engineering
+- Extract RTMP/RTMPS destination validation into a pure JVM helper and add positive/negative unit tests.
+- Run JVM unit tests and Android lint in CI before packaging the debug APK.
+- Add a CI source audit for manifest permissions/service declarations, privacy disclosures, and version/changelog consistency.
+- Correct the privacy policy: opt-in stream-key persistence is AES-GCM encrypted with an Android Keystore key; no AccessibilityService is declared in this build.
+- Add a practical pre-release/closed-beta checklist.
+
+### Verification boundary
+- CI can verify compilation, unit tests, lint and source-level declarations.
+- Galaxy S25 Ultra tests are still required for Clay/Classic rendering, overlay touch/layout, RTMP delivery, microphone/game audio, echo/noise suppression, rotation, thermal behaviour and long-session stability.
+- This is a development APK, not a Play Store release approval or signed production build.
+
 ## 0.5.16-dev — Phase 2 live stream health watchdog
 
 ### Added

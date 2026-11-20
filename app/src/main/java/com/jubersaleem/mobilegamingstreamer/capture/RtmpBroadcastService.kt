@@ -25,6 +25,7 @@ import android.media.AudioDeviceInfo
 import android.util.Log
 import android.view.WindowManager
 import com.jubersaleem.mobilegamingstreamer.MainActivity
+import com.jubersaleem.mobilegamingstreamer.StreamUrlValidator
 import com.pedro.common.ConnectChecker
 import com.pedro.encoder.utils.CodecUtil
 import com.pedro.encoder.input.sources.audio.AudioSource
@@ -151,7 +152,7 @@ class RtmpBroadcastService : Service() {
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
         val resultData = parcelableIntent(intent, EXTRA_RESULT_DATA)
         val streamUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
-        if (resultData == null || !(streamUrl.startsWith("rtmp://") || streamUrl.startsWith("rtmps://"))) {
+        if (resultData == null || !StreamUrlValidator.isValidRtmpServerUrl(streamUrl)) {
             publishState(false, "Invalid stream setup", 0L)
             stopSelf()
             return

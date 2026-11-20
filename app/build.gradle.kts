@@ -12,8 +12,8 @@ android {
         applicationId = "com.jubersaleem.mobilegamingstreamer"
         minSdk = 29
         targetSdk = 36
-        versionCode = 23
-        versionName = "0.5.16"
+        versionCode = 24
+        versionName = "0.5.17"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -55,6 +55,8 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("com.github.pedroSG94.RootEncoder:library:2.8.1")
+
+    testImplementation("junit:junit:4.13.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

@@ -54,11 +54,14 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 - [ ] Test coexistence with screen capture and audio on supported devices
 
 ### M6 — Release readiness
-- [ ] Privacy/data-flow review and privacy policy
+- [x] Source-level privacy/data-flow review and privacy policy aligned with the current manifest and Keystore implementation
 - [ ] Open-source notices and licence compliance
 - [ ] Device/Android-version compatibility matrix
 - [ ] Battery, thermal, crash, and long-session testing
 - [ ] Closed beta before public release
+- [x] JVM unit tests for RTMP/RTMPS destination validation
+- [x] CI runs unit tests, Android lint, and a release-readiness source audit before packaging
+- [ ] Play Console policy review, signed release bundle, and store Data safety declaration
 
 ## Engineering guardrails
 
@@ -68,3 +71,18 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 - Accessibility is optional and must be narrowly scoped and transparently disclosed.
 - Do not promise 1440p60 until encoder capability and sustained thermal tests confirm it.
 - Keep secrets, RTMP stream keys, and signing keys out of source control.
+
+
+## Phase 3 — Studio experience (0.5.17-dev)
+- [x] Animate live-status changes and broadcast workspace layout transitions.
+- [x] Apply the selected Claymorphism/Classic theme to the floating control panel surface and status controls.
+- [x] Preserve the floating bubble, drag-to-dismiss, stream stop, bitrate presets, local speaker mute, stream-audio mute, and YouTube chat.
+- [ ] Validate layout, touch targets, overlay behaviour, and theme switching on the Galaxy S25 Ultra.
+
+## Phase 4 — Release-readiness engineering (0.5.17-dev)
+- [x] Add JVM tests for RTMP/RTMPS URL validation and malformed/unsupported destination rejection.
+- [x] Run Android unit tests and lint in CI before APK packaging.
+- [x] Add a source-level manifest/privacy/version/changelog audit to CI.
+- [x] Correct the privacy policy for opt-in Android Keystore-backed stream-key persistence and remove stale AccessibilityService claims (no AccessibilityService is declared in this build).
+- [x] Add a closed-beta and pre-release checklist.
+- [ ] Complete physical-device, privacy/legal, SDK licence, signing, and Play policy review before public release.

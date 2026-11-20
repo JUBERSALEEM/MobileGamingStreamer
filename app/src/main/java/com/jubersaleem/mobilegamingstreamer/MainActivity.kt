@@ -12,6 +12,8 @@ import android.os.Bundle
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -326,9 +328,7 @@ class MainActivity : ComponentActivity() {
         val normalizedServer = server.trim()
         if (normalizedServer.isBlank()) { status = "Enter your RTMP server URL before going live"; return }
         if (key.isBlank()) { showStreamKeyDialog = true; status = "Stream key required"; return }
-        val parsedServer = Uri.parse(normalizedServer)
-        val scheme = parsedServer.scheme?.lowercase()
-        if ((scheme != "rtmp" && scheme != "rtmps") || parsedServer.host.isNullOrBlank()) {
+        if (!StreamUrlValidator.isValidRtmpServerUrl(normalizedServer)) {
             status = "Enter a valid RTMP server URL, such as rtmp://server.example/live"; return
         }
         server = normalizedServer
@@ -400,7 +400,7 @@ private fun Header() {
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text("BUILD", color = palette.muted, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Text("0.5.12", color = palette.primary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                Text("0.5.17", color = palette.primary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
             }
         }
     }
@@ -446,7 +446,9 @@ private fun Hero(status: String, capture: Boolean, live: Boolean, starting: Bool
                 when { live -> "YOU'RE LIVE"; starting -> "GETTING YOU ON AIR"; capture -> "CAPTURE SESSION ACTIVE"; else -> "READY WHEN YOU ARE" },
                 color = palette.secondary, fontSize = 29.sp, lineHeight = 33.sp, fontWeight = FontWeight.Black, letterSpacing = (-0.5).sp
             )
-            Text(status, color = palette.muted, fontSize = 12.sp, lineHeight = 17.sp)
+            AnimatedContent(targetState = status, label = "broadcast-status") { animatedStatus ->
+            Text(animatedStatus, color = palette.muted, fontSize = 12.sp, lineHeight = 17.sp)
+        }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HeroPill("SCREEN", "Capture", active, Modifier.weight(1f))
                 HeroPill("VIDEO", "H.264", active, Modifier.weight(1f))
@@ -487,7 +489,7 @@ private fun BroadcastPanel(
         border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge),
         elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 23.dp else 9.dp)
     ) {
-        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+        Column(Modifier.fillMaxWidth().animateContentSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text("BROADCAST WORKSPACE", color = palette.secondary, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.3.sp)
