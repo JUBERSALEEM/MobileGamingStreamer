@@ -603,29 +603,8 @@ private fun BroadcastPanel(
             ClayOptionGroup("RESOLUTION", listOf("720p", "1080p", "1440p"), quality, onQuality)
             ClayOptionGroup("FRAME RATE", listOf("30", "60"), fps, onFps, " FPS")
             ClayOptionGroup("ORIENTATION", listOf("AUTO", "LANDSCAPE", "PORTRAIT"), orientation, onOrientation)
-            Text("AUDIO MIX", color = palette.muted, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
-            ClayOptionGroup("SOURCE", listOf("MIC", "GAME", "NORMAL", "BALANCED"), audioMode, onAudioMode)
-            Surface(
-                color = palette.inset,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    when (audioMode) { "MIC" -> "Microphone only"; "GAME" -> "Internal game/device playback only"; "NORMAL" -> "Game playback + microphone at equal level"; else -> "Balanced mix: game playback + microphone, with microphone level boosted" },
-                    modifier = Modifier.padding(12.dp), color = palette.muted, fontSize = 10.sp, lineHeight = 15.sp
-                )
-            }
             Text("Higher resolutions and 60 FPS depend on encoder support, game orientation, network and device temperature.", color = palette.muted, fontSize = 10.sp, lineHeight = 14.sp)
-            MgsButton(
-                onClick = if (live) onStopLive else onGoLive,
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (live) Color(0xFFCA5360) else palette.primary,
-                    contentColor = Color.White
-                )
-            ) {
-                Text(if (live) "■  END BROADCAST" else "▶  GO LIVE  •  SELECT APP", fontWeight = FontWeight.Black, letterSpacing = 0.4.sp)
-            }
+
         }
     }
 }
