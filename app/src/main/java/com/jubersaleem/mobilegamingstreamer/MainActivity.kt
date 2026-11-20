@@ -374,7 +374,6 @@ class MainActivity : ComponentActivity() {
             status = "Enter your RTMP server URL before going live"
             return
         }
-
         if (key.isBlank()) {
             showStreamKeyDialog = true
             status = "Stream key required"
@@ -453,7 +452,7 @@ private fun Hero(status: String, capture: Boolean, live: Boolean, starting: Bool
     val palette = LocalMgsPalette.current
     MgsCard(shape = RoundedCornerShape(if (palette.isClay) 34.dp else 24.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 26.dp else 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
         Column(
-            Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(palette.highlight, palette.surface, palette.background))).padding(20.dp),
+            Modifier.fillMaxWidth().padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -481,7 +480,7 @@ private fun BroadcastPanel(
 ) {
     val palette = LocalMgsPalette.current
     MgsCard(shape = RoundedCornerShape(if (palette.isClay) 32.dp else 22.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 24.dp else 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-        Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (palette.isClay) listOf(palette.highlight, palette.surface, Color(0xFFE8E2D7)) else listOf(palette.surface, palette.surface)), RoundedCornerShape(if (palette.isClay) 30.dp else 0.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Text("BROADCAST SETUP", color = palette.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
             Text("Connect to YouTube or another RTMP platform", color = palette.muted, fontSize = 12.sp)
             OutlinedTextField(
