@@ -29,12 +29,18 @@ for permission in (
     "android.permission.INTERNET",
 ):
     require(permission in manifest, f"Required permission declaration missing: {permission}")
-require("AccessibilityService" not in manifest and "BIND_ACCESSIBILITY_SERVICE" not in manifest,
-        "This build must not unexpectedly declare an AccessibilityService.")
+require('android:name=".capture.MgsMicAccessibilityService"' in manifest,
+        "Glip-style microphone AccessibilityService declaration is missing.")
+require("android.permission.BIND_ACCESSIBILITY_SERVICE" in manifest,
+        "Accessibility service binding permission is missing.")
+require("@xml/mgs_mic_accessibility_service" in manifest,
+        "Microphone accessibility-service configuration is missing.")
+require("does not retrieve window content" in policy and "microphone compatibility" in policy.lower(),
+        "Privacy policy must disclose the optional microphone accessibility service and its limited scope.")
 require("Android Keystore" in policy and "AES-GCM" in policy,
         "Privacy policy must describe opt-in Keystore-backed stream-key encryption.")
-require("No AccessibilityService is declared" in policy,
-        "Privacy policy must state that no AccessibilityService is declared.")
+require("AccessibilityService" in policy and "window-state changes only" in policy,
+        "Privacy policy must accurately describe the optional accessibility microphone bridge.")
 require("not intentionally saved to app storage" not in policy,
         "Stale stream-key non-persistence disclosure remains in the policy.")
 
