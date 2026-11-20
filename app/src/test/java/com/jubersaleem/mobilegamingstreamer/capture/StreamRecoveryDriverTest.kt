@@ -235,7 +235,7 @@ class StreamRecoveryDriverTest {
         val h = Harness()
         h.driver.startSession()
         h.fail()
-        assertTrue(h.driver.onConnectionSuccess())
+        assertEquals(SuccessOutcome.RECOVERED, h.driver.onConnectionSuccess(nowMs = 11_000L))
         // The cancelled backoff must be dead: a stale fire afterwards is
         // ignored and never calls reTry against the live socket.
         assertEquals(RecoveryEffect.None, h.driver.onRetryTimerFired(stopping = false, hasStream = true, nowMs = 5_000L))
@@ -250,7 +250,7 @@ class StreamRecoveryDriverTest {
         h.driver.onRetryTimerFired(stopping = false, hasStream = true, nowMs = 5_000L)
         h.fail("No response from server", nowMs = 9_000L)
         h.driver.onRetryTimerFired(stopping = false, hasStream = true, nowMs = 5_000L)
-        assertTrue(h.driver.onConnectionSuccess())
+        assertEquals(SuccessOutcome.RECOVERED, h.driver.onConnectionSuccess(nowMs = 11_000L))
         assertEquals(StreamRecoveryState(phase = StreamPhase.STARTING), h.driver.state)
         val next = h.fail("Connection failed: timeout", nowMs = 50_000L)
         assertEquals(
@@ -272,7 +272,7 @@ class StreamRecoveryDriverTest {
         // Bitrate arriving mid-episode must not end the episode early.
         h.driver.onPositiveBitrate()
         assertEquals(StreamPhase.RECONNECTING, h.driver.state.phase)
-        assertTrue(h.driver.onConnectionSuccess())
+        assertEquals(SuccessOutcome.RECOVERED, h.driver.onConnectionSuccess(nowMs = 11_000L))
         h.driver.onPositiveBitrate()
         assertEquals(StreamPhase.LIVE, h.driver.state.phase)
     }
@@ -299,7 +299,7 @@ class StreamRecoveryDriverTest {
         assertTrue(h.driver.isStartupBoundActive(streamingConfirmed = false))
         h.fail()
         assertFalse(h.driver.isStartupBoundActive(streamingConfirmed = false))
-        h.driver.onConnectionSuccess()
+        h.driver.onConnectionSuccess(nowMs = 11_000L)
         assertTrue(h.driver.isStartupBoundActive(streamingConfirmed = false))
         assertFalse(h.driver.isStartupBoundActive(streamingConfirmed = true))
     }
@@ -375,7 +375,7 @@ class StreamRecoveryDriverTest {
         h.driver.startSession()
         h.fail()
         h.driver.onStop()
-        assertFalse(h.driver.onConnectionSuccess())
+        assertEquals(SuccessOutcome.IGNORED, h.driver.onConnectionSuccess(nowMs = 11_000L))
         assertEquals(StreamPhase.STOPPING, h.driver.state.phase)
         assertTrue(h.timer.scheduled.size == 1)
         assertTrue(h.retrier.reasons.isEmpty())
@@ -396,7 +396,7 @@ class StreamRecoveryDriverTest {
             nowMs += 2_000L
         }
         assertEquals(5, h.retrier.reasons.size)
-        assertTrue(h.driver.onConnectionSuccess())
+        assertEquals(SuccessOutcome.RECOVERED, h.driver.onConnectionSuccess(nowMs = 11_000L))
         h.driver.onPositiveBitrate()
         assertEquals(StreamPhase.LIVE, h.driver.state.phase)
         nowMs += 50_000L
@@ -419,6 +419,89 @@ class StreamRecoveryDriverTest {
             h.fail(nowMs = nowMs)
         )
         assertEquals(10, h.retrier.reasons.size)
+    }
+
+    @Test
+    fun successJustBeforeDeadlineRecoversEpisode() {
+        val h = Harness()
+        h.driver.startSession()
+        h.fail(nowMs = 10_000L)
+        h.driver.onRetryTimerFired(stopping = false, hasStream = true, nowMs = 12_000L)
+        assertEquals(
+            SuccessOutcome.RECOVERED,
+            h.driver.onConnectionSuccess(nowMs = 129_999L)
+        )
+        assertEquals(StreamRecoveryState(phase = StreamPhase.STARTING), h.driver.state)
+    }
+
+    @Test
+    fun successExactlyAtDeadlineExpiresEpisode() {
+        val h = Harness()
+        h.driver.startSession()
+        h.fail(nowMs = 10_000L)
+        h.driver.onRetryTimerFired(stopping = false, hasStream = true, nowMs = 12_000L)
+        assertEquals(
+            SuccessOutcome.EXPIRED,
+            h.driver.onConnectionSuccess(nowMs = 130_000L)
+        )
+        // The expired episode is disarmed, not reset: no fresh STARTING.
+        assertEquals(StreamPhase.RECONNECTING, h.driver.state.phase)
+        assertFalse(h.driver.state.retryPending)
+        assertEquals(1, h.retrier.reasons.size)
+    }
+
+    @Test
+    fun successAfterDeadlineExpiresEpisode() {
+        val h = Harness()
+        h.driver.startSession()
+        h.fail(nowMs = 10_000L)
+        h.driver.onRetryTimerFired(stopping = false, hasStream = true, nowMs = 12_000L)
+        assertEquals(
+            SuccessOutcome.EXPIRED,
+            h.driver.onConnectionSuccess(nowMs = 200_000L)
+        )
+        assertEquals(StreamPhase.RECONNECTING, h.driver.state.phase)
+        // A stale fire after the expired success still never touches the socket.
+        assertEquals(
+            RecoveryEffect.None,
+            h.driver.onRetryTimerFired(stopping = false, hasStream = true, nowMs = 200_001L)
+        )
+        assertEquals(1, h.retrier.reasons.size)
+    }
+
+    @Test
+    fun lateSuccessWhileBackoffPendingCancelsItAsExpired() {
+        val h = Harness()
+        h.driver.startSession()
+        h.fail(nowMs = 10_000L)
+        val cancelsBefore = h.timer.cancels
+        assertEquals(
+            SuccessOutcome.EXPIRED,
+            h.driver.onConnectionSuccess(nowMs = 130_000L)
+        )
+        assertEquals(cancelsBefore + 1, h.timer.cancels)
+        assertFalse(h.driver.state.retryPending)
+        assertTrue(h.retrier.reasons.isEmpty())
+    }
+
+    @Test
+    fun staleSuccessAfterNewSessionCannotReviveOldEpisode() {
+        val h = Harness()
+        h.driver.startSession()
+        h.fail(nowMs = 10_000L)
+        h.driver.onRetryTimerFired(stopping = false, hasStream = true, nowMs = 12_000L)
+        h.driver.onStop()
+        h.driver.onDestroyed()
+        // A newer session starts with fully reset recovery state.
+        h.driver.startSession()
+        val schedulesBefore = h.timer.scheduled.size
+        assertEquals(
+            SuccessOutcome.CONNECTED,
+            h.driver.onConnectionSuccess(nowMs = 500_000L)
+        )
+        assertEquals(StreamPhase.STARTING, h.driver.state.phase)
+        assertEquals(schedulesBefore, h.timer.scheduled.size)
+        assertEquals(1, h.retrier.reasons.size)
     }
 
     @Test

@@ -18,6 +18,21 @@ fun interface SocketRetrier {
     fun reTry(reason: String): Boolean
 }
 
+/** Outcome of an RTMP connection success under the strict episode deadline. */
+enum class SuccessOutcome {
+    /** Pre-deadline success that ended a reconnect episode; session recovers. */
+    RECOVERED,
+
+    /** Ordinary connect with no open episode; episode state untouched. */
+    CONNECTED,
+
+    /** Success at or after the episode deadline; the service must stop. */
+    EXPIRED,
+
+    /** Success after stop ownership; session teardown stays untouched. */
+    IGNORED
+}
+
 /** Service effects requested by the driver; the service executes them. */
 sealed interface RecoveryEffect {
     /** Publish [message] as the current session status. */
@@ -113,18 +128,33 @@ class StreamRecoveryDriver(
     }
 
     /**
-     * Handle an RTMP connection success.
+     * Handle an RTMP connection success under a strict episode deadline.
      *
-     * @return true when this success ended a reconnect episode. Any pending
-     * backoff is always cancelled, so a success can never be followed by a
-     * stale retry against the live socket.
+     * A success that arrives at or after the episode deadline must not revive
+     * the expired episode, publish LIVE, or reset the retry budget: the
+     * service stops the session instead, tearing down even the late-connected
+     * socket cleanly. Any pending backoff is always cancelled, so a success
+     * can never be followed by a stale retry against the live socket.
      */
-    fun onConnectionSuccess(): Boolean {
-        val wasReconnecting = state.phase == StreamPhase.RECONNECTING
+    fun onConnectionSuccess(nowMs: Long): SuccessOutcome {
         timer.cancel()
         pendingReason = ""
-        state = StreamConnectionPolicy.onConnectionSuccess(state)
-        return wasReconnecting
+        return when {
+            state.phase == StreamPhase.STOPPING || state.phase == StreamPhase.STOPPED ->
+                SuccessOutcome.IGNORED
+            state.phase != StreamPhase.RECONNECTING -> {
+                state = StreamConnectionPolicy.onConnectionSuccess(state)
+                SuccessOutcome.CONNECTED
+            }
+            StreamConnectionPolicy.isEpisodeExpired(state, nowMs) -> {
+                state = state.copy(retryPending = false)
+                SuccessOutcome.EXPIRED
+            }
+            else -> {
+                state = StreamConnectionPolicy.onConnectionSuccess(state)
+                SuccessOutcome.RECOVERED
+            }
+        }
     }
 
     /**

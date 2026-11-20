@@ -207,25 +207,30 @@ class RtmpBroadcastService : Service() {
                 }
                 override fun onConnectionSuccess() {
                     if (stopping) return
-                    val wasReconnecting = recoveryDriver.onConnectionSuccess()
-                    if (wasReconnecting) {
-                        // Restore the library retry budget consumed by the episode
-                        // just ended, so a later independent failure gets full
-                        // attempts again. RootEncoder only resets its counter on
-                        // explicit disconnect, never on success.
-                        try {
-                            display?.getStreamClient()?.setReTries(StreamConnectionPolicy.MAX_ATTEMPTS)
-                        } catch (_: Exception) { }
-                        if (!streamingConfirmed) {
-                            // A reconnected socket still has to produce frames;
-                            // re-arm the startup bound that scheduling the retry
-                            // had removed. Untouched on a plain first connect.
-                            handler.removeCallbacks(startupTimeout)
-                            handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
+                    when (recoveryDriver.onConnectionSuccess(SystemClock.elapsedRealtime())) {
+                        SuccessOutcome.RECOVERED -> {
+                            // Restore the library retry budget consumed by the episode
+                            // just ended, so a later independent failure gets full
+                            // attempts again. RootEncoder only resets its counter on
+                            // explicit disconnect, never on success.
+                            try {
+                                display?.getStreamClient()?.setReTries(StreamConnectionPolicy.MAX_ATTEMPTS)
+                            } catch (_: Exception) { }
+                            if (!streamingConfirmed) {
+                                // A reconnected socket still has to produce frames;
+                                // re-arm the startup bound that scheduling the retry
+                                // had removed. Untouched on a plain first connect.
+                                handler.removeCallbacks(startupTimeout)
+                                handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
+                            }
+                            update("Reconnected • Waiting for video frames")
                         }
-                        update("Reconnected • Waiting for video frames")
-                    } else {
-                        update("RTMP connected • Waiting for video frames")
+                        SuccessOutcome.CONNECTED -> update("RTMP connected • Waiting for video frames")
+                        // Strict deadline: a late success revives nothing. The
+                        // stop path below tears down even the late-connected
+                        // socket; no LIVE is published and no budget is reset.
+                        SuccessOutcome.EXPIRED -> stopBroadcast(StreamConnectionPolicy.exhaustedMessage())
+                        SuccessOutcome.IGNORED -> { }
                     }
                 }
                 override fun onConnectionFailed(reason: String) {
