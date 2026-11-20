@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jubersaleem.mobilegamingstreamer.capture.MgsMicAccessibilityService
 import com.jubersaleem.mobilegamingstreamer.capture.RtmpBroadcastService
 import com.jubersaleem.mobilegamingstreamer.capture.ScreenCaptureService
 import com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService
@@ -48,6 +49,7 @@ class MainActivity : ComponentActivity() {
     private var broadcastActive by mutableStateOf(false)
     private var broadcastStarting by mutableStateOf(false)
     private var notificationsAllowed by mutableStateOf(true)
+    private var accessibilityMicEnabled by mutableStateOf(false)
     private var server by mutableStateOf("rtmp://a.rtmp.youtube.com/live2")
     private var key by mutableStateOf("")
     private var rememberStreamKey by mutableStateOf(true)
@@ -100,6 +102,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        accessibilityMicEnabled = MgsMicAccessibilityService.isEnabled(this)
         if (waitingForOverlayPermission) {
             waitingForOverlayPermission = false
             if (Settings.canDrawOverlays(this)) {
@@ -253,6 +256,26 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         if (page == "SETUP") {
+                            MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+                                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    Text("BGMI VOICE CHAT COMPATIBILITY", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                                    Text(
+                                        if (accessibilityMicEnabled)
+                                            "ACCESSIBILITY MICROPHONE BRIDGE ENABLED • Glip-compatible microphone route is available."
+                                        else
+                                            "Enable this Android service to let the stream capture your microphone while BGMI is using voice chat. It does not read screen content or perform gestures.",
+                                        color = if (accessibilityMicEnabled) palette.primary else palette.muted,
+                                        fontSize = 11.sp,
+                                        lineHeight = 16.sp
+                                    )
+                                    OutlinedButton(
+                                        onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(if (accessibilityMicEnabled) "OPEN ACCESSIBILITY SETTINGS" else "ENABLE MICROPHONE COMPATIBILITY")
+                                    }
+                                }
+                            }
                             BroadcastPanel(server, { server = it }, key, { key = it },
                                 rememberStreamKey, { enabled ->
                                     rememberStreamKey = enabled
