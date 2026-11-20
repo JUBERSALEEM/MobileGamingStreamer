@@ -17,6 +17,9 @@ This checklist is intentionally conservative. A passing CI build is not a substi
 - [ ] YouTube Live Chat open/close and keyboard/overlay interaction.
 - [ ] GO LIVE consent, RTMP and RTMPS ingest, invalid key, network loss, fresh-consent retry.
 - [ ] MIC, GAME, NORMAL and BALANCED modes; test BGMI effects, teammate voice, echo and noise suppression.
+- [ ] Confirm logs show AEC/NS on microphone only and no DSP on playback capture.
+- [ ] Verify mic clarity, background/fan noise, speaker echo, headset and Bluetooth routes.
+- [ ] Verify mic/game synchronization over a 30-minute stream; listen for gaps, repeats and drift.
 - [ ] App backgrounding/task dismissal, screen lock, notification Stop, projection revocation.
 - [ ] Rotation, selected-app capture, 30/60 FPS, thermal behaviour and sustained sessions.
 

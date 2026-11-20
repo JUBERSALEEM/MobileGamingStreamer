@@ -1,3 +1,21 @@
+## 0.5.18-dev — Microphone DSP and isolated game-audio mixing
+
+### Added
+- Capture microphone and eligible Android playback using independent AudioRecord sessions.
+- Attach Android platform Acoustic Echo Cancellation and Noise Suppression to the microphone session only; game playback bypasses voice processing.
+- Add an 80 Hz microphone high-pass filter for handling noise, low-frequency rumble and wind/plosive energy.
+- Add PCM mixing with peak headroom protection and move stream audio input to 48 kHz.
+- Add JVM tests for high-pass response, speech-band preservation, mixer headroom and microphone continuity when playback frames are absent.
+
+### Audio capture limits
+- Microphone and captured game playback are processed independently, then combined into one AAC stream track; viewers do not receive separate selectable tracks.
+- Teammate voice is included only when the game routes it through Android playback usages allowed by AudioPlaybackCapture. Apps can opt out, and voice-communication usage is not generally capturable.
+- Platform AEC/NS effectiveness depends on device, audio route and vendor implementation. The high-pass filter is not adaptive noise cancellation. AGC is not enabled by default because it can raise background noise between speech phrases.
+
+### Verification boundary
+- CI covers JVM DSP/mixer tests, Android lint and APK compilation.
+- Actual BGMI teammate-voice routing, speaker echo reduction, headset/Bluetooth routing, microphone quality and long-session stability require Galaxy S25 Ultra testing.
+
 ## 0.5.17-dev — Phase 3 studio polish and Phase 4 release-readiness checks
 
 ### Phase 3 — Studio experience

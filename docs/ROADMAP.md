@@ -26,7 +26,9 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 ### M2 — Audio
 - [x] Microphone capture with explicit runtime permission
 - [x] Android AudioPlaybackCapture source integration for eligible apps (RECORD_AUDIO permission and app capture policy still apply)
-- [ ] Audio mixer, mute, gain, and synchronization tests (physical validation pending)
+- [x] Separate microphone and playback AudioRecord sessions; attach AEC/NS only to microphone capture.
+- [x] Add 80 Hz microphone high-pass, PCM mix headroom protection and JVM DSP/mixer tests.
+- [ ] Verify teammate voice routing, echo/noise suppression, headset/Bluetooth paths and long-session synchronization on Galaxy S25 Ultra.
 - [ ] Document apps/content that disallow playback capture
 
 ### M3 — Encoding and streaming

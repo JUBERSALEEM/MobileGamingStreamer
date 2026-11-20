@@ -31,7 +31,6 @@ import com.pedro.encoder.utils.CodecUtil
 import com.pedro.encoder.input.sources.audio.AudioSource
 import com.pedro.encoder.input.sources.audio.InternalAudioSource
 import com.pedro.encoder.input.sources.audio.MicrophoneSource
-import com.pedro.encoder.input.sources.audio.MixAudioSource
 import com.pedro.encoder.input.sources.video.ScreenSource
 import com.pedro.library.generic.GenericStream
 
@@ -239,9 +238,7 @@ class RtmpBroadcastService : Service() {
 
             // RtmpDisplay.prepareAudio() captures ONLY the microphone. It never configures
             // AudioPlaybackCapture, which is why BGMI gunshots/game effects were absent.
-            // GenericStream with MixAudioSource uses the same MediaProjection token for
-            // screen video + internal playback + microphone, matching RootEncoder's
-            // supported screen-stream architecture.
+            // Independent microphone and playback recorders are mixed after mic-only DSP.
             val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
                 ?: throw IllegalStateException("Android did not provide a MediaProjection session")
@@ -251,21 +248,10 @@ class RtmpBroadcastService : Service() {
             val micSource = MediaRecorder.AudioSource.DEFAULT
             val preferredInput = choosePreferredMicrophoneDevice()
             val audioSource: AudioSource = when (audioMode) {
-                AUDIO_MODE_MIC -> MicrophoneSource(audioSource = micSource).apply {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) setPreferredDevice(preferredInput)
-                }
+                AUDIO_MODE_MIC -> ProcessedMixAudioSource(mediaProjection, false).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.0f) }
                 AUDIO_MODE_GAME -> InternalAudioSource(mediaProjection)
-                AUDIO_MODE_NORMAL -> MixAudioSource(mediaProjection, null, micSource).apply {
-                    setPreferredDevice(preferredInput)
-                    microphoneVolume = 1.0f
-                    internalVolume = 1.0f
-                }
-                else -> MixAudioSource(mediaProjection, null, micSource).apply {
-                    setPreferredDevice(preferredInput)
-                    // Balanced preset gives voice a little more headroom than game playback.
-                    microphoneVolume = 1.6f
-                    internalVolume = 1.0f
-                }
+                AUDIO_MODE_NORMAL, AUDIO_MODE_BOTH -> ProcessedMixAudioSource(mediaProjection, true).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.0f); setPlaybackGain(1.0f) }
+                else -> ProcessedMixAudioSource(mediaProjection, true).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.6f); setPlaybackGain(1.0f) }
             }
 
             activeAudioSource = audioSource
@@ -300,7 +286,7 @@ class RtmpBroadcastService : Service() {
             val echoCancellation = audioMode != AUDIO_MODE_GAME
             val noiseSuppression = audioMode != AUDIO_MODE_GAME
             Log.i(TAG, "Audio effects requested: AEC=$echoCancellation, NS=$noiseSuppression; microphone source=DEFAULT")
-            val audioPrepared = stream.prepareAudio(44_100, true, 128_000, echoCancellation, noiseSuppression)
+            val audioPrepared = stream.prepareAudio(48_000, true, 128_000, echoCancellation, noiseSuppression)
             if (!audioPrepared) {
                 throw IllegalStateException("Audio source preparation failed for mode: $audioMode")
             }
@@ -403,7 +389,7 @@ class RtmpBroadcastService : Service() {
         when (source) {
             is MicrophoneSource -> if (muted) source.mute() else source.unMute()
             is InternalAudioSource -> if (muted) source.mute() else source.unMute()
-            is MixAudioSource -> if (muted) source.mute() else source.unMute()
+            is ProcessedMixAudioSource -> if (muted) source.mute() else source.unMute()
         }
     }
 
