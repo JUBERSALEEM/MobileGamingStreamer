@@ -72,7 +72,7 @@ class StreamRecoveryDriver(
         nowMs: Long
     ): RecoveryEffect {
         return when (val action = StreamConnectionPolicy.decideConnectionFailed(
-            state, stopping, hasStream, hasProjection, reason
+            state, stopping, hasStream, hasProjection, reason, nowMs
         )) {
             is RecoveryAction.ScheduleRetry -> {
                 state = StreamConnectionPolicy.onRetryScheduled(state, nowMs)
@@ -91,10 +91,16 @@ class StreamRecoveryDriver(
      * the injected retrier; capture, encoders, mixer and MediaProjection are
      * never touched here. A stale fire (no backoff pending, e.g. after a
      * success or stop already consumed it) is ignored without touching the
-     * socket, so it can never drop a live connection.
+     * socket, so it can never drop a live connection. A fire that runs after
+     * the episode deadline (e.g. delayed by a stalled main thread) stops the
+     * session without touching the socket instead of extending the episode.
      */
-    fun onRetryTimerFired(stopping: Boolean, hasStream: Boolean): RecoveryEffect {
+    fun onRetryTimerFired(stopping: Boolean, hasStream: Boolean, nowMs: Long): RecoveryEffect {
         if (stopping || !hasStream || !state.retryPending) return RecoveryEffect.None
+        if (StreamConnectionPolicy.isEpisodeExpired(state, nowMs)) {
+            state = state.copy(retryPending = false)
+            return RecoveryEffect.Stop(StreamConnectionPolicy.exhaustedMessage())
+        }
         val attempt = state.attemptsUsed + 1
         state = StreamConnectionPolicy.onRetryFired(state, attempt)
         val accepted = try {

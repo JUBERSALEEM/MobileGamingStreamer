@@ -61,7 +61,7 @@ class RtmpBroadcastService : Service() {
     // RootEncoder's retry API. Capture, encoders, mixer and the
     // MediaProjection session are never touched on this path.
     private val reconnectRunnable: Runnable = Runnable {
-        when (val effect = recoveryDriver.onRetryTimerFired(stopping, display != null)) {
+        when (val effect = recoveryDriver.onRetryTimerFired(stopping, display != null, SystemClock.elapsedRealtime())) {
             is RecoveryEffect.Stop -> stopBroadcast(effect.message)
             else -> { }
         }
@@ -277,6 +277,12 @@ class RtmpBroadcastService : Service() {
                 }
                 override fun onNewBitrate(bitrate: Long) {
                     if (stopping) return
+                    // Bitrate ticks during a reconnect episode carry no signal:
+                    // the sender is stopped while the socket is down, and any
+                    // stray tick must neither flap the status message nor fake
+                    // a LIVE line while the episode is open. Only a connection
+                    // success may end the episode.
+                    if (recoveryDriver.state.phase == StreamPhase.RECONNECTING) return
                     if (bitrate > 0L) {
                         recoveryDriver.onPositiveBitrate()
                         val firstConfirmation = !streamingConfirmed

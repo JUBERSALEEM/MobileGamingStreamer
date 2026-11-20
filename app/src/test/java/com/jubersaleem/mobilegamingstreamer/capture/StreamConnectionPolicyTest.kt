@@ -56,7 +56,7 @@ class StreamConnectionPolicyTest {
                 RecoveryAction.Stop(StreamConnectionPolicy.terminalFailureMessage(reason)),
                 StreamConnectionPolicy.decideConnectionFailed(
                     StreamRecoveryState(phase = StreamPhase.LIVE),
-                    stopping = false, hasStream = true, hasProjection = true, reason = reason
+                    stopping = false, hasStream = true, hasProjection = true, reason = reason, nowMs = 50_000L
                 )
             )
         }
@@ -93,7 +93,7 @@ class StreamConnectionPolicyTest {
         val action = StreamConnectionPolicy.decideConnectionFailed(
             StreamRecoveryState(phase = StreamPhase.LIVE),
             stopping = false, hasStream = true, hasProjection = true,
-            reason = "Connection failed: broken pipe"
+            reason = "Connection failed: broken pipe", nowMs = 50_000L
         )
         assertEquals(RecoveryAction.ScheduleRetry(1, 2_000L), action)
     }
@@ -103,7 +103,7 @@ class StreamConnectionPolicyTest {
         val action = StreamConnectionPolicy.decideConnectionFailed(
             StreamRecoveryState(phase = StreamPhase.RECONNECTING, attemptsUsed = 2),
             stopping = false, hasStream = true, hasProjection = true,
-            reason = "No response from server"
+            reason = "No response from server", nowMs = 50_000L
         )
         assertEquals(RecoveryAction.ScheduleRetry(3, 8_000L), action)
     }
@@ -113,13 +113,13 @@ class StreamConnectionPolicyTest {
         val last = StreamConnectionPolicy.decideConnectionFailed(
             StreamRecoveryState(phase = StreamPhase.RECONNECTING, attemptsUsed = 4),
             stopping = false, hasStream = true, hasProjection = true,
-            reason = "No response from server"
+            reason = "No response from server", nowMs = 50_000L
         )
         assertEquals(RecoveryAction.ScheduleRetry(5, 30_000L), last)
         val exhausted = StreamConnectionPolicy.decideConnectionFailed(
             StreamRecoveryState(phase = StreamPhase.RECONNECTING, attemptsUsed = 5),
             stopping = false, hasStream = true, hasProjection = true,
-            reason = "No response from server"
+            reason = "No response from server", nowMs = 50_000L
         )
         assertEquals(RecoveryAction.Stop(StreamConnectionPolicy.exhaustedMessage()), exhausted)
     }
@@ -132,7 +132,7 @@ class StreamConnectionPolicyTest {
         ).forEach { reason ->
             val action = StreamConnectionPolicy.decideConnectionFailed(
                 StreamRecoveryState(phase = StreamPhase.STARTING),
-                stopping = false, hasStream = true, hasProjection = true, reason = reason
+                stopping = false, hasStream = true, hasProjection = true, reason = reason, nowMs = 50_000L
             )
             assertEquals(RecoveryAction.Stop(StreamConnectionPolicy.terminalFailureMessage(reason)), action)
         }
@@ -143,7 +143,7 @@ class StreamConnectionPolicyTest {
         val action = StreamConnectionPolicy.decideConnectionFailed(
             StreamRecoveryState(phase = StreamPhase.LIVE),
             stopping = false, hasStream = true, hasProjection = false,
-            reason = "Connection failed: broken pipe"
+            reason = "Connection failed: broken pipe", nowMs = 50_000L
         )
         assertEquals(RecoveryAction.Stop(StreamConnectionPolicy.PROJECTION_ENDED_MESSAGE), action)
     }
@@ -153,7 +153,7 @@ class StreamConnectionPolicyTest {
         val action = StreamConnectionPolicy.decideConnectionFailed(
             StreamRecoveryState(phase = StreamPhase.RECONNECTING, retryPending = true),
             stopping = false, hasStream = true, hasProjection = true,
-            reason = "Connection failed: broken pipe"
+            reason = "Connection failed: broken pipe", nowMs = 50_000L
         )
         assertEquals(RecoveryAction.Ignore, action)
     }
@@ -163,21 +163,21 @@ class StreamConnectionPolicyTest {
         val stoppingAction = StreamConnectionPolicy.decideConnectionFailed(
             StreamRecoveryState(phase = StreamPhase.RECONNECTING, attemptsUsed = 1),
             stopping = true, hasStream = true, hasProjection = true,
-            reason = "Connection failed: broken pipe"
+            reason = "Connection failed: broken pipe", nowMs = 50_000L
         )
         assertEquals(RecoveryAction.Ignore, stoppingAction)
         listOf(StreamPhase.STOPPING, StreamPhase.STOPPED).forEach { phase ->
             val action = StreamConnectionPolicy.decideConnectionFailed(
                 StreamRecoveryState(phase = phase),
                 stopping = false, hasStream = true, hasProjection = true,
-                reason = "Connection failed: broken pipe"
+                reason = "Connection failed: broken pipe", nowMs = 50_000L
             )
             assertEquals(phase.name, RecoveryAction.Ignore, action)
         }
         val goneAction = StreamConnectionPolicy.decideConnectionFailed(
             StreamRecoveryState(phase = StreamPhase.LIVE),
             stopping = false, hasStream = false, hasProjection = true,
-            reason = "Connection failed: broken pipe"
+            reason = "Connection failed: broken pipe", nowMs = 50_000L
         )
         assertEquals(RecoveryAction.Ignore, goneAction)
     }
@@ -212,7 +212,7 @@ class StreamConnectionPolicyTest {
             RecoveryAction.Ignore,
             StreamConnectionPolicy.decideConnectionFailed(
                 stopped, stopping = true, hasStream = true, hasProjection = true,
-                reason = "Connection failed: broken pipe"
+                reason = "Connection failed: broken pipe", nowMs = 50_000L
             )
         )
     }
@@ -226,6 +226,54 @@ class StreamConnectionPolicyTest {
         assertEquals(2, fired.attemptsUsed)
         assertFalse(fired.retryPending)
         assertEquals(StreamPhase.RECONNECTING, fired.phase)
+    }
+
+    @Test
+    fun episodeExpiryBoundariesAreExact() {
+        val open = StreamRecoveryState(phase = StreamPhase.RECONNECTING, episodeStartMs = 10_000L)
+        assertFalse(StreamConnectionPolicy.isEpisodeExpired(open, 129_999L))
+        assertTrue(StreamConnectionPolicy.isEpisodeExpired(open, 130_000L))
+        assertTrue(StreamConnectionPolicy.isEpisodeExpired(open, 9_999_999L))
+        assertFalse(
+            StreamConnectionPolicy.isEpisodeExpired(
+                StreamRecoveryState(phase = StreamPhase.RECONNECTING, episodeStartMs = 0L), 9_999_999L
+            )
+        )
+        assertFalse(
+            StreamConnectionPolicy.isEpisodeExpired(
+                StreamRecoveryState(phase = StreamPhase.LIVE, episodeStartMs = 10_000L), 9_999_999L
+            )
+        )
+    }
+
+    @Test
+    fun failureAfterDeadlineStopsInsteadOfScheduling() {
+        val open = StreamRecoveryState(
+            phase = StreamPhase.RECONNECTING, attemptsUsed = 1, episodeStartMs = 10_000L
+        )
+        val before = StreamConnectionPolicy.decideConnectionFailed(
+            open, stopping = false, hasStream = true, hasProjection = true,
+            reason = "No response from server", nowMs = 129_999L
+        )
+        assertEquals(RecoveryAction.ScheduleRetry(2, 4_000L), before)
+        val at = StreamConnectionPolicy.decideConnectionFailed(
+            open, stopping = false, hasStream = true, hasProjection = true,
+            reason = "No response from server", nowMs = 130_000L
+        )
+        assertEquals(RecoveryAction.Stop(StreamConnectionPolicy.exhaustedMessage()), at)
+    }
+
+    @Test
+    fun expiredEpisodeWithPendingBackoffFailsFast() {
+        val pending = StreamRecoveryState(
+            phase = StreamPhase.RECONNECTING, attemptsUsed = 1,
+            retryPending = true, episodeStartMs = 10_000L
+        )
+        val action = StreamConnectionPolicy.decideConnectionFailed(
+            pending, stopping = false, hasStream = true, hasProjection = true,
+            reason = "No response from server", nowMs = 200_000L
+        )
+        assertEquals(RecoveryAction.Stop(StreamConnectionPolicy.exhaustedMessage()), action)
     }
 
     @Test

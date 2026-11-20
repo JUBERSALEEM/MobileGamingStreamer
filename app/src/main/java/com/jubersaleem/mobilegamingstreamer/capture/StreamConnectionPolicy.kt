@@ -129,24 +129,42 @@ object StreamConnectionPolicy {
     const val STREAM_STALL_TIMEOUT_MS = 20_000L
 
     /**
+     * True when an open reconnect episode has consumed its overall time
+     * budget. The clock starts at the first failure and covers backoff waits,
+     * handshake waits and callback latency alike, so a stalled episode can
+     * never outlive [OVERALL_TIMEOUT_MS] once any decision point runs.
+     */
+    fun isEpisodeExpired(state: StreamRecoveryState, nowMs: Long): Boolean =
+        state.phase == StreamPhase.RECONNECTING &&
+            state.episodeStartMs > 0L &&
+            nowMs - state.episodeStartMs >= OVERALL_TIMEOUT_MS
+
+    /**
      * Pure decision for an RTMP connection-failure callback.
      *
      * @param state current recovery snapshot.
      * @param stopping true once the user/system stop path owns the session.
      * @param hasStream false when the stream object is already gone (late callback).
      * @param hasProjection false when capture consent ended (never retry without it).
+     * @param nowMs monotonic clock; a failure arriving after the episode
+     * deadline stops the session instead of scheduling another retry, so a
+     * delayed callback can never extend the episode.
      */
     fun decideConnectionFailed(
         state: StreamRecoveryState,
         stopping: Boolean,
         hasStream: Boolean,
         hasProjection: Boolean,
-        reason: String
+        reason: String,
+        nowMs: Long
     ): RecoveryAction {
         if (stopping || state.phase == StreamPhase.STOPPING || state.phase == StreamPhase.STOPPED) {
             return RecoveryAction.Ignore
         }
         if (!hasStream) return RecoveryAction.Ignore
+        // Fail fast once the deadline passed, even if a backoff is still
+        // pending: waiting for it to fire would only extend the episode.
+        if (isEpisodeExpired(state, nowMs)) return RecoveryAction.Stop(exhaustedMessage())
         // A duplicate failure while a backoff is already in flight must not
         // consume an extra attempt or reschedule the pending one.
         if (state.retryPending) return RecoveryAction.Ignore
@@ -194,11 +212,8 @@ object StreamConnectionPolicy {
         nowMs: Long
     ): WatchdogAction {
         if (state.phase == StreamPhase.RECONNECTING) {
-            return if (state.episodeStartMs > 0L && nowMs - state.episodeStartMs >= OVERALL_TIMEOUT_MS) {
-                WatchdogAction.STOP_RECONNECT_TIMEOUT
-            } else {
-                WatchdogAction.NONE
-            }
+            return if (isEpisodeExpired(state, nowMs)) WatchdogAction.STOP_RECONNECT_TIMEOUT
+            else WatchdogAction.NONE
         }
         return if (streamingConfirmed && lastPositiveAtMs > 0L &&
             nowMs - lastPositiveAtMs >= STREAM_STALL_TIMEOUT_MS
