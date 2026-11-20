@@ -29,7 +29,7 @@ class MgsMicAccessibilityService : AccessibilityService() {
     }
 
     /** Construct the microphone recorder from the active accessibility-service path. */
-    fun createMicrophoneManager(callback: GetMicrophoneData): SafeMicrophoneManager =
+    internal fun createMicrophoneManager(callback: GetMicrophoneData): SafeMicrophoneManager =
         SafeMicrophoneManager(callback)
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
