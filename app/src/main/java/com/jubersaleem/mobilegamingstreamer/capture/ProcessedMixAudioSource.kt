@@ -51,6 +51,7 @@ class ProcessedMixAudioSource(
   preferredInput?.let { mic.setPreferredDevice(it) }
   if(!mic.createMicrophone(microphoneAudioSource,sampleRate,isStereo,false,false)){
    Log.e(TAG,"Mic AudioRecord init failed source="+microphoneAudioSource+" accessibility="+(accessibilityService != null))
+   releaseResources()
    return false
   }
   val sessionId=mic.microphoneSessionId()
