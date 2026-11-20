@@ -63,8 +63,8 @@ fun SettingsPage(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(if (themeMode == "CLAY") "Original Claymorphism is active" else "Classic is active", color = p.text, fontWeight = FontWeight.Bold)
-                        Text(if (themeMode == "CLAY") "Sculpted 3D surfaces, deep soft shadows, raised highlights and sculpted rounded controls." else "The original dark studio with neon lime and cyan accents.", color = p.muted, fontSize = 11.sp)
+                        Text(if (themeMode == "CLAY") "Soft Clay studio is active" else "Classic studio is active", color = p.text, fontWeight = FontWeight.Bold)
+                        Text(if (themeMode == "CLAY") "Pastel clay surfaces, layered highlights, recessed controls and a warmer streaming workspace." else "The original dark studio with neon lime and cyan accents.", color = p.muted, fontSize = 11.sp)
                     }
                     MgsCard(
                         modifier = Modifier.size(62.dp),
