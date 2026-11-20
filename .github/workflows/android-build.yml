@@ -130,7 +130,7 @@ jobs:
           CERT_OUTPUT="$("$APKSIGNER" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk)"
           echo "$CERT_OUTPUT"
           EXPECTED="$(keytool -exportcert -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | sha256sum | awk '{print toupper($1)}')"
-          ACTUAL="$(printf '%s\\n' "$CERT_OUTPUT" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print toupper($2)}')"
+          ACTUAL="$(printf '%s\n' "$CERT_OUTPUT" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print toupper($2)}')"
           if [ -z "$ACTUAL" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
             echo "::error::APK signer does not match the pinned debug keystore."
             exit 1
