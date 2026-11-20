@@ -48,6 +48,7 @@ class MainActivity : ComponentActivity() {
     private var notificationsAllowed by mutableStateOf(true)
     private var server by mutableStateOf("rtmp://a.rtmp.youtube.com/live2")
     private var key by mutableStateOf("")
+    private var rememberStreamKey by mutableStateOf(true)
     private var quality by mutableStateOf("1080p")
     private var fps by mutableStateOf("30")
     private var orientation by mutableStateOf("LANDSCAPE")
@@ -180,6 +181,8 @@ class MainActivity : ComponentActivity() {
         }
         val appPreferences = getSharedPreferences("mgs_preferences", MODE_PRIVATE)
         themeMode = appPreferences.getString("theme_mode", "CLASSIC") ?: "CLASSIC"
+        rememberStreamKey = appPreferences.getBoolean("remember_stream_key", true)
+        key = if (rememberStreamKey) StreamKeyVault.load(this).orEmpty() else ""
         setContent {
             MgsTheme(mode = themeMode) {
                 val palette = LocalMgsPalette.current
@@ -249,6 +252,17 @@ class MainActivity : ComponentActivity() {
                         }
                         if (page == "SETUP") {
                             BroadcastPanel(server, { server = it }, key, { key = it },
+                                rememberStreamKey, { enabled ->
+                                    rememberStreamKey = enabled
+                                    appPreferences.edit().putBoolean("remember_stream_key", enabled).apply()
+                                    if (!enabled) {
+                                        StreamKeyVault.clear(this@MainActivity)
+                                        status = "Saved stream key removed from this device"
+                                    } else if (key.isNotBlank()) {
+                                        runCatching { StreamKeyVault.save(this@MainActivity, key.trim()) }
+                                            .onFailure { status = "Could not securely save the stream key" }
+                                    }
+                                },
                                 quality, { quality = it }, fps, { fps = it }, orientation, { orientation = it },
                                 audioMode, { audioMode = it },
                                 broadcastActive || broadcastStarting,
@@ -319,6 +333,16 @@ class MainActivity : ComponentActivity() {
         }
         server = normalizedServer
         key = key.trim()
+        if (rememberStreamKey) {
+            try {
+                StreamKeyVault.save(this, key)
+            } catch (error: Exception) {
+                status = "Could not securely save the stream key: " + (error.message ?: "Android Keystore unavailable")
+                return
+            }
+        } else {
+            StreamKeyVault.clear(this)
+        }
         pendingLive = true
         broadcastStarting = true
         status = "Requesting screen/app selection permission…"
@@ -450,6 +474,7 @@ private fun HeroPill(label: String, value: String, active: Boolean, modifier: Mo
 private fun BroadcastPanel(
     server: String, onServer: (String) -> Unit,
     key: String, onKey: (String) -> Unit,
+    rememberStreamKey: Boolean, onRememberStreamKey: (Boolean) -> Unit,
     quality: String, onQuality: (String) -> Unit,
     fps: String, onFps: (String) -> Unit,
     orientation: String, onOrientation: (String) -> Unit,
@@ -486,6 +511,16 @@ private fun BroadcastPanel(
                 visualTransformation = PasswordVisualTransformation(),
                 shape = RoundedCornerShape(17.dp)
             )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Checkbox(checked = rememberStreamKey, onCheckedChange = onRememberStreamKey)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Remember key securely on this device", color = palette.text, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (rememberStreamKey) "Encrypted with Android Keystore. Never stored as plain text." else "Key stays in memory only and is cleared when the app process ends.",
+                        color = palette.muted, fontSize = 9.sp, lineHeight = 13.sp
+                    )
+                }
+            }
             Text("VIDEO PROFILE", color = palette.muted, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
             ClayOptionGroup("RESOLUTION", listOf("720p", "1080p", "1440p"), quality, onQuality)
             ClayOptionGroup("FRAME RATE", listOf("30", "60"), fps, onFps, " FPS")

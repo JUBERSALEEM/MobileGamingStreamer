@@ -200,7 +200,7 @@ This policy describes the current development build. It must be reviewed and kep
 • Screen video: Android MediaProjection captures the screen or app window you explicitly select after Android displays its system consent prompt.
 • Microphone audio: if you choose a microphone or mixed audio mode, the app uses the microphone after Android permission is granted. Audio may include your voice and nearby sounds.
 • Internal playback audio: if you choose game or mixed audio, the app requests Android playback capture. Android and the game can restrict which audio is capturable; teammate voice chat is not guaranteed to be included.
-• Stream destination and key: the RTMP/RTMPS server address and stream key you enter are used to establish the stream. The key is held in app memory for the active app session and is not intentionally saved to app storage in this build.
+• Stream destination and key: the RTMP/RTMPS server address and stream key you enter are used to establish the stream. If “Remember key securely on this device” is enabled, the key is encrypted with an Android Keystore AES-GCM key and its ciphertext is stored only in app-private local storage. If disabled, the key remains in memory for the current app process and is not saved. The key is sent only to the RTMP/RTMPS destination you configure.
 • Optional overlay: if enabled, the floating control displays stream status and controls over other apps.
 • Accessibility service: the service supports microphone capture while a game uses voice chat. It does not retrieve window content, read text on screen, inspect UI nodes, click controls or automate gameplay. It remains enabled until you turn it off in Android Settings, but has no active accessibility event subscriptions and does not read screen content, inspect UI controls or automate gameplay.
 • Optional YouTube chat: if you enter a video ID and open chat, a WebView loads YouTube. YouTube may process information under Google's own terms and privacy policy.
@@ -209,7 +209,7 @@ This policy describes the current development build. It must be reviewed and kep
 When you start a broadcast, selected screen video and selected audio are sent over your network to the RTMP/RTMPS endpoint you entered. That endpoint and the streaming platform may process, relay, record or make the stream public according to their own settings and policies. Use RTMPS where your provider supports it. Plain RTMP does not encrypt the stream in transit.
 
 3. Local processing and developer collection
-The current development build does not require an account and does not include developer-operated analytics, advertising or a developer cloud account service. Theme choice and temporary interface state are stored locally on the device. The developer does not receive a copy of your stream through a separate Mobile Gaming Streamer server. Your chosen streaming provider receives the stream.
+The current development build does not require an account and does not include developer-operated analytics, advertising or a developer cloud account service. Theme choice and temporary interface state are stored locally on the device. An optional stream key is stored locally only when the user enables secure key remembering; the encrypted value is protected by Android Keystore. The developer does not receive a copy of your stream through a separate Mobile Gaming Streamer server. Your chosen streaming provider receives the stream.
 
 4. Permissions
 • RECORD_AUDIO: microphone audio when the selected audio mode needs it.

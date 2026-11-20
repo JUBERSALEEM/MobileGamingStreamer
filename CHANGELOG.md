@@ -1,3 +1,21 @@
+## 0.5.15-dev — Phase 3 secure RTMP destination and key handling
+
+### Fixed
+- Add optional encrypted stream-key persistence using an AES-256-GCM key held by Android Keystore.
+- Keep only the encrypted payload in app-private preferences; plaintext is never written to preferences or logs.
+- Add a visible opt-in control to remember the key securely on this device, with a clear opt-out that deletes the stored ciphertext.
+- Restore a remembered key after app relaunch when enabled.
+
+### Preserved
+- RTMP/RTMPS URL and non-empty key validation before capture permission and service startup.
+- Masked stream-key entry, YouTube RTMP destination default, H.264 profile fallback and connection/authentication status.
+- Failed RTMP connections end the current capture session with a clear message; retry requires the user to start GO LIVE again and grant a fresh Android capture session.
+
+### Security and validation
+- Stream keys are sent only to the RTMP/RTMPS destination configured by the user.
+- Prefer RTMPS where the provider supports it; plain RTMP does not encrypt transport traffic.
+- CI build and encryption/decryption code-path tests required; device validation remains pending.
+
 ## 0.5.14-dev — Phase 2 encoder fallback and stream health
 
 ### Added

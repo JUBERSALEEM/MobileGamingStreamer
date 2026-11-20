@@ -37,7 +37,7 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 - [ ] Validate each profile against real device codec capabilities (fallback ladder added; physical matrix still pending)
 - [x] Add RootEncoder RTMP video-only transport foundation
 - [ ] Verify RTMP/RTMPS connection and YouTube ingest on physical device
-- [ ] Add secure stream-key storage and connection recovery
+- [x] Add opt-in Android Keystore-backed encrypted stream-key storage; connection recovery remains manual and requires fresh MediaProjection consent
 - [ ] Automatic RTMP reconnection and dropped-frame metrics (fresh MediaProjection consent is required for a new screen-capture session)
 
 ### M4 — Streamer experience
