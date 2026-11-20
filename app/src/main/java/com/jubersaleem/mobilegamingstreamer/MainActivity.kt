@@ -400,7 +400,7 @@ private fun Header() {
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text("BUILD", color = palette.muted, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Text("0.5.17", color = palette.primary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                Text("0.5.20", color = palette.primary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
             }
         }
     }

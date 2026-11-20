@@ -283,6 +283,10 @@ class RtmpBroadcastService : Service() {
             val activeProfile = selectedProfile
                 ?: throw IllegalStateException("No supported hardware H.264 profile found. Try 720p30 or check device encoder support.")
             activeProfileLabel = activeProfile.label
+            // Match the GL capture cadence and presentation timestamps to the selected encoder FPS.
+            // MediaProjection can follow the device refresh rate (for example 120 Hz); without
+            // pacing, excess frames can overload the encoder and produce uneven live motion.
+            stream.forceFpsLimit(true)
             val echoCancellation = audioMode != AUDIO_MODE_GAME
             val noiseSuppression = audioMode != AUDIO_MODE_GAME
             Log.i(TAG, "Audio effects requested: AEC=$echoCancellation, NS=$noiseSuppression; microphone source=DEFAULT")
@@ -294,7 +298,8 @@ class RtmpBroadcastService : Service() {
             // This is a single-source scene for now; custom top/bottom scene layers
             // require the separate scene-compositor milestone.
             stream.getGlInterface().setStreamIsPortrait(portrait)
-            stream.getGlInterface().setForceRender(true, 15)
+            // Keep static-screen fallback frames on the same cadence as the selected stream profile.
+            stream.getGlInterface().setForceRender(true, activeProfile.fps)
             display = stream
             stream.setFpsListener { outputFps ->
                 handler.post {

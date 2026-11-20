@@ -1,3 +1,13 @@
+## 0.5.20-dev — Video frame pacing and capture smoothness
+
+### Fixed
+- Pace OpenGL screen-capture frames to the selected H.264 encoder FPS instead of allowing the display refresh rate to feed the encoder unchecked.
+- Match MediaProjection forced-render fallback cadence to the active 30/60 FPS profile rather than a fixed 15 FPS.
+- Preserve the existing hardware H.264 profile fallback, RTMP transport, audio sources and stream lifecycle.
+
+### Verification boundary
+- CI verifies compilation, unit tests and lint; sustained 30/60 FPS, frame pacing and thermal performance still require live testing on the Galaxy S25 Ultra.
+
 ## 0.5.19-dev — Audio capture lifecycle hardening
 
 ### Fixed
