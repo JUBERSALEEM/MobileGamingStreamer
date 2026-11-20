@@ -74,6 +74,17 @@ jobs:
             keytool -genkeypair -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
+      # Temporary recovery step: preserve the exact signing key used by the last installable PR build.
+      # This lets us pin that key in the repository and stop relying on event-scoped Actions caches.
+      - name: Export PR debug signing key for signing continuity recovery
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mgs-debug-signing-key-recovery
+          path: ~/.android/debug.keystore
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify release-readiness declarations
         run: python3 scripts/verify_release_readiness.py
 
