@@ -7,9 +7,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,8 +44,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -190,8 +185,6 @@ fun ClayButton(
                 interactionSource = interactionSource,
                 indication = null,
                 enabled = enabled,
-                onClickLabel = label,
-                role = Role.Button,
                 onClick = onClick
             )
             .heightIn(min = 50.dp)
@@ -290,7 +283,6 @@ fun ClayOptionGroup(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(clayInsetModifier(RoundedCornerShape(20.dp)))
-                .selectableGroup()
                 .padding(5.dp),
             horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
@@ -336,7 +328,7 @@ fun ClayOptionGroup(
                         .then(
                             if (chosen) Modifier.border(1.dp, p.clayEdge.copy(alpha = 0.7f), itemShape) else Modifier
                         )
-                        .selectable(selected = chosen, role = Role.RadioButton) { onSelect(option) },
+                        .clickable { onSelect(option) },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -370,7 +362,6 @@ fun ClayToggleRow(
         modifier = modifier
             .fillMaxWidth()
             .then(clayInsetModifier(RoundedCornerShape(20.dp)))
-            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -384,7 +375,7 @@ fun ClayToggleRow(
         }
         Switch(
             checked = checked,
-            onCheckedChange = null,
+            onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = p.primary,
@@ -423,7 +414,6 @@ fun ClayNavDock(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(clayInsetModifier(RoundedCornerShape(24.dp)))
-                .selectableGroup()
                 .padding(5.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -467,7 +457,7 @@ fun ClayNavDock(
                         .then(
                             if (chosen) Modifier.border(1.dp, p.clayEdge.copy(alpha = 0.65f), itemShape) else Modifier
                         )
-                        .selectable(selected = chosen, role = Role.Tab) { onSelect(item.route) }
+                        .clickable { onSelect(item.route) }
                         .padding(vertical = 9.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(3.dp)
@@ -640,7 +630,7 @@ fun ClayMenuRow(
         modifier = modifier
             .fillMaxWidth()
             .then(clayRaisedModifier(shape, ClayDepth.Subtle))
-            .clickable(onClickLabel = title, role = Role.Button, onClick = onClick)
+            .clickable { onClick() }
             .padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -691,7 +681,7 @@ fun ClayIconButton(
         modifier = modifier
             .size(48.dp)
             .then(clayRaisedModifier(shape, ClayDepth.Subtle))
-            .clickable(onClickLabel = contentDescription, role = Role.Button, onClick = onClick),
+            .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
         Icon(
@@ -786,7 +776,6 @@ fun ClayPageHeader(
         )
         Text(
             text = title,
-            modifier = Modifier.semantics { heading() },
             color = p.text,
             fontSize = 22.sp,
             fontWeight = FontWeight.Black,
