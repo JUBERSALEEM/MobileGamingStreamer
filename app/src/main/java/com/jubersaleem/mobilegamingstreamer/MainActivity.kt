@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
     private var broadcastStarting by mutableStateOf(false)
     private var notificationsAllowed by mutableStateOf(true)
     private var accessibilityMicEnabled by mutableStateOf(false)
+    private var showAccessibilityDisclosure by mutableStateOf(false)
     private var server by mutableStateOf("rtmp://a.rtmp.youtube.com/live2")
     private var key by mutableStateOf("")
     private var rememberStreamKey by mutableStateOf(true)
@@ -191,6 +192,26 @@ class MainActivity : ComponentActivity() {
         setContent {
             MgsTheme(mode = themeMode) {
                 val palette = LocalMgsPalette.current
+                if (showAccessibilityDisclosure) {
+                    AlertDialog(
+                        onDismissRequest = { showAccessibilityDisclosure = false },
+                        title = { Text("Microphone compatibility permission") },
+                        text = {
+                            Text(
+                                "Mobile Gaming Streamer uses Android's Accessibility Service to help capture your microphone while BGMI is using voice chat. The service listens for window-state changes only. It does not read screen text, retrieve window content, perform gestures or control other apps. Your microphone audio is included in the live stream you start. You can decline or disable this service at any time in Android settings."
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showAccessibilityDisclosure = false
+                                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                            }) { Text("CONTINUE TO ANDROID SETTINGS") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showAccessibilityDisclosure = false }) { Text("NOT NOW") }
+                        }
+                    )
+                }
                 if (showStreamKeyDialog) {
                     AlertDialog(
                         onDismissRequest = { showStreamKeyDialog = false },
@@ -269,7 +290,7 @@ class MainActivity : ComponentActivity() {
                                         lineHeight = 16.sp
                                     )
                                     OutlinedButton(
-                                        onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                                        onClick = { showAccessibilityDisclosure = true },
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Text(if (accessibilityMicEnabled) "OPEN ACCESSIBILITY SETTINGS" else "ENABLE MICROPHONE COMPATIBILITY")
