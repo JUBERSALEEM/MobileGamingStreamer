@@ -240,11 +240,10 @@ class RtmpBroadcastService : Service() {
                 MgsMicAccessibilityService.isEnabled(this)
             // Glip's observed source-selection pattern: DEFAULT with accessibility enabled
             // and the phone mic; VOICE_RECOGNITION for an external headset; MIC as fallback.
-            val micSource = when {
-                accessibilityMicConnected && preferredInput != null -> MediaRecorder.AudioSource.VOICE_RECOGNITION
-                accessibilityMicConnected -> MediaRecorder.AudioSource.DEFAULT
-                else -> MediaRecorder.AudioSource.MIC
-            }
+            val micSource = MicrophoneAudioSourcePolicy.select(
+                accessibilityConnected = accessibilityMicConnected,
+                externalInputConnected = preferredInput != null
+            )
             Log.i(TAG, "Microphone route: accessibility=" + accessibilityMicConnected +
                 " externalInput=" + (preferredInput != null) + " audioSource=" + micSource)
             val audioSource: AudioSource = when (audioMode) {
