@@ -42,7 +42,7 @@ import com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService
 class MainActivity : ComponentActivity() {
     private var status by mutableStateOf("Ready to stream")
     private var liveBitrate by mutableStateOf(0L)
-    private var page by mutableStateOf("SETUP")
+    private var page by mutableStateOf("STUDIO")
     private var themeMode by mutableStateOf("CLASSIC")
     private var showStreamKeyDialog by mutableStateOf(false)
     private var captureActive by mutableStateOf(false)
@@ -425,7 +425,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun Header() {
+private fun Header(onSettings: () -> Unit) {
     val palette = LocalMgsPalette.current
     MgsCard(
         shape = RoundedCornerShape(if (palette.isClay) 26.dp else 18.dp),
@@ -440,11 +440,12 @@ private fun Header() {
             Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("YOUR MOBILE STUDIO", color = palette.muted, fontSize = 9.sp, letterSpacing = 1.7.sp, fontWeight = FontWeight.ExtraBold)
-                Text("GLIP STREAM", color = palette.text, fontSize = 19.sp, fontWeight = FontWeight.Black, letterSpacing = 0.4.sp)
+                Text("MOBILE GAMING STREAMER", color = palette.text, fontSize = 15.sp, fontWeight = FontWeight.Black, letterSpacing = 0.2.sp)
             }
+            TextButton(onClick = onSettings) { Text("⚙", color = palette.primary, fontSize = 23.sp) }
             Column(horizontalAlignment = Alignment.End) {
                 Text("BUILD", color = palette.muted, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Text("0.5.22", color = palette.primary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                Text("0.5.25", color = palette.primary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
             }
         }
     }
