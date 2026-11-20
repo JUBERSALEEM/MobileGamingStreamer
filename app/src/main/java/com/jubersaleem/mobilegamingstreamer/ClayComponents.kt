@@ -7,9 +7,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,10 +44,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.semantics
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -63,16 +56,8 @@ import androidx.compose.ui.window.DialogProperties
 /** Visual weight of a clay button. */
 enum class ClayButtonStyle { Filled, Raised, Inset }
 
-/**
- * Semantic tones for clay pills and badges.
- *
- * Live is teal (an active broadcast is a live/technical state), Active is
- * green (a healthy ready state), Idle is graphite (a truthful standby, never
- * a lit-up false positive), Accent is violet (informational highlights),
- * Warning is amber (degraded or action-needed states that are not errors)
- * and Alert is red, reserved for errors and destructive states.
- */
-enum class ClayTone { Live, Active, Idle, Accent, Warning, Alert }
+/** Semantic tones for clay pills and badges. */
+enum class ClayTone { Live, Active, Idle, Accent, Alert }
 
 /** One destination of the clay navigation dock. */
 data class ClayNavItem(
@@ -82,11 +67,8 @@ data class ClayNavItem(
 )
 
 /**
- * Primary clay control. Filled buttons are sculpted electric-violet blocks
- * for the single most important action on a card, raised buttons are soft
- * light slabs for secondary actions and inset buttons are recessed wells for
- * tertiary actions. Every button meets the 48dp minimum touch target and
- * exposes its label to accessibility services.
+ * Primary clay control. Filled buttons are sculpted terracotta blocks, raised
+ * buttons are soft white slabs and inset buttons are recessed wells.
  */
 @Composable
 fun ClayButton(
@@ -190,8 +172,6 @@ fun ClayButton(
                 interactionSource = interactionSource,
                 indication = null,
                 enabled = enabled,
-                onClickLabel = label,
-                role = Role.Button,
                 onClick = onClick
             )
             .heightIn(min = 50.dp)
@@ -222,11 +202,7 @@ fun ClayButton(
     }
 }
 
-/**
- * Recessed clay text field. Colours come from the clay [MaterialTheme]
- * scheme. Technical values such as URLs and keys use [mono] so every
- * character stays distinguishable.
- */
+/** Recessed clay text field. Colours come from the clay [MaterialTheme] scheme. */
 @Composable
 fun ClayTextField(
     value: String,
@@ -235,7 +211,6 @@ fun ClayTextField(
     modifier: Modifier = Modifier.fillMaxWidth(),
     password: Boolean = false,
     singleLine: Boolean = true,
-    mono: Boolean = false,
     leadingIcon: ImageVector? = null
 ) {
     val p = LocalMgsPalette.current
@@ -244,7 +219,6 @@ fun ClayTextField(
         onValueChange = onValueChange,
         modifier = modifier.then(clayInsetModifier(RoundedCornerShape(18.dp), rim = false)),
         singleLine = singleLine,
-        textStyle = TextStyle(fontFamily = if (mono) FontFamily.Monospace else null),
         label = { Text(label, fontSize = 12.sp) },
         leadingIcon = if (leadingIcon != null) {
             {
@@ -263,11 +237,7 @@ fun ClayTextField(
     )
 }
 
-/**
- * Segmented clay selector carved into a recessed well. Options behave as a
- * radio group for accessibility services, with the chosen tile raised and
- * inked in deep violet.
- */
+/** Segmented clay selector carved into a recessed well. */
 @Composable
 fun ClayOptionGroup(
     title: String,
@@ -290,7 +260,6 @@ fun ClayOptionGroup(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(clayInsetModifier(RoundedCornerShape(20.dp)))
-                .selectableGroup()
                 .padding(5.dp),
             horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
@@ -300,7 +269,7 @@ fun ClayOptionGroup(
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 52.dp)
+                        .heightIn(min = 44.dp)
                         .then(
                             if (chosen) {
                                 Modifier
@@ -336,12 +305,12 @@ fun ClayOptionGroup(
                         .then(
                             if (chosen) Modifier.border(1.dp, p.clayEdge.copy(alpha = 0.7f), itemShape) else Modifier
                         )
-                        .selectable(selected = chosen, role = Role.RadioButton) { onSelect(option) },
+                        .clickable { onSelect(option) },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = option + suffix,
-                        color = if (chosen) p.primaryInk else p.muted,
+                        color = if (chosen) p.primary else p.muted,
                         fontSize = 11.sp,
                         fontWeight = if (chosen) FontWeight.ExtraBold else FontWeight.SemiBold,
                         maxLines = 1
@@ -352,11 +321,7 @@ fun ClayOptionGroup(
     }
 }
 
-/**
- * Recessed clay switch row with an explanatory caption. The whole row is a
- * single switch control for accessibility services, so TalkBack announces
- * the title together with the on/off state.
- */
+/** Recessed clay switch row with an explanatory caption. */
 @Composable
 fun ClayToggleRow(
     title: String,
@@ -370,7 +335,6 @@ fun ClayToggleRow(
         modifier = modifier
             .fillMaxWidth()
             .then(clayInsetModifier(RoundedCornerShape(20.dp)))
-            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -384,7 +348,7 @@ fun ClayToggleRow(
         }
         Switch(
             checked = checked,
-            onCheckedChange = null,
+            onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = p.primary,
@@ -397,11 +361,7 @@ fun ClayToggleRow(
     }
 }
 
-/**
- * Bottom clay navigation dock. Destinations behave as tabs for accessibility
- * services; the icon is decorative because the visible label already names
- * each destination.
- */
+/** Bottom clay navigation dock. */
 @Composable
 fun ClayNavDock(
     items: List<ClayNavItem>,
@@ -423,7 +383,6 @@ fun ClayNavDock(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(clayInsetModifier(RoundedCornerShape(24.dp)))
-                .selectableGroup()
                 .padding(5.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -467,20 +426,20 @@ fun ClayNavDock(
                         .then(
                             if (chosen) Modifier.border(1.dp, p.clayEdge.copy(alpha = 0.65f), itemShape) else Modifier
                         )
-                        .selectable(selected = chosen, role = Role.Tab) { onSelect(item.route) }
+                        .clickable { onSelect(item.route) }
                         .padding(vertical = 9.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Icon(
                         imageVector = item.icon,
-                        contentDescription = null,
+                        contentDescription = item.label,
                         modifier = Modifier.size(20.dp),
-                        tint = if (chosen) p.primaryInk else p.muted
+                        tint = if (chosen) p.primary else p.muted
                     )
                     Text(
                         text = item.label,
-                        color = if (chosen) p.primaryInk else p.muted,
+                        color = if (chosen) p.primary else p.muted,
                         fontSize = 9.sp,
                         fontWeight = if (chosen) FontWeight.ExtraBold else FontWeight.SemiBold,
                         maxLines = 1
@@ -540,12 +499,7 @@ fun ClayDialog(
     }
 }
 
-/**
- * Recessed clay pill used for status and metadata. The well stays neutral
- * clay and the tone shows only in the dot and the label ink, from the shared
- * palette — teal for live, green for healthy, graphite for standby, violet
- * for information, amber for degraded states and red for errors.
- */
+/** Recessed clay pill used for status and metadata. */
 @Composable
 fun ClayStatusPill(
     label: String,
@@ -553,13 +507,12 @@ fun ClayStatusPill(
     modifier: Modifier = Modifier
 ) {
     val p = LocalMgsPalette.current
-    val ink = when (tone) {
-        ClayTone.Live -> p.accentDeep
-        ClayTone.Active -> p.successDeep
-        ClayTone.Idle -> p.muted
-        ClayTone.Accent -> p.primaryInk
-        ClayTone.Warning -> p.warningDeep
-        ClayTone.Alert -> p.dangerDeep
+    val colors = when (tone) {
+        ClayTone.Live -> Color(0xFFF9DCDA) to Color(0xFFB6454E)
+        ClayTone.Active -> Color(0xFFD7EDE2) to Color(0xFF2E7A5C)
+        ClayTone.Idle -> p.inset to p.muted
+        ClayTone.Accent -> Color(0xFFE4DFF6) to p.secondary
+        ClayTone.Alert -> Color(0xFFF9DCDA) to p.danger
     }
     Row(
         modifier = modifier
@@ -568,10 +521,10 @@ fun ClayStatusPill(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp)
     ) {
-        Box(Modifier.size(8.dp).background(ink, CircleShape))
+        Box(Modifier.size(8.dp).background(colors.second, CircleShape))
         Text(
             text = label,
-            color = ink,
+            color = colors.second,
             fontSize = 10.sp,
             fontWeight = FontWeight.ExtraBold,
             letterSpacing = 0.8.sp
@@ -579,10 +532,7 @@ fun ClayStatusPill(
     }
 }
 
-/**
- * Recessed clay statistic tile. Values are technical readouts, so they use
- * the monospace face and turn teal while the measured path is active.
- */
+/** Recessed clay statistic tile. */
 @Composable
 fun ClayStat(
     label: String,
@@ -615,10 +565,9 @@ fun ClayStat(
             )
             Text(
                 text = value,
-                color = if (active) p.accentDeep else p.text,
+                color = p.text,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.ExtraBold,
-                fontFamily = FontFamily.Monospace,
                 maxLines = 1
             )
         }
@@ -640,7 +589,7 @@ fun ClayMenuRow(
         modifier = modifier
             .fillMaxWidth()
             .then(clayRaisedModifier(shape, ClayDepth.Subtle))
-            .clickable(onClickLabel = title, role = Role.Button, onClick = onClick)
+            .clickable { onClick() }
             .padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -674,10 +623,7 @@ fun ClayMenuRow(
     }
 }
 
-/**
- * Small raised clay icon button. The 48dp slab meets the minimum touch
- * target and the icon description becomes the button's click label.
- */
+/** Small raised clay icon button. */
 @Composable
 fun ClayIconButton(
     icon: ImageVector,
@@ -689,62 +635,16 @@ fun ClayIconButton(
     val shape = RoundedCornerShape(16.dp)
     Box(
         modifier = modifier
-            .size(48.dp)
+            .size(42.dp)
             .then(clayRaisedModifier(shape, ClayDepth.Subtle))
-            .clickable(onClickLabel = contentDescription, role = Role.Button, onClick = onClick),
+            .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = icon,
-            contentDescription = null,
+            contentDescription = contentDescription,
             modifier = Modifier.size(19.dp),
-            tint = p.primaryInk
-        )
-    }
-}
-
-/**
- * Tinted badge that seats a section icon on the shared clay. Raised, so it
- * can sit on flat card surfaces and inside recessed wells alike.
- */
-@Composable
-fun ClayIconBadge(
-    icon: ImageVector,
-    containerColor: Color,
-    contentColor: Color,
-    modifier: Modifier = Modifier
-) {
-    val p = LocalMgsPalette.current
-    val shape = RoundedCornerShape(14.dp)
-    Box(
-        modifier = modifier
-            .size(40.dp)
-            .dropShadow(
-                shape,
-                Shadow(
-                    radius = 10.dp,
-                    color = p.clayShadow.copy(alpha = 0.40f),
-                    offset = DpOffset(3.dp, 4.dp)
-                )
-            )
-            .dropShadow(
-                shape,
-                Shadow(
-                    radius = 8.dp,
-                    color = Color.White.copy(alpha = 0.9f),
-                    offset = DpOffset((-3).dp, (-4).dp)
-                )
-            )
-            .clip(shape)
-            .background(containerColor, shape)
-            .border(1.dp, Brush.linearGradient(listOf(p.edge, p.clayEdge, p.edge)), shape),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(20.dp),
-            tint = contentColor
+            tint = p.primary
         )
     }
 }
@@ -786,7 +686,6 @@ fun ClayPageHeader(
         )
         Text(
             text = title,
-            modifier = Modifier.semantics { heading() },
             color = p.text,
             fontSize = 22.sp,
             fontWeight = FontWeight.Black,
@@ -815,11 +714,7 @@ fun ClaySectionLabel(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-/**
- * Key/value line used by the system status card. Values are technical
- * readouts in the monospace face; a live value turns teal and its dot fades
- * in instead of snapping, so state changes read as a gentle transition.
- */
+/** Key/value line used by the system status card. */
 @Composable
 fun ClayKeyValueRow(
     label: String,
@@ -828,11 +723,6 @@ fun ClayKeyValueRow(
     modifier: Modifier = Modifier
 ) {
     val p = LocalMgsPalette.current
-    val dotAlpha by animateFloatAsState(
-        targetValue = if (accent) 1f else 0.55f,
-        animationSpec = tween(durationMillis = 350),
-        label = "keyValueDot"
-    )
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -848,15 +738,13 @@ fun ClayKeyValueRow(
             Box(
                 Modifier
                     .size(7.dp)
-                    .graphicsLayer { alpha = dotAlpha }
                     .background(if (accent) p.accent else p.clayEdge, CircleShape)
             )
             Text(
                 text = value,
-                color = if (accent) p.accentDeep else p.text,
+                color = if (accent) p.accent else p.text,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
                 letterSpacing = 0.6.sp
             )
         }
