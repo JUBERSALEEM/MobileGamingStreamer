@@ -77,9 +77,9 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 
 ## Phase 3 — Studio experience (0.5.17-dev)
 - [x] Animate live-status changes and broadcast workspace layout transitions.
-- [x] Apply the selected Claymorphism/Classic theme to the floating control panel surface and status controls.
+- [x] Apply the claymorphism theme to the floating control panel surface and status controls.
 - [x] Preserve the floating bubble, drag-to-dismiss, stream stop, bitrate presets, local speaker mute, stream-audio mute, and YouTube chat.
-- [ ] Validate layout, touch targets, overlay behaviour, and theme switching on the Galaxy S25 Ultra.
+- [ ] Validate layout, touch targets, overlay behaviour, and the clay-only surfaces on the Galaxy S25 Ultra.
 
 ## Phase 4 — Release-readiness engineering (0.5.17-dev)
 - [x] Add JVM tests for RTMP/RTMPS URL validation and malformed/unsupported destination rejection.

@@ -11,7 +11,7 @@ This checklist is intentionally conservative. A passing CI build is not a substi
 
 ## Galaxy S25 Ultra device matrix
 - [ ] Fresh install, upgrade install, and app relaunch.
-- [ ] Claymorphism and Classic theme, including screen sizes/font scaling.
+- [ ] Claymorphism-only theme on every page, menu, dialog, navigation dock and overlay, including screen sizes/font scaling.
 - [ ] Overlay permission grant/deny, bubble show/hide, drag-to-dismiss, panel open/minimize.
 - [ ] Confirm bitrate presets, local speaker mute, stream-audio mute and explicit Stop.
 - [ ] YouTube Live Chat open/close and keyboard/overlay interaction.

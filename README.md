@@ -25,7 +25,7 @@ An Android-first mobile livestreaming app. The first device-validation target is
 ## App identity, appearance and legal
 
 - About screen credits **Juber Saleem** as developer and identifies the app as an independent mobile-streaming project by a BGMI / PUBG MOBILE streamer.
-- Settings includes persistent Classic and Soft Clay appearance themes.
+- The whole app uses one claymorphism design language: raised clay cards, recessed fields, sculpted dialogs, a clay navigation dock and a matching floating-control overlay. There is no second appearance theme.
 - Privacy Policy and Terms & Conditions are available in-app and as HTML pages under `docs/`.
 - The public legal-page URL is not live until GitHub Pages is enabled for the repository using the `docs/` folder.
 

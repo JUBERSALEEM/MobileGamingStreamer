@@ -9,6 +9,11 @@
 - Add an in-app setup control that opens Android Accessibility settings and reports whether the bridge is enabled.
 - Add unit tests for all three microphone-source selection cases.
 
+### Changed
+- Redesign every page, menu, dialog, card, input, button and navigation surface with the full claymorphism pattern: raised clay cards with soft opposing shadows, recessed wells for fields and selectors, and tactile pressed/selected states.
+- Apply one clay-only appearance across Studio, Stream, Audio, Tools, Settings, About, Legal and the floating-control overlay; the legacy Classic skin and theme switcher are removed.
+- Separate Compose rendering (`StudioShell`, `StudioUiState`, `StudioActions`) from the activity's streaming, permission, overlay and key-persistence behaviour; no streaming, audio, permission or persistence behaviour changes.
+
 ### Verification boundary
 - CI verifies compilation, tests, lint and APK packaging. Actual concurrent BGMI voice-chat capture, speaker audio pickup, echo behaviour and YouTube audio output still require testing on the Galaxy S25 Ultra.
 - Android playback capture remains subject to the game's playback usage and capture policy. Accessibility microphone sharing does not grant unrestricted access to protected playback streams.
