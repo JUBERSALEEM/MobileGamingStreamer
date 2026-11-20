@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
     private var page by mutableStateOf("SETUP")
     private var themeMode by mutableStateOf("CLASSIC")
     private var showAccessibilityDisclosure by mutableStateOf(false)
+    private var showStreamKeyDialog by mutableStateOf(false)
     private var accessibilityDisclosureAccepted by mutableStateOf(false)
     private var captureActive by mutableStateOf(false)
     private var broadcastActive by mutableStateOf(false)
@@ -201,6 +202,38 @@ class MainActivity : ComponentActivity() {
         setContent {
             MgsTheme(mode = themeMode) {
                 val palette = LocalMgsPalette.current
+                if (showStreamKeyDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showStreamKeyDialog = false },
+                        title = { Text("Stream key required") },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Enter your RTMP stream key to start broadcasting. Your key stays private and is not shown on screen.")
+                                OutlinedTextField(
+                                    value = key,
+                                    onValueChange = { key = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    label = { Text("Stream key") },
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    shape = RoundedCornerShape(16.dp)
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    showStreamKeyDialog = false
+                                    startBroadcastFlow()
+                                },
+                                enabled = key.isNotBlank()
+                            ) { Text("SAVE KEY & CONTINUE") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showStreamKeyDialog = false }) { Text("CANCEL") }
+                        }
+                    )
+                }
                 if (showAccessibilityDisclosure) {
                     AlertDialog(
                         onDismissRequest = { showAccessibilityDisclosure = false; pendingLive = false; broadcastStarting = false },
@@ -209,7 +242,7 @@ class MainActivity : ComponentActivity() {
                             Text("Mobile Gaming Streamer uses Android Accessibility Service only to help keep microphone capture available while a game such as BGMI is using voice chat. The service does not subscribe to accessibility events, read screen text or content, inspect UI controls, click, type, or automate gameplay. When you start a stream, the microphone and any capturable game audio are sent to the RTMP destination you enter. You can turn this service off at any time in Android Settings.")
                         },
                         confirmButton = {
-                            Button(onClick = {
+                            MgsButton(onClick = {
                                 showAccessibilityDisclosure = false
                                 accessibilityDisclosureAccepted = true
                                 getSharedPreferences("mgs_preferences", MODE_PRIVATE).edit().putBoolean("accessibility_disclosure_accepted", true).apply()
@@ -249,22 +282,22 @@ class MainActivity : ComponentActivity() {
                         if (page != "SETTINGS" && page != "ABOUT" && page != "TERMS" && page != "PRIVACY") {
                         Hero(status, captureActive, broadcastActive, broadcastStarting)
                         if (!notificationsAllowed) {
-                            Card(shape = RoundedCornerShape(if (palette.isClay) 30.dp else 12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 20.dp else 1.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+                            MgsCard(shape = RoundedCornerShape(if (palette.isClay) 30.dp else 12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 20.dp else 1.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
                                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("ENABLE NOTIFICATIONS", color = palette.primary, fontWeight = FontWeight.Bold)
                                     Text("Android notifications show capture and live-stream status, with a stop control.", color = palette.muted)
-                                    Button(onClick = {
+                                    MgsButton(onClick = {
                                         if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                                     }) { Text("ALLOW NOTIFICATIONS") }
                                 }
                             }
                         }
                         if (!accessibilityEnabled) {
-                            Card(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+                            MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
                                 Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("ENABLE IN-GAME MIC COMPATIBILITY", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     Text("Android can silence a normal recorder while BGMI is using voice chat. Enable this app's Accessibility service so the stream can capture your microphone concurrently. This service does not read screen content.", color = palette.muted, fontSize = 11.sp, lineHeight = 15.sp)
-                                    Button(onClick = { showAccessibilityDisclosure = true }, modifier = Modifier.fillMaxWidth()) {
+                                    MgsButton(onClick = { showAccessibilityDisclosure = true }, modifier = Modifier.fillMaxWidth()) {
                                         Text("OPEN ACCESSIBILITY SETTINGS")
                                     }
                                 }
@@ -275,26 +308,7 @@ class MainActivity : ComponentActivity() {
                                 quality, { quality = it }, fps, { fps = it }, orientation, { orientation = it },
                                 audioMode, { audioMode = it },
                                 broadcastActive || broadcastStarting,
-                                onGoLive = {
-                                    if (broadcastActive) status = "Broadcast is already running"
-                                    else if (server.isBlank() || key.isBlank()) status = "Enter your server URL and stream key"
-                                    else if (!server.startsWith("rtmp://") && !server.startsWith("rtmps://")) status = "Server must begin with rtmp:// or rtmps://"
-                                    else {
-                                        pendingLive = true
-                                        broadcastStarting = true
-                                        if (!accessibilityDisclosureAccepted) {
-                                            showAccessibilityDisclosure = true
-                                            status = "Review the microphone compatibility disclosure to continue"
-                                        } else if (!isAccessibilityServiceEnabled()) {
-                                            waitingForAccessibility = true
-                                            status = "Enable microphone compatibility in Android Accessibility settings"
-                                            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                                        } else {
-                                            status = "Requesting screen/app selection permission…"
-                                            requestProjection()
-                                        }
-                                    }
-                                },
+                                onGoLive = { startBroadcastFlow() },
                                 onStopLive = { RtmpBroadcastService.requestStop(this@MainActivity) }
                             )
                             Text("FLOATING CONTROLS", color = palette.secondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -303,7 +317,7 @@ class MainActivity : ComponentActivity() {
                                 Text(if (Settings.canDrawOverlays(this@MainActivity)) "SHOW FLOATING CONTROLS" else "ENABLE FLOATING CONTROLS")
                             }
                         } else {
-                            Card(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+                            MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
                                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Text("LIVE SESSION", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                     Text(if (broadcastActive) status else "No active broadcast", color = if (broadcastActive) palette.primary else palette.muted)
@@ -312,18 +326,18 @@ class MainActivity : ComponentActivity() {
                                         Text(if (Settings.canDrawOverlays(this@MainActivity)) "OPEN FLOATING CONTROLS" else "ENABLE FLOATING CONTROLS")
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(onClick = { page = "SETUP" }, modifier = Modifier.weight(1f)) { Text("BROADCAST SETUP") }
+                                        MgsButton(onClick = { page = "SETUP" }, modifier = Modifier.weight(1f)) { Text("BROADCAST SETUP") }
                                         OutlinedButton(onClick = { RtmpBroadcastService.requestStop(this@MainActivity) }, enabled = broadcastActive || broadcastStarting, modifier = Modifier.weight(1f)) { Text("STOP LIVE") }
                                     }
                                 }
                             }
                         }
-                        if (page == "HOME") Card(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+                        if (page == "HOME") MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
                             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                                 Text("CAPTURE TEST", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                 Text("Test the H.264 encoder without connecting to a streaming platform.", color = palette.muted)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
+                                    MgsButton(
                                         onClick = { pendingLive = false; requestProjection() },
                                         enabled = !captureActive && !broadcastActive,
                                         modifier = Modifier.weight(1f)
@@ -346,6 +360,48 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    private fun startBroadcastFlow() {
+        if (broadcastActive || broadcastStarting) {
+            status = "Broadcast is already running or starting"
+            return
+        }
+
+        val normalizedServer = server.trim()
+        if (normalizedServer.isBlank()) {
+            status = "Enter your RTMP server URL before going live"
+            return
+        }
+
+        if (key.isBlank()) {
+            showStreamKeyDialog = true
+            status = "Stream key required"
+            return
+        }
+
+        val parsedServer = Uri.parse(normalizedServer)
+        val scheme = parsedServer.scheme?.lowercase()
+        if ((scheme != "rtmp" && scheme != "rtmps") || parsedServer.host.isNullOrBlank()) {
+            status = "Enter a valid RTMP server URL, such as rtmp://server.example/live"
+            return
+        }
+
+        server = normalizedServer
+        key = key.trim()
+        pendingLive = true
+        broadcastStarting = true
+        if (!accessibilityDisclosureAccepted) {
+            showAccessibilityDisclosure = true
+            status = "Review the microphone compatibility disclosure to continue"
+        } else if (!isAccessibilityServiceEnabled()) {
+            waitingForAccessibility = true
+            status = "Enable microphone compatibility in Android Accessibility settings"
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        } else {
+            status = "Requesting screen/app selection permission…"
+            requestProjection()
         }
     }
 
@@ -395,7 +451,7 @@ private fun Header() {
 @Composable
 private fun Hero(status: String, capture: Boolean, live: Boolean, starting: Boolean) {
     val palette = LocalMgsPalette.current
-    Card(shape = RoundedCornerShape(if (palette.isClay) 34.dp else 24.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 26.dp else 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+    MgsCard(shape = RoundedCornerShape(if (palette.isClay) 34.dp else 24.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 26.dp else 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
         Column(
             Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(palette.highlight, palette.surface, palette.background))).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -424,18 +480,22 @@ private fun BroadcastPanel(
     live: Boolean, onGoLive: () -> Unit, onStopLive: () -> Unit
 ) {
     val palette = LocalMgsPalette.current
-    Card(shape = RoundedCornerShape(if (palette.isClay) 32.dp else 22.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 24.dp else 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+    MgsCard(shape = RoundedCornerShape(if (palette.isClay) 32.dp else 22.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 24.dp else 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
         Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (palette.isClay) listOf(palette.highlight, palette.surface, Color(0xFFE8E2D7)) else listOf(palette.surface, palette.surface)), RoundedCornerShape(if (palette.isClay) 30.dp else 0.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Text("BROADCAST SETUP", color = palette.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
             Text("Connect to YouTube or another RTMP platform", color = palette.muted, fontSize = 12.sp)
             OutlinedTextField(
-                value = server, onValueChange = onServer, modifier = Modifier.fillMaxWidth(),
-                singleLine = true, label = { Text("RTMP server URL") }
+                value = server, onValueChange = onServer,
+                modifier = Modifier.fillMaxWidth().then(clayInsetModifier(RoundedCornerShape(16.dp))),
+                singleLine = true, label = { Text("RTMP server URL") },
+                shape = RoundedCornerShape(16.dp)
             )
             OutlinedTextField(
-                value = key, onValueChange = onKey, modifier = Modifier.fillMaxWidth(),
+                value = key, onValueChange = onKey,
+                modifier = Modifier.fillMaxWidth().then(clayInsetModifier(RoundedCornerShape(16.dp))),
                 singleLine = true, label = { Text("Stream key") },
-                visualTransformation = PasswordVisualTransformation()
+                visualTransformation = PasswordVisualTransformation(),
+                shape = RoundedCornerShape(16.dp)
             )
             Text("VIDEO QUALITY", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             ChoiceRow(listOf("720p", "1080p", "1440p"), quality, onQuality)
@@ -448,7 +508,7 @@ private fun BroadcastPanel(
             Text(when (audioMode) { "MIC" -> "Microphone only"; "GAME" -> "Internal game/device playback only"; "NORMAL" -> "Game playback + microphone at equal level"; else -> "Balanced mix: game playback + microphone, with microphone level boosted" }, color = palette.muted, fontSize = 10.sp, lineHeight = 14.sp)
             Text("Higher resolutions and 60 FPS depend on encoder support, game orientation, network and device temperature.",
                 color = palette.muted, fontSize = 10.sp, lineHeight = 14.sp)
-            Button(
+            MgsButton(
                 onClick = if (live) onStopLive else onGoLive,
                 modifier = Modifier.fillMaxWidth().height(50.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = if (live) Color(0xFFB94D54) else palette.primary,
@@ -471,7 +531,7 @@ private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String
 @Composable
 private fun ModuleStatus(capture: Boolean, live: Boolean) {
     val palette = LocalMgsPalette.current
-    Card(shape = RoundedCornerShape(if (palette.isClay) 30.dp else 12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 22.dp else 8.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+    MgsCard(shape = RoundedCornerShape(if (palette.isClay) 30.dp else 12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 22.dp else 8.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("SYSTEM STATUS", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.2.sp)
             StatusRow("Screen capture", if (capture || live) "ACTIVE" else "READY")

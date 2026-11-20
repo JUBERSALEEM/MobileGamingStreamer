@@ -30,7 +30,7 @@ The floating bubble needs the Android **Display over other apps** permission. Th
 
 1. Open https://github.com/JUBERSALEEM/MobileGamingStreamer
 2. Open **Releases** and select the newest development build.
-3. Download the APK asset named **MobileGamingStreamer-0.5.6.apk** from the newest successful development build.
+3. Download the APK asset named **MobileGamingStreamer-0.5.10.apk** from the newest successful development build.
 4. Install it. Android may ask you to allow your browser or file manager to install unknown apps.
 5. Open the app, enter your RTMP server URL and stream key, and tap **GO LIVE • SELECT APP**.
 6. In Android's screen-sharing picker, select BGMI or the desired app and confirm.

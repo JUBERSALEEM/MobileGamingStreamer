@@ -1,3 +1,20 @@
+## 0.5.10-dev — Required stream-key prompt and complete Claymorphism surface system
+
+### Fixed
+- GO LIVE validates the RTMP server URL and stream key before requesting microphone/screen-capture permissions or starting any foreground service.
+- An empty stream key opens a blocking dialog with a masked key field. Saving a non-empty key continues the normal GO LIVE flow.
+- Whitespace-only keys are rejected; the URL is trimmed and must contain a valid RTMP/RTMPS scheme and host.
+- The stream key is not included in validation/status messages.
+
+### UI
+- Replaced flat Material cards across the main, settings and about screens with a shared raised-surface component.
+- Clay mode uses opposing soft drop shadows, layered gradients, sculpted rims, recessed input fields and raised buttons with pressed-state elevation.
+- Kept Classic dark mode styling separate from Clay mode.
+- Centralised Clay surfaces and shadows in the shared theme instead of repeating unrelated gradients on individual screens.
+
+### Validation
+- CI compilation and Galaxy S25 Ultra device testing are required before treating the UI or validation flow as verified.
+
 ## 0.5.9-dev — Keep broadcast running when app task is dismissed
 
 ### Fixed
