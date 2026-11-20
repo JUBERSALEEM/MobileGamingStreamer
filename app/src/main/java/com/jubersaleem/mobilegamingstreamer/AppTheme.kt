@@ -211,18 +211,25 @@ fun MgsButton(
     content: @Composable RowScope.() -> Unit
 ) {
     val p = LocalMgsPalette.current
+    val buttonShape = RoundedCornerShape(if (p.isClay) 22.dp else 14.dp)
+    val tactileModifier = if (p.isClay) {
+        modifier
+            .dropShadow(buttonShape, Shadow(radius = 13.dp, color = p.clayShadow.copy(alpha = 0.72f), offset = DpOffset(6.dp, 7.dp)))
+            .dropShadow(buttonShape, Shadow(radius = 12.dp, color = Color.White.copy(alpha = 0.98f), offset = DpOffset((-5).dp, (-5).dp)))
+            .border(1.dp, Brush.linearGradient(listOf(Color.White, p.clayEdge, Color.White)), buttonShape)
+    } else modifier
     Button(
         onClick = onClick,
-        modifier = modifier,
+        modifier = tactileModifier,
         enabled = enabled,
-        shape = RoundedCornerShape(if (p.isClay) 20.dp else 14.dp),
+        shape = buttonShape,
         colors = colors ?: ButtonDefaults.buttonColors(
             containerColor = p.primary,
             contentColor = if (p.isClay) Color.White else Color(0xFF11170A)
         ),
         elevation = ButtonDefaults.buttonElevation(
-            defaultElevation = if (p.isClay) 8.dp else 0.dp,
-            pressedElevation = if (p.isClay) 2.dp else 0.dp,
+            defaultElevation = 0.dp,
+            pressedElevation = 0.dp,
             disabledElevation = 0.dp
         ),
         content = content
