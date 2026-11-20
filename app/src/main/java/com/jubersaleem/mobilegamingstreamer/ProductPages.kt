@@ -33,18 +33,19 @@ fun SettingsPage(
     themeMode: String,
     onThemeChange: (String) -> Unit,
     onTerms: () -> Unit,
-    onPrivacy: () -> Unit
+    onPrivacy: () -> Unit,
+    onAbout: () -> Unit
 ) {
     val p = LocalMgsPalette.current
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         PageHeading("SETTINGS", "Personalise your streaming studio")
-        Card(
+        MgsCard(
             shape = RoundedCornerShape(if (p.isClay) 32.dp else 26.dp),
             border = BorderStroke(1.dp, p.edge),
             elevation = CardDefaults.cardElevation(defaultElevation = if (p.isClay) 24.dp else 12.dp),
             colors = CardDefaults.cardColors(containerColor = p.surface)
         ) {
-            Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (p.isClay) listOf(p.highlight, p.surface, Color(0xFFE8E2D7)) else listOf(p.surface, p.surface)), RoundedCornerShape(if (p.isClay) 30.dp else 0.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("APPEARANCE", color = p.primary, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.4.sp)
                 Text("Choose the surface style used throughout the app.", color = p.muted, fontSize = 12.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -52,21 +53,21 @@ fun SettingsPage(
                         selected = themeMode == "CLASSIC",
                         onClick = { onThemeChange("CLASSIC") },
                         label = { Text("Classic", fontWeight = FontWeight.SemiBold) },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).then(clayRaisedModifier(RoundedCornerShape(18.dp)))
                     )
                     FilterChip(
                         selected = themeMode == "CLAY",
                         onClick = { onThemeChange("CLAY") },
                         label = { Text("Claymorphism", fontWeight = FontWeight.SemiBold) },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).then(clayRaisedModifier(RoundedCornerShape(18.dp)))
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(if (themeMode == "CLAY") "Original Claymorphism is active" else "Classic is active", color = p.text, fontWeight = FontWeight.Bold)
-                        Text(if (themeMode == "CLAY") "Sculpted 3D surfaces, deep soft shadows, raised highlights and sculpted rounded controls." else "The original dark studio with neon lime and cyan accents.", color = p.muted, fontSize = 11.sp)
+                        Text(if (themeMode == "CLAY") "Claymorphism studio is active" else "Classic studio is active", color = p.text, fontWeight = FontWeight.Bold)
+                        Text(if (themeMode == "CLAY") "Sculpted raised surfaces, dual soft shadows, recessed controls and tactile pressed states throughout the app." else "The original dark studio with neon lime and cyan accents.", color = p.muted, fontSize = 11.sp)
                     }
-                    Card(
+                    MgsCard(
                         modifier = Modifier.size(62.dp),
                         shape = RoundedCornerShape(if (p.isClay) 24.dp else 19.dp),
                         border = BorderStroke(1.dp, p.edge),
@@ -76,17 +77,18 @@ fun SettingsPage(
                 }
             }
         }
-        Card(
+        MgsCard(
             shape = RoundedCornerShape(if (p.isClay) 30.dp else 24.dp),
             border = BorderStroke(1.dp, p.edge),
             elevation = CardDefaults.cardElevation(defaultElevation = 9.dp),
             colors = CardDefaults.cardColors(containerColor = p.surface)
         ) {
-            Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (p.isClay) listOf(p.highlight, p.surface, Color(0xFFE8E2D7)) else listOf(p.surface, p.surface)), RoundedCornerShape(if (p.isClay) 30.dp else 0.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("LEGAL & PRIVACY", color = p.primary, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.3.sp)
                 Text("Read how streaming, microphone access, screen capture and app permissions work.", color = p.muted, fontSize = 12.sp)
-                OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("PRIVACY POLICY") }
-                OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("TERMS & CONDITIONS") }
+                OutlinedButton(onClick = onAbout, modifier = Modifier.fillMaxWidth().then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("ABOUT MOBILE GAMING STREAMER") }
+                OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth().then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("PRIVACY POLICY") }
+                OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth().then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("TERMS & CONDITIONS") }
             }
         }
         Text("Theme preference is saved on this device. No account is required.", color = p.muted, fontSize = 10.sp)
@@ -98,13 +100,13 @@ fun AboutPage(onTerms: () -> Unit, onPrivacy: () -> Unit) {
     val p = LocalMgsPalette.current
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         PageHeading("ABOUT THE APP", "Built for mobile gamers who stream")
-        Card(
+        MgsCard(
             shape = RoundedCornerShape(if (p.isClay) 34.dp else 28.dp),
             border = BorderStroke(1.dp, p.edge),
             elevation = CardDefaults.cardElevation(defaultElevation = if (p.isClay) 26.dp else 13.dp),
             colors = CardDefaults.cardColors(containerColor = p.surface)
         ) {
-            Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (p.isClay) listOf(p.highlight, p.surface, Color(0xFFE8E2D7)) else listOf(p.surface, p.surface)), RoundedCornerShape(if (p.isClay) 34.dp else 0.dp)).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("MOBILE GAMING", color = p.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                 Text("STREAMER", color = p.text, fontSize = 28.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
                 Text("A mobile-first RTMP streaming studio for sharing gameplay with your community.", color = p.muted, fontSize = 13.sp, lineHeight = 19.sp)
@@ -114,15 +116,15 @@ fun AboutPage(onTerms: () -> Unit, onPrivacy: () -> Unit) {
                 Text("Independent Android app developer • BGMI / PUBG Mobile streamer", color = p.muted, fontSize = 12.sp, lineHeight = 17.sp)
             }
         }
-        Card(shape = RoundedCornerShape(if (p.isClay) 30.dp else 24.dp), border = BorderStroke(1.dp, p.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (p.isClay) 18.dp else 1.dp), colors = CardDefaults.cardColors(containerColor = p.surface)) {
-            Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (p.isClay) listOf(p.highlight, p.surface, Color(0xFFE8E2D7)) else listOf(p.surface, p.surface)), RoundedCornerShape(if (p.isClay) 30.dp else 0.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        MgsCard(shape = RoundedCornerShape(if (p.isClay) 30.dp else 24.dp), border = BorderStroke(1.dp, p.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (p.isClay) 18.dp else 1.dp), colors = CardDefaults.cardColors(containerColor = p.surface)) {
+            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("OUR APPROACH", color = p.primary, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
                 Text("Simple controls, clear capture consent and transparent streaming status. The app is under active development; compatibility and audio capture depend on Android, the device, the game and the streaming platform.", color = p.text, fontSize = 12.sp, lineHeight = 18.sp)
                 Text("Mobile Gaming Streamer is an independent product and is not affiliated with, endorsed by or sponsored by Krafton, Tencent, BGMI, PUBG MOBILE or Google. All third-party names and marks belong to their respective owners.", color = p.muted, fontSize = 10.sp, lineHeight = 15.sp)
             }
         }
-        OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("PRIVACY POLICY") }
-        OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("TERMS & CONDITIONS") }
+        OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth().then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("PRIVACY POLICY") }
+        OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth().then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("TERMS & CONDITIONS") }
         Text("Developer project: github.com/JUBERSALEEM/MobileGamingStreamer", color = p.muted, fontSize = 10.sp)
     }
 }
@@ -131,9 +133,9 @@ fun AboutPage(onTerms: () -> Unit, onPrivacy: () -> Unit) {
 fun LegalPage(title: String, body: String, onBack: () -> Unit) {
     val p = LocalMgsPalette.current
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedButton(onClick = onBack) { Text("← SETTINGS") }
-        PageHeading(title.uppercase(), "Mobile Gaming Streamer • Version 0.5.7")
-        Card(
+        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().then(clayRaisedModifier(RoundedCornerShape(18.dp)))) { Text("← SETTINGS") }
+        PageHeading(title.uppercase(), "Mobile Gaming Streamer • Version 0.5.10")
+        MgsCard(
             shape = RoundedCornerShape(24.dp),
             border = BorderStroke(1.dp, p.edge),
             elevation = CardDefaults.cardElevation(defaultElevation = 9.dp),
@@ -200,7 +202,7 @@ This policy describes the current development build. It must be reviewed and kep
 • Screen video: Android MediaProjection captures the screen or app window you explicitly select after Android displays its system consent prompt.
 • Microphone audio: if you choose a microphone or mixed audio mode, the app uses the microphone after Android permission is granted. Audio may include your voice and nearby sounds.
 • Internal playback audio: if you choose game or mixed audio, the app requests Android playback capture. Android and the game can restrict which audio is capturable; teammate voice chat is not guaranteed to be included.
-• Stream destination and key: the RTMP/RTMPS server address and stream key you enter are used to establish the stream. The key is held in app memory for the active app session and is not intentionally saved to app storage in this build.
+• Stream destination and key: the RTMP/RTMPS server address and stream key you enter are used to establish the stream. If “Remember key securely on this device” is enabled, the key is encrypted with an Android Keystore AES-GCM key and its ciphertext is stored only in app-private local storage. If disabled, the key remains in memory for the current app process and is not saved. The key is sent only to the RTMP/RTMPS destination you configure.
 • Optional overlay: if enabled, the floating control displays stream status and controls over other apps.
 • Accessibility service: the service supports microphone capture while a game uses voice chat. It does not retrieve window content, read text on screen, inspect UI nodes, click controls or automate gameplay. It remains enabled until you turn it off in Android Settings, but has no active accessibility event subscriptions and does not read screen content, inspect UI controls or automate gameplay.
 • Optional YouTube chat: if you enter a video ID and open chat, a WebView loads YouTube. YouTube may process information under Google's own terms and privacy policy.
@@ -209,7 +211,7 @@ This policy describes the current development build. It must be reviewed and kep
 When you start a broadcast, selected screen video and selected audio are sent over your network to the RTMP/RTMPS endpoint you entered. That endpoint and the streaming platform may process, relay, record or make the stream public according to their own settings and policies. Use RTMPS where your provider supports it. Plain RTMP does not encrypt the stream in transit.
 
 3. Local processing and developer collection
-The current development build does not require an account and does not include developer-operated analytics, advertising or a developer cloud account service. Theme choice and temporary interface state are stored locally on the device. The developer does not receive a copy of your stream through a separate Mobile Gaming Streamer server. Your chosen streaming provider receives the stream.
+The current development build does not require an account and does not include developer-operated analytics, advertising or a developer cloud account service. Theme choice and temporary interface state are stored locally on the device. An optional stream key is stored locally only when the user enables secure key remembering; the encrypted value is protected by Android Keystore. The developer does not receive a copy of your stream through a separate Mobile Gaming Streamer server. Your chosen streaming provider receives the stream.
 
 4. Permissions
 • RECORD_AUDIO: microphone audio when the selected audio mode needs it.

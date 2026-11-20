@@ -2,9 +2,12 @@ name: Android CI and APK Release
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - fix/stream-key-claymorphism
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -15,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  debug-build:
+  release-build:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -32,43 +35,111 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Restore stable debug signing key
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: mgs-debug-signing-key-v1
+      - name: Read app version and prepare release notes
+        id: meta
+        shell: bash
+        run: |
+          VERSION_NAME="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts | head -n 1)"
+          VERSION_CODE="$(sed -n 's/^[[:space:]]*versionCode = \([0-9][0-9]*\)/\1/p' app/build.gradle.kts | head -n 1)"
+          if [ -z "$VERSION_NAME" ] || [ -z "$VERSION_CODE" ]; then
+            echo "::error::Could not read versionName/versionCode from app/build.gradle.kts"
+            exit 1
+          fi
+          if ! grep -Fq "## ${VERSION_NAME}-dev" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md is missing a section for ${VERSION_NAME}-dev"
+            exit 1
+          fi
+          {
+            echo "version_name=$VERSION_NAME"
+            echo "version_code=$VERSION_CODE"
+          } >> "$GITHUB_OUTPUT"
+          awk -v prefix="## ${VERSION_NAME}-dev" '
+            !found && index($0, prefix) == 1 { found=1 }
+            found && /^## / && index($0, prefix) != 1 { exit }
+            found { print }
+            END { if (!found) exit 1 }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
 
-      - name: Create stable debug signing key if missing
+      - name: Restore pinned signing key
+        if: hashFiles('debug-signing/debug.keystore') != ''
         run: |
           mkdir -p ~/.android
-          if [ ! -f ~/.android/debug.keystore ]; then
-            keytool -genkeypair -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          cp debug-signing/debug.keystore ~/.android/debug.keystore
+
+      - name: Require pinned signing identity for distributable builds
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          if [ ! -f debug-signing/debug.keystore ]; then
+            echo "::error::The pinned signing key is missing; refusing to publish an APK."
+            exit 1
           fi
 
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --no-daemon
+      - name: Verify configured signing identity
+        shell: bash
+        run: |
+          keytool -list -v -keystore "$GITHUB_WORKSPACE/debug-signing/debug.keystore" -storepass android -alias androiddebugkey | grep -E 'Owner:|SHA256:'
+          SIGNING_REPORT="$(gradle :app:signingReport --no-daemon)"
+          echo "$SIGNING_REPORT"
+          echo "$SIGNING_REPORT" | grep -F "Store: $GITHUB_WORKSPACE/debug-signing/debug.keystore"
+          echo "$SIGNING_REPORT" | grep -F "Alias: androiddebugkey"
 
-      - name: Rename APK for mobile installation
-        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/MobileGamingStreamer-0.5.9.apk
+      - name: Verify release-readiness declarations
+        run: python3 scripts/verify_release_readiness.py
 
-      - name: Upload APK as workflow artifact
+      - name: Run unit tests and Android lint
+        run: gradle :app:testDebugUnitTest :app:lintDebug --no-daemon
+
+      - name: Build Android release APK
+        run: gradle :app:assembleRelease --no-daemon
+
+      - name: Verify release APK signing certificate
+        shell: bash
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          CERT_OUTPUT="$("$APKSIGNER" verify --verbose --print-certs "$APK")"
+          echo "$CERT_OUTPUT"
+          EXPECTED="$(keytool -exportcert -keystore "$GITHUB_WORKSPACE/debug-signing/debug.keystore" -storepass android -alias androiddebugkey | sha256sum | awk '{print toupper($1)}')"
+          ACTUAL="$(printf '%s\n' "$CERT_OUTPUT" | awk -F': ' '/certificate SHA-256 digest:/ {print toupper($NF); exit}')"
+          if [ -z "$ACTUAL" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::Release APK signer does not match the pinned signing key."
+            exit 1
+          fi
+
+      - name: Rename APK using app version
+        id: apk
+        shell: bash
+        run: |
+          APK_NAME="MobileGamingStreamer-${{ steps.meta.outputs.version_name }}-release.apk"
+          cp app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/$APK_NAME"
+          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mobile-gaming-streamer-debug
-          path: app/build/outputs/apk/debug/MobileGamingStreamer-0.5.9.apk
+          name: MobileGamingStreamer-v${{ steps.meta.outputs.version_name }}-release
+          path: app/build/outputs/apk/release/${{ steps.apk.outputs.apk_name }}
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish APK to GitHub Releases
-        if: github.event_name != 'pull_request'
+      - name: Publish release APK to GitHub Releases
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && hashFiles('debug-signing/debug.keystore') != ''
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: dev-build-${{ github.run_number }}-${{ github.run_attempt }}
-          name: MobileGamingStreamer development build #${{ github.run_number }}
-          body_path: CHANGELOG.md
+          tag_name: v${{ steps.meta.outputs.version_name }}-release.${{ github.run_number }}
+          name: MobileGamingStreamer v${{ steps.meta.outputs.version_name }} — Release build #${{ github.run_number }}
+          body_path: release-notes.md
           append_body: true
           generate_release_notes: true
           prerelease: true
           make_latest: false
-          files: app/build/outputs/apk/debug/MobileGamingStreamer-0.5.9.apk
+          files: app/build/outputs/apk/release/${{ steps.apk.outputs.apk_name }}
           fail_on_unmatched_files: true
+
+      - name: Print release location
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          echo "APK release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${{ steps.meta.outputs.version_name }}-release.${{ github.run_number }}"

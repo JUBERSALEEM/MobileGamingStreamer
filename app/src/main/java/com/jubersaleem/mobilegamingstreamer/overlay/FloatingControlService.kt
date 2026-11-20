@@ -51,6 +51,8 @@ class FloatingControlService : Service() {
     private var broadcastStarting = false
     private var broadcastMessage = "Broadcast setup ready"
     private var speakerMuted = false
+    private var streamAudioMuted = false
+    private var streamAudioButton: Button? = null
 
     private val broadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -63,6 +65,7 @@ class FloatingControlService : Service() {
         }
     }
 
+    @Suppress("UnspecifiedRegisterReceiverFlag")
     override fun onCreate() {
         super.onCreate()
         val filter = IntentFilter(RtmpBroadcastService.ACTION_STATUS)
@@ -86,8 +89,10 @@ class FloatingControlService : Service() {
         if (bubble == null) createBubble()
         val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         speakerMuted = audio.getStreamVolume(AudioManager.STREAM_MUSIC) == 0
+        streamAudioMuted = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE).getBoolean(RtmpBroadcastService.KEY_STREAM_AUDIO_MUTED, false)
         renderBroadcastState()
         renderSpeakerState()
+        renderStreamAudioState()
         scheduleDim()
         return START_NOT_STICKY
     }
@@ -175,12 +180,14 @@ class FloatingControlService : Service() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(10), dp(12), dp(12))
-            setBackgroundColor(0xF018222D.toInt())
+            background = panelSurfaceBackground()
+            elevation = dp(18).toFloat()
+            clipToOutline = true
         }
         val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val title = TextView(this).apply {
             text = "MGS  STREAM CONTROLS"
-            setTextColor(0xFFC4FF5C.toInt())
+            setTextColor(if (isClayTheme()) 0xFF554B70.toInt() else 0xFFC4FF5C.toInt())
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
         }
@@ -192,7 +199,7 @@ class FloatingControlService : Service() {
 
         val status = TextView(this).apply {
             text = "Broadcast setup ready"
-            setTextColor(0xFFE8EEF5.toInt())
+            setTextColor(if (isClayTheme()) 0xFF514C60.toInt() else 0xFFE8EEF5.toInt())
             textSize = 11f
             setPadding(0, dp(3), 0, dp(8))
         }
@@ -200,7 +207,7 @@ class FloatingControlService : Service() {
         root.addView(status)
         val label = TextView(this).apply {
             text = "VIDEO BITRATE"
-            setTextColor(0xFF63D8E8.toInt())
+            setTextColor(if (isClayTheme()) 0xFF6A5A91.toInt() else 0xFF63D8E8.toInt())
             textSize = 10f
             typeface = Typeface.DEFAULT_BOLD
         }
@@ -263,6 +270,16 @@ class FloatingControlService : Service() {
         }
         speakerButton = speaker
         root.addView(speaker)
+        val streamAudio = Button(this).apply {
+            textSize = 11f
+            setOnClickListener {
+                streamAudioMuted = !streamAudioMuted
+                RtmpBroadcastService.requestStreamAudioMuted(this@FloatingControlService, streamAudioMuted)
+                renderStreamAudioState()
+            }
+        }
+        streamAudioButton = streamAudio
+        root.addView(streamAudio)
 
         val stop = Button(this).apply {
             textSize = 12f
@@ -344,7 +361,7 @@ class FloatingControlService : Service() {
         dismissTarget?.let { try { wm.removeView(it) } catch (_: Exception) { } }; dismissTarget = null
         panel?.let { try { wm.removeView(it) } catch (_: Exception) { } }; panel = null
         bubble?.let { try { wm.removeView(it) } catch (_: Exception) { } }; bubble = null
-        stopButton = null; speakerButton = null; statusLabel = null
+        stopButton = null; speakerButton = null; streamAudioButton = null; statusLabel = null
     }
 
     // Removing the app task must not stop an active broadcast. The RTMP
@@ -355,8 +372,18 @@ class FloatingControlService : Service() {
 
     private fun refreshBroadcastState() {
         val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
-        broadcastActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
-        broadcastMessage = prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Broadcast setup ready") ?: "Broadcast setup ready"
+        val savedActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
+        val heartbeat = prefs.getLong(RtmpBroadcastService.KEY_HEARTBEAT, 0L)
+        val sessionFresh = heartbeat > 0L && System.currentTimeMillis() - heartbeat <= 8_000L
+        broadcastActive = savedActive && sessionFresh
+        broadcastMessage = if (savedActive && !sessionFresh) {
+            "Previous broadcast session ended unexpectedly"
+        } else {
+            prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Broadcast setup ready") ?: "Broadcast setup ready"
+        }
+        if (savedActive && !sessionFresh) {
+            prefs.edit().putBoolean(RtmpBroadcastService.KEY_ACTIVE, false).putLong(RtmpBroadcastService.KEY_BITRATE, 0L).apply()
+        }
         if (!prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false) &&
             listOf("stopped", "disconnected").any { broadcastMessage.contains(it, ignoreCase = true) }) {
             broadcastMessage = "Broadcast setup ready"
@@ -388,7 +415,7 @@ class FloatingControlService : Service() {
                 errorState -> "↻  RETRY / OPEN SETUP"
                 else -> "↗  OPEN BROADCAST SETUP"
             }
-            setBackgroundColor(if (broadcastActive || broadcastStarting || errorState) 0xFFB94D54.toInt() else 0xFFC4FF5C.toInt())
+            background = overlayButtonBackground(if (broadcastActive || broadcastStarting || errorState) 0xFFB94D54.toInt() else if (isClayTheme()) 0xFFB8A9E4.toInt() else 0xFFC4FF5C.toInt())
             setTextColor(if (broadcastActive || broadcastStarting || errorState) 0xFFFFFFFF.toInt() else 0xFF11170A.toInt())
         }
     }
@@ -396,7 +423,15 @@ class FloatingControlService : Service() {
     private fun renderSpeakerState() {
         speakerButton?.apply {
             text = if (speakerMuted) "◖))  SPEAKER MUTED  •  TAP TO UNMUTE" else "◖))  SPEAKER ON  •  TAP TO MUTE"
-            setBackgroundColor(if (speakerMuted) 0xFFB94D54.toInt() else 0xFF263642.toInt())
+            background = overlayButtonBackground(if (speakerMuted) 0xFFB94D54.toInt() else if (isClayTheme()) 0xFF8D80B8.toInt() else 0xFF263642.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
+        }
+    }
+
+    private fun renderStreamAudioState() {
+        streamAudioButton?.apply {
+            text = if (streamAudioMuted) "STREAM AUDIO MUTED • TAP TO UNMUTE" else "STREAM AUDIO ON • TAP TO MUTE"
+            background = overlayButtonBackground(if (streamAudioMuted) 0xFFB94D54.toInt() else if (isClayTheme()) 0xFF548F7C.toInt() else 0xFF176B63.toInt())
             setTextColor(0xFFFFFFFF.toInt())
         }
     }
@@ -435,6 +470,28 @@ class FloatingControlService : Service() {
         handler.postDelayed(dimRunnable, 3500L)
     }
 
+    private fun isClayTheme(): Boolean =
+        getSharedPreferences("mgs_preferences", MODE_PRIVATE).getString("theme_mode", "CLASSIC") == "CLAY"
+
+    private fun panelSurfaceBackground(): GradientDrawable {
+        val colors = if (isClayTheme()) {
+            intArrayOf(0xFFFFFCFF.toInt(), 0xFFEDE8FA.toInt(), 0xFFE5F2EC.toInt())
+        } else {
+            intArrayOf(0xF0263541.toInt(), 0xF018222D.toInt())
+        }
+        return GradientDrawable(GradientDrawable.Orientation.TL_BR, colors).apply {
+            cornerRadius = dp(26).toFloat()
+            setStroke(dp(1), if (isClayTheme()) 0xFFFFFFFF.toInt() else 0xFF40515F.toInt())
+        }
+    }
+
+    private fun overlayButtonBackground(color: Int): GradientDrawable =
+        GradientDrawable().apply {
+            cornerRadius = dp(14).toFloat()
+            setColor(color)
+            setStroke(dp(1), if (isClayTheme()) 0xFFFFFFFF.toInt() else 0xFF536473.toInt())
+        }
+
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     companion object {
@@ -458,6 +515,7 @@ class FloatingControlService : Service() {
         bubble = null
         stopButton = null
         speakerButton = null
+        streamAudioButton = null
         statusLabel = null
         super.onDestroy()
     }

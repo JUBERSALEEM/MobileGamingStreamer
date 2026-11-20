@@ -1,4 +1,4 @@
-# Google Play readiness review — Mobile Gaming Streamer 0.5.6
+# Google Play readiness review — Mobile Gaming Streamer 0.5.22
 
 Review date: 20 November 2026. This is a code-level readiness checklist, not a Play approval guarantee.
 
@@ -7,8 +7,8 @@ Review date: 20 November 2026. This is a code-level readiness checklist, not a P
 - In-app privacy policy and terms screens.
 - Standalone HTML privacy and terms pages under docs/ for GitHub Pages hosting.
 - About screen attributes development to Juber Saleem and identifies the project as independent, not affiliated with BGMI/PUBG MOBILE/Krafton/Tencent/Google.
-- Accessibility service has canRetrieveWindowContent=false and only subscribes to window-state events; no UI inspection or automation is implemented.
-- Added a separate in-app accessibility disclosure with explicit affirmative consent before opening Android Accessibility settings.
+- Optional Glip-style microphone AccessibilityService is declared with canRetrieveWindowContent=false and listens only for window-state events; it does not inspect UI content or automate other apps.
+- The setup screen displays a prominent disclosure and requires an affirmative CONTINUE action before opening Android Accessibility settings; NOT NOW declines the setup.
 - Runtime screen-capture consent remains controlled by Android MediaProjection.
 - Debug APK workflow filename mismatch corrected for 0.5.6.
 

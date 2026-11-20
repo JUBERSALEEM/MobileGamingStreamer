@@ -12,10 +12,19 @@ android {
         applicationId = "com.jubersaleem.mobilegamingstreamer"
         minSdk = 29
         targetSdk = 36
-        versionCode = 16
-        versionName = "0.5.9"
+        versionCode = 29
+        versionName = "0.5.22"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("debug-signing/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
@@ -24,6 +33,9 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
+            // Keep a stable signing identity for this installable development release.
+            // This uses the repository's existing debug key, not a production Play key.
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -55,6 +67,8 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("com.github.pedroSG94.RootEncoder:library:2.8.1")
+
+    testImplementation("junit:junit:4.13.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
