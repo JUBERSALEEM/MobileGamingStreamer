@@ -137,7 +137,8 @@ class RtmpBroadcastService : Service() {
         handler.removeCallbacks(startupTimeout)
         handler.removeCallbacks(streamHealthWatchdog)
         handler.removeCallbacks(sessionHeartbeat)
-        stopping = false
+        // Suppress callbacks from a previous stream while its resources are released.
+        stopping = true
         streamingConfirmed = false
         lastBitrate = 0L
         lastPositiveBitrateAt = 0L
@@ -146,6 +147,7 @@ class RtmpBroadcastService : Service() {
             display = null
         }
         releaseProjection()
+        stopping = false
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
         val resultData = parcelableIntent(intent, EXTRA_RESULT_DATA)
         val streamUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
