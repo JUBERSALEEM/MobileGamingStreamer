@@ -245,121 +245,152 @@ class MainActivity : ComponentActivity() {
                     )
                 }
                 Surface(Modifier.fillMaxSize(), color = palette.background) {
-                    Column(
-                        Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState())
-                            .padding(horizontal = 18.dp, vertical = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        Header()
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            listOf("SETUP" to "Studio", "SETTINGS" to "Settings", "ABOUT" to "About").forEach { (target, label) ->
-                                FilterChip(selected = page == target, onClick = { page = target }, label = { Text(label, fontSize = 11.sp) }, modifier = Modifier.weight(1f))
-                            }
-                        }
-                        if (page == "SETTINGS") SettingsPage(themeMode, { selected ->
-                            themeMode = selected
-                            getSharedPreferences("mgs_preferences", MODE_PRIVATE).edit().putString("theme_mode", selected).apply()
-                        }, onTerms = { page = "TERMS" }, onPrivacy = { page = "PRIVACY" })
-                        else if (page == "ABOUT") AboutPage(onTerms = { page = "TERMS" }, onPrivacy = { page = "PRIVACY" })
-                        else if (page == "TERMS") LegalPage(title = "Terms & Conditions", body = TermsText, onBack = { page = "SETTINGS" })
-                        else if (page == "PRIVACY") LegalPage(title = "Privacy Policy", body = PrivacyText, onBack = { page = "SETTINGS" })
-                        if (page != "SETTINGS" && page != "ABOUT" && page != "TERMS" && page != "PRIVACY") {
-                        Hero(status, captureActive, broadcastActive, broadcastStarting)
-                        if (!notificationsAllowed) {
-                            MgsCard(shape = RoundedCornerShape(if (palette.isClay) 30.dp else 12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 20.dp else 1.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-                                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("ENABLE NOTIFICATIONS", color = palette.primary, fontWeight = FontWeight.Bold)
-                                    Text("Android notifications show capture and live-stream status, with a stop control.", color = palette.muted)
-                                    MgsButton(onClick = {
-                                        if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                    }) { Text("ALLOW NOTIFICATIONS") }
+                    Column(Modifier.fillMaxSize()) {
+                        Column(
+                            Modifier.weight(1f).fillMaxWidth().safeDrawingPadding()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            Header(onSettings = { page = "SETTINGS" })
+                            when (page) {
+                                "SETTINGS" -> SettingsPage(
+                                    themeMode,
+                                    { selected ->
+                                        themeMode = selected
+                                        getSharedPreferences("mgs_preferences", MODE_PRIVATE).edit().putString("theme_mode", selected).apply()
+                                    },
+                                    onTerms = { page = "TERMS" },
+                                    onPrivacy = { page = "PRIVACY" }
+                                )
+                                "ABOUT" -> AboutPage(onTerms = { page = "TERMS" }, onPrivacy = { page = "PRIVACY" })
+                                "TERMS" -> LegalPage(title = "Terms & Conditions", body = TermsText, onBack = { page = "SETTINGS" })
+                                "PRIVACY" -> LegalPage(title = "Privacy Policy", body = PrivacyText, onBack = { page = "SETTINGS" })
+                                "STREAM" -> BroadcastPanel(
+                                    server, { server = it }, key, { key = it },
+                                    rememberStreamKey, { enabled ->
+                                        rememberStreamKey = enabled
+                                        appPreferences.edit().putBoolean("remember_stream_key", enabled).apply()
+                                        if (!enabled) {
+                                            StreamKeyVault.clear(this@MainActivity)
+                                            status = "Saved stream key removed from this device"
+                                        } else if (key.isNotBlank()) {
+                                            runCatching { StreamKeyVault.save(this@MainActivity, key.trim()) }
+                                                .onFailure { status = "Could not securely save the stream key" }
+                                        }
+                                    },
+                                    quality, { quality = it }, fps, { fps = it }, orientation, { orientation = it },
+                                    audioMode, { audioMode = it }, broadcastActive || broadcastStarting,
+                                    onGoLive = { startBroadcastFlow() },
+                                    onStopLive = { RtmpBroadcastService.requestStop(this@MainActivity) }
+                                )
+                                "AUDIO" -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                    MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+                                        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            Text("AUDIO MIXER", color = palette.secondary, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.3.sp)
+                                            Text("Choose what your stream hears", color = palette.text, fontSize = 19.sp, fontWeight = FontWeight.Black)
+                                            ClayOptionGroup("AUDIO SOURCE", listOf("MIC", "GAME", "NORMAL", "BALANCED"), audioMode, { audioMode = it })
+                                            Text(
+                                                when (audioMode) {
+                                                    "MIC" -> "Microphone only"
+                                                    "GAME" -> "Internal game/device playback only"
+                                                    "NORMAL" -> "Game playback + microphone at equal level"
+                                                    else -> "Balanced mix: game playback + microphone, with microphone level boosted"
+                                                },
+                                                color = palette.muted, fontSize = 11.sp, lineHeight = 16.sp
+                                            )
+                                            Text("Actual playback capture depends on Android, the game and device support.", color = palette.muted, fontSize = 10.sp)
+                                        }
+                                    }
+                                    MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+                                        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                            Text("BGMI VOICE CHAT COMPATIBILITY", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                                            Text(
+                                                if (accessibilityMicEnabled) "ACCESSIBILITY MICROPHONE BRIDGE ENABLED • Android microphone compatibility is available."
+                                                else "Enable this Android service to let the stream capture your microphone while BGMI is using voice chat. It does not read screen content or perform gestures.",
+                                                color = if (accessibilityMicEnabled) palette.primary else palette.muted,
+                                                fontSize = 11.sp, lineHeight = 16.sp
+                                            )
+                                            MgsButton(onClick = { showAccessibilityDisclosure = true }, modifier = Modifier.fillMaxWidth()) {
+                                                Text(if (accessibilityMicEnabled) "OPEN ACCESSIBILITY SETTINGS" else "ENABLE MICROPHONE COMPATIBILITY")
+                                            }
+                                        }
+                                    }
+                                }
+                                "TOOLS" -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                    MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+                                        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                            Text("FLOATING CONTROLS", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                            Text("Optional: allow Display over other apps. Streaming does not depend on this permission; the small control bubble appears after video is actually being sent.", color = palette.muted, fontSize = 11.sp)
+                                            MgsButton(onClick = { enableFloatingControls() }, modifier = Modifier.fillMaxWidth()) {
+                                                Text(if (Settings.canDrawOverlays(this@MainActivity)) "SHOW FLOATING CONTROLS" else "ENABLE FLOATING CONTROLS")
+                                            }
+                                        }
+                                    }
+                                    MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+                                        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                            Text("CAPTURE TEST", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                            Text("Test the H.264 encoder without connecting to a streaming platform.", color = palette.muted)
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                MgsButton(onClick = { pendingLive = false; requestProjection() }, enabled = !captureActive && !broadcastActive && !broadcastStarting, modifier = Modifier.weight(1f)) { Text("START TEST") }
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        startService(Intent(this@MainActivity, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_STOP))
+                                                        captureActive = false
+                                                        status = "Capture stopped"
+                                                    },
+                                                    enabled = captureActive, modifier = Modifier.weight(1f)
+                                                ) { Text("STOP TEST") }
+                                            }
+                                        }
+                                    }
+                                    ModuleStatus(captureActive, broadcastActive)
+                                }
+                                else -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                    Hero(status, captureActive, broadcastActive, broadcastStarting)
+                                    if (!notificationsAllowed) {
+                                        MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+                                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Text("ENABLE NOTIFICATIONS", color = palette.primary, fontWeight = FontWeight.Bold)
+                                                Text("Android notifications show capture and live-stream status, with a stop control.", color = palette.muted)
+                                                MgsButton(onClick = {
+                                                    if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                                }) { Text("ALLOW NOTIFICATIONS") }
+                                            }
+                                        }
+                                    }
+                                    MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+                                        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            Text("LIVE SESSION", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                            Text(if (broadcastActive || broadcastStarting) status else "No active broadcast", color = if (broadcastActive) palette.primary else palette.muted)
+                                            Text(if (broadcastActive && liveBitrate > 0) "${liveBitrate / 1000} kbps" else if (broadcastActive) "Waiting for bitrate…" else "0 kbps", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+                                            MgsButton(onClick = { page = "STREAM" }, modifier = Modifier.fillMaxWidth()) { Text("OPEN STREAM SETTINGS") }
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                MgsButton(onClick = { startBroadcastFlow() }, enabled = !broadcastActive && !broadcastStarting, modifier = Modifier.weight(1f)) { Text("GO LIVE") }
+                                                OutlinedButton(onClick = { RtmpBroadcastService.requestStop(this@MainActivity) }, enabled = broadcastActive || broadcastStarting, modifier = Modifier.weight(1f)) { Text("STOP LIVE") }
+                                            }
+                                        }
+                                    }
+                                    Text("Made for mobile gameplay • Screen video • Microphone / game audio", color = palette.muted, fontSize = 10.sp)
                                 }
                             }
                         }
-                        if (page == "SETUP") {
-                            MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-                                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                    Text("BGMI VOICE CHAT COMPATIBILITY", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-                                    Text(
-                                        if (accessibilityMicEnabled)
-                                            "ACCESSIBILITY MICROPHONE BRIDGE ENABLED • Glip-compatible microphone route is available."
-                                        else
-                                            "Enable this Android service to let the stream capture your microphone while BGMI is using voice chat. It does not read screen content or perform gestures.",
-                                        color = if (accessibilityMicEnabled) palette.primary else palette.muted,
-                                        fontSize = 11.sp,
-                                        lineHeight = 16.sp
-                                    )
-                                    OutlinedButton(
-                                        onClick = { showAccessibilityDisclosure = true },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(if (accessibilityMicEnabled) "OPEN ACCESSIBILITY SETTINGS" else "ENABLE MICROPHONE COMPATIBILITY")
-                                    }
-                                }
+                        NavigationBar(containerColor = palette.surface, contentColor = palette.text, tonalElevation = if (palette.isClay) 0.dp else 3.dp) {
+                            listOf(
+                                Triple("STUDIO", "Studio", "⌂"),
+                                Triple("STREAM", "Stream", "▶"),
+                                Triple("AUDIO", "Audio", "♫"),
+                                Triple("TOOLS", "Tools", "⚙"),
+                                Triple("SETTINGS", "Settings", "☷")
+                            ).forEach { (target, label, glyph) ->
+                                NavigationBarItem(
+                                    selected = page == target || (target == "SETTINGS" && page in listOf("ABOUT", "TERMS", "PRIVACY")),
+                                    onClick = { page = target },
+                                    icon = { Text(glyph, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+                                    label = { Text(label, fontSize = 10.sp, fontWeight = FontWeight.SemiBold) },
+                                    alwaysShowLabel = true
+                                )
                             }
-                            BroadcastPanel(server, { server = it }, key, { key = it },
-                                rememberStreamKey, { enabled ->
-                                    rememberStreamKey = enabled
-                                    appPreferences.edit().putBoolean("remember_stream_key", enabled).apply()
-                                    if (!enabled) {
-                                        StreamKeyVault.clear(this@MainActivity)
-                                        status = "Saved stream key removed from this device"
-                                    } else if (key.isNotBlank()) {
-                                        runCatching { StreamKeyVault.save(this@MainActivity, key.trim()) }
-                                            .onFailure { status = "Could not securely save the stream key" }
-                                    }
-                                },
-                                quality, { quality = it }, fps, { fps = it }, orientation, { orientation = it },
-                                audioMode, { audioMode = it },
-                                broadcastActive || broadcastStarting,
-                                onGoLive = { startBroadcastFlow() },
-                                onStopLive = { RtmpBroadcastService.requestStop(this@MainActivity) }
-                            )
-                            Text("FLOATING CONTROLS", color = palette.secondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            Text("Optional: allow Display over other apps. Streaming does not depend on this permission; the small control bubble appears after video is actually being sent.", color = palette.muted, fontSize = 11.sp)
-                            OutlinedButton(onClick = { enableFloatingControls() }, modifier = Modifier.fillMaxWidth()) {
-                                Text(if (Settings.canDrawOverlays(this@MainActivity)) "SHOW FLOATING CONTROLS" else "ENABLE FLOATING CONTROLS")
-                            }
-                        } else {
-                            MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-                                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text("LIVE SESSION", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                                    Text(if (broadcastActive) status else "No active broadcast", color = if (broadcastActive) palette.primary else palette.muted)
-                                    Text(if (broadcastActive && liveBitrate > 0) "${liveBitrate / 1000} kbps" else if (broadcastActive) "Waiting for bitrate…" else "0 kbps", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
-                                    OutlinedButton(onClick = { enableFloatingControls() }, modifier = Modifier.fillMaxWidth()) {
-                                        Text(if (Settings.canDrawOverlays(this@MainActivity)) "OPEN FLOATING CONTROLS" else "ENABLE FLOATING CONTROLS")
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        MgsButton(onClick = { page = "SETUP" }, modifier = Modifier.weight(1f)) { Text("BROADCAST SETUP") }
-                                        OutlinedButton(onClick = { RtmpBroadcastService.requestStop(this@MainActivity) }, enabled = broadcastActive || broadcastStarting, modifier = Modifier.weight(1f)) { Text("STOP LIVE") }
-                                    }
-                                }
-                            }
-                        }
-                        if (page == "HOME") MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-                            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                Text("CAPTURE TEST", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                                Text("Test the H.264 encoder without connecting to a streaming platform.", color = palette.muted)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    MgsButton(
-                                        onClick = { pendingLive = false; requestProjection() },
-                                        enabled = !captureActive && !broadcastActive,
-                                        modifier = Modifier.weight(1f)
-                                    ) { Text("START TEST") }
-                                    OutlinedButton(
-                                        onClick = {
-                                            startService(Intent(this@MainActivity, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_STOP))
-                                            captureActive = false
-                                            status = "Capture stopped"
-                                        },
-                                        enabled = captureActive,
-                                        modifier = Modifier.weight(1f)
-                                    ) { Text("STOP TEST") }
-                                }
-                            }
-                        }
-                        if (page == "HOME") ModuleStatus(captureActive, broadcastActive)
-                        Text("Made for mobile gameplay • Screen video • Microphone / game audio", color = palette.muted, fontSize = 10.sp)
                         }
                     }
                 }
