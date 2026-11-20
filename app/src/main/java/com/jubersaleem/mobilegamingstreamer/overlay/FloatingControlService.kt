@@ -51,6 +51,8 @@ class FloatingControlService : Service() {
     private var broadcastStarting = false
     private var broadcastMessage = "Broadcast setup ready"
     private var speakerMuted = false
+    private var streamAudioMuted = false
+    private var streamAudioButton: Button? = null
 
     private val broadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -86,8 +88,10 @@ class FloatingControlService : Service() {
         if (bubble == null) createBubble()
         val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         speakerMuted = audio.getStreamVolume(AudioManager.STREAM_MUSIC) == 0
+        streamAudioMuted = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE).getBoolean(RtmpBroadcastService.KEY_STREAM_AUDIO_MUTED, false)
         renderBroadcastState()
         renderSpeakerState()
+        renderStreamAudioState()
         scheduleDim()
         return START_NOT_STICKY
     }
@@ -263,6 +267,16 @@ class FloatingControlService : Service() {
         }
         speakerButton = speaker
         root.addView(speaker)
+        val streamAudio = Button(this).apply {
+            textSize = 11f
+            setOnClickListener {
+                streamAudioMuted = !streamAudioMuted
+                RtmpBroadcastService.requestStreamAudioMuted(this@FloatingControlService, streamAudioMuted)
+                renderStreamAudioState()
+            }
+        }
+        streamAudioButton = streamAudio
+        root.addView(streamAudio)
 
         val stop = Button(this).apply {
             textSize = 12f
@@ -344,7 +358,7 @@ class FloatingControlService : Service() {
         dismissTarget?.let { try { wm.removeView(it) } catch (_: Exception) { } }; dismissTarget = null
         panel?.let { try { wm.removeView(it) } catch (_: Exception) { } }; panel = null
         bubble?.let { try { wm.removeView(it) } catch (_: Exception) { } }; bubble = null
-        stopButton = null; speakerButton = null; statusLabel = null
+        stopButton = null; speakerButton = null; streamAudioButton = null; statusLabel = null
     }
 
     // Removing the app task must not stop an active broadcast. The RTMP
@@ -397,6 +411,14 @@ class FloatingControlService : Service() {
         speakerButton?.apply {
             text = if (speakerMuted) "◖))  SPEAKER MUTED  •  TAP TO UNMUTE" else "◖))  SPEAKER ON  •  TAP TO MUTE"
             setBackgroundColor(if (speakerMuted) 0xFFB94D54.toInt() else 0xFF263642.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
+        }
+    }
+
+    private fun renderStreamAudioState() {
+        streamAudioButton?.apply {
+            text = if (streamAudioMuted) "STREAM AUDIO MUTED • TAP TO UNMUTE" else "STREAM AUDIO ON • TAP TO MUTE"
+            setBackgroundColor(if (streamAudioMuted) 0xFFB94D54.toInt() else 0xFF176B63.toInt())
             setTextColor(0xFFFFFFFF.toInt())
         }
     }
@@ -458,6 +480,7 @@ class FloatingControlService : Service() {
         bubble = null
         stopButton = null
         speakerButton = null
+        streamAudioButton = null
         statusLabel = null
         super.onDestroy()
     }
