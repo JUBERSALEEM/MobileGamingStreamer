@@ -24,9 +24,9 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 - [ ] Confirm sustained capture without memory growth or thermal instability
 
 ### M2 — Audio
-- [ ] Microphone capture with explicit runtime permission
-- [ ] Android AudioPlaybackCapture for eligible apps
-- [ ] Audio mixer, mute, gain, and synchronization tests
+- [x] Microphone capture with explicit runtime permission
+- [x] Android AudioPlaybackCapture source integration for eligible apps (RECORD_AUDIO permission and app capture policy still apply)
+- [ ] Audio mixer, mute, gain, and synchronization tests (physical validation pending)
 - [ ] Document apps/content that disallow playback capture
 
 ### M3 — Encoding and streaming
@@ -41,14 +41,14 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 - [ ] Reconnection, network monitoring, and dropped-frame metrics
 
 ### M4 — Streamer experience
-- [ ] Floating controls with user-granted overlay permission
+- [x] Floating controls with user-granted overlay permission
 - [ ] Overlay editor and animated assets
 - [ ] Stream health dashboard
 - [ ] Optional alerts and platform integrations
 
 ### M5 — Accessibility and compatibility
-- [ ] Define a legitimate, user-visible accessibility use case
-- [ ] Implement only necessary AccessibilityService capabilities
+- [ ] Define a legitimate, user-visible accessibility use case before reintroducing any AccessibilityService
+- [ ] Implement only necessary AccessibilityService capabilities (no service currently registered)
 - [ ] Do not use accessibility to bypass game, OS, or platform protections
 - [ ] Test coexistence with screen capture and audio on supported devices
 

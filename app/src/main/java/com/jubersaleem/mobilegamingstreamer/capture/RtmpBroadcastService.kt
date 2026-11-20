@@ -51,6 +51,14 @@ class RtmpBroadcastService : Service() {
             stopBroadcast("No outgoing video bitrate after 25 seconds. Encoder or RTMP startup failed.")
         }
     }
+    private val sessionHeartbeat = object : Runnable {
+        override fun run() {
+            if (display != null) {
+                getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putLong(KEY_HEARTBEAT, System.currentTimeMillis()).apply()
+                handler.postDelayed(this, 2_000L)
+            }
+        }
+    }
     private val notifications by lazy { getSystemService(NotificationManager::class.java) }
     private var commandReceiverRegistered = false
     private val commandReceiver = object : BroadcastReceiver() {
@@ -116,14 +124,16 @@ class RtmpBroadcastService : Service() {
             stopSelf()
             return
         }
-
+        val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE) ?: AUDIO_MODE_BALANCED
+        val usesMicrophone = audioMode != AUDIO_MODE_GAME
         publishState(false, "Preparing video encoder…", 0L)
         try {
             startForeground(
                 NOTIFICATION_ID,
                 notification("Preparing video encoder…"),
-                if (Build.VERSION.SDK_INT >= 30) {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                if (Build.VERSION.SDK_INT >= 29) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                        (if (usesMicrophone) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
                 } else {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                 }
@@ -137,6 +147,7 @@ class RtmpBroadcastService : Service() {
                 }
                 override fun onDisconnect() {
                     handler.removeCallbacks(startupTimeout)
+                    handler.removeCallbacks(sessionHeartbeat)
                     streamingConfirmed = false
                     lastBitrate = 0L
                     val disconnected = display
@@ -214,7 +225,6 @@ class RtmpBroadcastService : Service() {
             activeProjection = mediaProjection
             mediaProjection.registerCallback(projectionCallback, handler)
 
-            val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE) ?: AUDIO_MODE_BALANCED
             val micSource = MediaRecorder.AudioSource.DEFAULT
             val preferredInput = choosePreferredMicrophoneDevice()
             val audioSource: AudioSource = when (audioMode) {
@@ -264,6 +274,8 @@ class RtmpBroadcastService : Service() {
             stream.getGlInterface().setStreamIsPortrait(portrait)
             stream.getGlInterface().setForceRender(true, 15)
             display = stream
+            handler.removeCallbacks(sessionHeartbeat)
+            handler.post(sessionHeartbeat)
             publishState(false, "Encoder ready • Connecting…", 0L)
             update("Encoder ready • Connecting…")
             stream.startStream(streamUrl)
@@ -277,6 +289,7 @@ class RtmpBroadcastService : Service() {
 
     private fun stopBroadcast(message: String = "Broadcast stopped") {
         handler.removeCallbacks(startupTimeout)
+        handler.removeCallbacks(sessionHeartbeat)
         streamingConfirmed = false
         lastBitrate = 0L
         val active = display
@@ -308,6 +321,7 @@ class RtmpBroadcastService : Service() {
     private fun setAudioSourceMuted(source: AudioSource?, muted: Boolean) {
         when (source) {
             is MicrophoneSource -> if (muted) source.mute() else source.unMute()
+            is InternalAudioSource -> if (muted) source.mute() else source.unMute()
             is MixAudioSource -> if (muted) source.mute() else source.unMute()
         }
     }
@@ -315,7 +329,7 @@ class RtmpBroadcastService : Service() {
     private fun setStreamAudioMuted(muted: Boolean) {
         getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putBoolean(KEY_STREAM_AUDIO_MUTED, muted).apply()
         setAudioSourceMuted(activeAudioSource, muted)
-        update(if (muted) "LIVE • Stream audio muted" else "LIVE • Stream audio unmuted")
+        update(if (muted) "Stream audio muted" else "Stream audio unmuted")
     }
 
     private fun releaseProjection() {
@@ -335,6 +349,7 @@ class RtmpBroadcastService : Service() {
             .putBoolean(KEY_ACTIVE, active)
             .putString(KEY_MESSAGE, message)
             .putLong(KEY_BITRATE, bitrate)
+            .putLong(KEY_HEARTBEAT, System.currentTimeMillis())
             .apply()
         sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).apply {
             putExtra(EXTRA_STATUS_ACTIVE, active)
@@ -445,7 +460,7 @@ class RtmpBroadcastService : Service() {
         const val KEY_ACTIVE = "active"
         const val KEY_MESSAGE = "message"
         const val KEY_BITRATE = "bitrate"
-        const val KEY_ACCESSIBILITY_READY = "accessibility_ready"
+        const val KEY_HEARTBEAT = "service_heartbeat"
         private const val TAG = "MGS-RTMP"
         private const val CHANNEL_ID = "live_broadcast"
         private const val NOTIFICATION_ID = 1002

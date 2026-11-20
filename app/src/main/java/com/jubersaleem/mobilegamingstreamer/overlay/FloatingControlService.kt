@@ -369,8 +369,18 @@ class FloatingControlService : Service() {
 
     private fun refreshBroadcastState() {
         val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
-        broadcastActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
-        broadcastMessage = prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Broadcast setup ready") ?: "Broadcast setup ready"
+        val savedActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
+        val heartbeat = prefs.getLong(RtmpBroadcastService.KEY_HEARTBEAT, 0L)
+        val sessionFresh = heartbeat > 0L && System.currentTimeMillis() - heartbeat <= 8_000L
+        broadcastActive = savedActive && sessionFresh
+        broadcastMessage = if (savedActive && !sessionFresh) {
+            "Previous broadcast session ended unexpectedly"
+        } else {
+            prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Broadcast setup ready") ?: "Broadcast setup ready"
+        }
+        if (savedActive && !sessionFresh) {
+            prefs.edit().putBoolean(RtmpBroadcastService.KEY_ACTIVE, false).putLong(RtmpBroadcastService.KEY_BITRATE, 0L).apply()
+        }
         if (!prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false) &&
             listOf("stopped", "disconnected").any { broadcastMessage.contains(it, ignoreCase = true) }) {
             broadcastMessage = "Broadcast setup ready"

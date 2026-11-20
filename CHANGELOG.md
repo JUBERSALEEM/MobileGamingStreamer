@@ -1,3 +1,22 @@
+## 0.5.13-dev — Phase 1 reliability and audio correctness
+
+### Fixed
+- Removed the mandatory Accessibility-service gate because the existing service did not perform microphone or compatibility work.
+- GAME-only playback capture no longer starts the microphone foreground-service type; Android still requires RECORD_AUDIO permission for AudioPlaybackCapture.
+- Stream-audio mute now covers InternalAudioSource as well as microphone and mixed audio sources.
+- Restored broadcast state is validated against a live service heartbeat to avoid showing stale LIVE status after unexpected process termination.
+- Floating controls use the same heartbeat validation when restoring broadcast state.
+
+### Preserved
+- MIC, GAME, NORMAL and BALANCED audio modes.
+- Stream-key validation and per-session MediaProjection consent.
+- Floating bubble, bitrate controls, local speaker control and explicit Stop Broadcast action.
+- Existing Classic and Claymorphism themes.
+
+### Verification
+- CI debug build required before installation.
+- Physical-device checks still required for microphone echo, AEC/NS effectiveness, game audio capture and long-session stability.
+
 ## 0.5.12-dev — Claymorphism studio redesign
 
 ### Added

@@ -2,7 +2,6 @@ package com.jubersaleem.mobilegamingstreamer
 
 import android.Manifest
 import android.content.Intent
-import android.content.ComponentName
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.IntentFilter
@@ -42,14 +41,11 @@ class MainActivity : ComponentActivity() {
     private var liveBitrate by mutableStateOf(0L)
     private var page by mutableStateOf("SETUP")
     private var themeMode by mutableStateOf("CLASSIC")
-    private var showAccessibilityDisclosure by mutableStateOf(false)
     private var showStreamKeyDialog by mutableStateOf(false)
-    private var accessibilityDisclosureAccepted by mutableStateOf(false)
     private var captureActive by mutableStateOf(false)
     private var broadcastActive by mutableStateOf(false)
     private var broadcastStarting by mutableStateOf(false)
     private var notificationsAllowed by mutableStateOf(true)
-    private var accessibilityEnabled by mutableStateOf(false)
     private var server by mutableStateOf("rtmp://a.rtmp.youtube.com/live2")
     private var key by mutableStateOf("")
     private var quality by mutableStateOf("1080p")
@@ -58,7 +54,6 @@ class MainActivity : ComponentActivity() {
     private var audioMode by mutableStateOf("BALANCED")
     private var pendingLive by mutableStateOf(false)
     private var waitingForOverlayPermission = false
-    private var waitingForAccessibility = false
 
     private val broadcastStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -72,10 +67,18 @@ class MainActivity : ComponentActivity() {
 
     private fun restoreBroadcastState() {
         val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
-        broadcastActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
+        val savedActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
+        val heartbeat = prefs.getLong(RtmpBroadcastService.KEY_HEARTBEAT, 0L)
+        val sessionFresh = heartbeat > 0L && System.currentTimeMillis() - heartbeat <= 8_000L
+        broadcastActive = savedActive && sessionFresh
         broadcastStarting = false
-        status = prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Ready to stream") ?: "Ready to stream"
-        liveBitrate = prefs.getLong(RtmpBroadcastService.KEY_BITRATE, 0L)
+        status = if (savedActive && !sessionFresh) {
+            prefs.edit().putBoolean(RtmpBroadcastService.KEY_ACTIVE, false).putLong(RtmpBroadcastService.KEY_BITRATE, 0L).apply()
+            "Previous broadcast ended unexpectedly"
+        } else {
+            prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Ready to stream") ?: "Ready to stream"
+        }
+        liveBitrate = if (broadcastActive) prefs.getLong(RtmpBroadcastService.KEY_BITRATE, 0L) else 0L
     }
 
     @Suppress("UnspecifiedRegisterReceiverFlag")
@@ -94,18 +97,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        accessibilityEnabled = isAccessibilityServiceEnabled()
-        if (waitingForAccessibility) {
-            waitingForAccessibility = false
-            if (accessibilityEnabled) {
-                status = "Microphone concurrency enabled • continue screen capture setup"
-                if (pendingLive) requestProjection()
-            } else {
-                pendingLive = false
-                broadcastStarting = false
-                status = "Accessibility microphone access was not enabled"
-            }
-        }
         if (waitingForOverlayPermission) {
             waitingForOverlayPermission = false
             if (Settings.canDrawOverlays(this)) {
@@ -117,15 +108,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun isAccessibilityServiceEnabled(): Boolean {
-        val expected = ComponentName(this, com.jubersaleem.mobilegamingstreamer.capture.MicCompatibilityService::class.java)
-        val enabled = Settings.Secure.getString(
-            contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        ).orEmpty()
-        return enabled.split(':').any { ComponentName.unflattenFromString(it) == expected }
-    }
-
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         notificationsAllowed = it
     }
@@ -135,7 +117,7 @@ class MainActivity : ComponentActivity() {
         else {
             pendingLive = false
             broadcastStarting = false
-            status = "Microphone permission is required for voice audio"
+            status = "Audio permission is required for microphone or eligible game-audio capture"
         }
     }
 
@@ -198,7 +180,6 @@ class MainActivity : ComponentActivity() {
         }
         val appPreferences = getSharedPreferences("mgs_preferences", MODE_PRIVATE)
         themeMode = appPreferences.getString("theme_mode", "CLASSIC") ?: "CLASSIC"
-        accessibilityDisclosureAccepted = appPreferences.getBoolean("accessibility_disclosure_accepted", false)
         setContent {
             MgsTheme(mode = themeMode) {
                 val palette = LocalMgsPalette.current
@@ -234,32 +215,6 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 }
-                if (showAccessibilityDisclosure) {
-                    AlertDialog(
-                        onDismissRequest = { showAccessibilityDisclosure = false; pendingLive = false; broadcastStarting = false },
-                        title = { Text("Microphone compatibility service") },
-                        text = {
-                            Text("Mobile Gaming Streamer uses Android Accessibility Service only to help keep microphone capture available while a game such as BGMI is using voice chat. The service does not subscribe to accessibility events, read screen text or content, inspect UI controls, click, type, or automate gameplay. When you start a stream, the microphone and any capturable game audio are sent to the RTMP destination you enter. You can turn this service off at any time in Android Settings.")
-                        },
-                        confirmButton = {
-                            MgsButton(onClick = {
-                                showAccessibilityDisclosure = false
-                                accessibilityDisclosureAccepted = true
-                                getSharedPreferences("mgs_preferences", MODE_PRIVATE).edit().putBoolean("accessibility_disclosure_accepted", true).apply()
-                                if (isAccessibilityServiceEnabled()) {
-                                    waitingForAccessibility = false
-                                    if (pendingLive) requestProjection()
-                                } else {
-                                    waitingForAccessibility = true
-                                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                                }
-                            }) { Text("I AGREE • CONTINUE") }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showAccessibilityDisclosure = false; pendingLive = false; broadcastStarting = false }) { Text("NOT NOW") }
-                        }
-                    )
-                }
                 Surface(Modifier.fillMaxSize(), color = palette.background) {
                     Column(
                         Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState())
@@ -289,17 +244,6 @@ class MainActivity : ComponentActivity() {
                                     MgsButton(onClick = {
                                         if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                                     }) { Text("ALLOW NOTIFICATIONS") }
-                                }
-                            }
-                        }
-                        if (!accessibilityEnabled) {
-                            MgsCard(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-                                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("ENABLE IN-GAME MIC COMPATIBILITY", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                                    Text("Android can silence a normal recorder while BGMI is using voice chat. Enable this app's Accessibility service so the stream can capture your microphone concurrently. This service does not read screen content.", color = palette.muted, fontSize = 11.sp, lineHeight = 15.sp)
-                                    MgsButton(onClick = { showAccessibilityDisclosure = true }, modifier = Modifier.fillMaxWidth()) {
-                                        Text("OPEN ACCESSIBILITY SETTINGS")
-                                    }
                                 }
                             }
                         }
@@ -364,44 +308,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startBroadcastFlow() {
-        if (broadcastActive || broadcastStarting) {
-            status = "Broadcast is already running or starting"
-            return
-        }
-
+        if (broadcastActive || broadcastStarting) { status = "Broadcast is already running or starting"; return }
         val normalizedServer = server.trim()
-        if (normalizedServer.isBlank()) {
-            status = "Enter your RTMP server URL before going live"
-            return
-        }
-        if (key.isBlank()) {
-            showStreamKeyDialog = true
-            status = "Stream key required"
-            return
-        }
-
+        if (normalizedServer.isBlank()) { status = "Enter your RTMP server URL before going live"; return }
+        if (key.isBlank()) { showStreamKeyDialog = true; status = "Stream key required"; return }
         val parsedServer = Uri.parse(normalizedServer)
         val scheme = parsedServer.scheme?.lowercase()
         if ((scheme != "rtmp" && scheme != "rtmps") || parsedServer.host.isNullOrBlank()) {
-            status = "Enter a valid RTMP server URL, such as rtmp://server.example/live"
-            return
+            status = "Enter a valid RTMP server URL, such as rtmp://server.example/live"; return
         }
-
         server = normalizedServer
         key = key.trim()
         pendingLive = true
         broadcastStarting = true
-        if (!accessibilityDisclosureAccepted) {
-            showAccessibilityDisclosure = true
-            status = "Review the microphone compatibility disclosure to continue"
-        } else if (!isAccessibilityServiceEnabled()) {
-            waitingForAccessibility = true
-            status = "Enable microphone compatibility in Android Accessibility settings"
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        } else {
-            status = "Requesting screen/app selection permission…"
-            requestProjection()
-        }
+        status = "Requesting screen/app selection permission…"
+        requestProjection()
     }
 
     private fun enableFloatingControls() {
@@ -419,7 +340,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestProjection() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        // Android requires RECORD_AUDIO for AudioPlaybackCapture as well as microphone input.
+        // GAME mode does not start the microphone foreground-service type.
+        if (pendingLive && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
