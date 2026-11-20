@@ -3,6 +3,8 @@ package com.jubersaleem.mobilegamingstreamer
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -25,6 +27,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.dropShadow
@@ -224,17 +227,20 @@ fun MgsButton(
     content: @Composable RowScope.() -> Unit
 ) {
     val p = LocalMgsPalette.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
     val buttonShape = RoundedCornerShape(if (p.isClay) 22.dp else 14.dp)
     val tactileModifier = if (p.isClay) {
         modifier
-            .dropShadow(buttonShape, Shadow(radius = 13.dp, color = p.clayShadow.copy(alpha = 0.72f), offset = DpOffset(6.dp, 7.dp)))
-            .dropShadow(buttonShape, Shadow(radius = 12.dp, color = Color.White.copy(alpha = 0.98f), offset = DpOffset((-5).dp, (-5).dp)))
+            .dropShadow(buttonShape, Shadow(radius = if (pressed) 5.dp else 13.dp, color = p.clayShadow.copy(alpha = 0.72f), offset = if (pressed) DpOffset(2.dp, 3.dp) else DpOffset(6.dp, 7.dp)))
+            .dropShadow(buttonShape, Shadow(radius = if (pressed) 5.dp else 12.dp, color = Color.White.copy(alpha = 0.98f), offset = if (pressed) DpOffset((-2).dp, (-2).dp) else DpOffset((-5).dp, (-5).dp)))
             .border(1.dp, Brush.linearGradient(listOf(Color.White, p.clayEdge, Color.White)), buttonShape)
     } else modifier
     Button(
         onClick = onClick,
         modifier = tactileModifier,
         enabled = enabled,
+        interactionSource = interactionSource,
         shape = buttonShape,
         colors = colors ?: ButtonDefaults.buttonColors(
             containerColor = p.primary,
