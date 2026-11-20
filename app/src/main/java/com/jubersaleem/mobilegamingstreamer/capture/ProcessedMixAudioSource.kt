@@ -44,8 +44,6 @@ class ProcessedMixAudioSource(
   override fun inputPCMData(frame:Frame){val data=frame.buffer.copyOfRange(frame.offset,frame.offset+frame.size);offerLatest(gameFrames,Frame(data,0,data.size,frame.timeStamp))}
  })
  override fun create(sampleRate:Int,isStereo:Boolean,echoCanceler:Boolean,noiseSuppressor:Boolean):Boolean{
-  // A second create() without an intervening release must never stack duplicate platform effects.
-  releaseAudioEffects()
   voiceChain=VoiceOptimizer(sampleRate,if(isStereo)2 else 1,MIC_HIGHPASS_HZ)
   val accessibilityService = MgsMicAccessibilityService.instance
   micManager = accessibilityService?.createMicrophoneManager(micCallback) ?: SafeMicrophoneManager(micCallback)
@@ -62,18 +60,8 @@ class ProcessedMixAudioSource(
   // and remove it, so keep the raw speaker path for the Glip-compatible route.
   val preserveSpeakerPlayback = accessibilityService != null && preferredInput == null
   if(sessionId!=null && !preserveSpeakerPlayback){
-   if(echoCanceler){
-    if(!AcousticEchoCanceler.isAvailable())Log.w(TAG,"Platform AEC requested but not available on this device")
-    else{aec=runCatching{AcousticEchoCanceler.create(sessionId)?.apply{enabled=true}}.getOrNull()
-     if(aec==null)Log.w(TAG,"Platform AEC attach failed for microphone session "+sessionId)}
-   }
-   if(noiseSuppressor){
-    if(!NoiseSuppressor.isAvailable())Log.w(TAG,"Platform NS requested but not available on this device")
-    else{ns=runCatching{NoiseSuppressor.create(sessionId)?.apply{enabled=true}}.getOrNull()
-     if(ns==null)Log.w(TAG,"Platform NS attach failed for microphone session "+sessionId)}
-   }
-  }else if(sessionId!=null){
-   Log.i(TAG,"Platform AEC/NS skipped on BGMI speaker route to preserve acoustic teammate voice")
+   if(echoCanceler&&AcousticEchoCanceler.isAvailable())aec=runCatching{AcousticEchoCanceler.create(sessionId)?.apply{enabled=true}}.getOrNull()
+   if(noiseSuppressor&&NoiseSuppressor.isAvailable())ns=runCatching{NoiseSuppressor.create(sessionId)?.apply{enabled=true}}.getOrNull()
   }
   if(includeGamePlayback){
    val cfg=AudioPlaybackCaptureConfiguration.Builder(projection).addMatchingUsage(AudioAttributes.USAGE_MEDIA).addMatchingUsage(AudioAttributes.USAGE_GAME).addMatchingUsage(AudioAttributes.USAGE_UNKNOWN).build()
@@ -99,17 +87,6 @@ class ProcessedMixAudioSource(
   try{if(includeGamePlayback){mixerThread=Thread({mixLoop()},"MGS-AudioMixer").apply{priority=Thread.NORM_PRIORITY;start()};gameManager.start()};micManager?.start()}
   catch(e:Exception){stop();throw IllegalStateException("Could not start split audio capture",e)}
  }
- /**
-  * Mixer timing notes. Microphone and playback frames come from independent
-  * AudioRecords on the same monotonic clock, but equal frame sizes do NOT imply
-  * synchronization: the two recorders start at different times and drift
-  * independently. This loop therefore never blocks one path on the other — the
-  * microphone (bounded queue, newest wins) always flows, and the freshest
-  * available playback frame is mixed in opportunistically, so a stalled or
-  * stopped game path can never silence the microphone. Output frames carry the
-  * newer of the two timestamps. Sample-accurate alignment is deliberately not
-  * attempted: the inputs are uncorrelated captures, not an echo-reference pair.
-  */
  private fun mixLoop(){while(running&&!Thread.currentThread().isInterrupted)try{
   val mic=micFrames.poll(250,TimeUnit.MILLISECONDS)?:continue;val game=gameFrames.poll(12,TimeUnit.MILLISECONDS)
   val data=if(muted)ByteArray(mic.size)else Pcm16AudioMixer.mix(mic.buffer,game?.buffer,micGain,gameGain)
@@ -117,11 +94,8 @@ class ProcessedMixAudioSource(
  }catch(_:InterruptedException){Thread.currentThread().interrupt();break}catch(e:Exception){Log.e(TAG,"Mixer error",e)}}
  private fun offerLatest(q:ArrayBlockingQueue<Frame>,f:Frame){if(!q.offer(f)){q.poll();q.offer(f)}}
  override fun stop(){running=false;mixerThread?.interrupt();releaseResources();try{mixerThread?.join(300)}catch(_:InterruptedException){Thread.currentThread().interrupt()};mixerThread=null;micFrames.clear();gameFrames.clear();output=null}
- private fun releaseAudioEffects(){
-  runCatching{aec?.enabled=false};runCatching{ns?.enabled=false};runCatching{aec?.release()};runCatching{ns?.release()};aec=null;ns=null
- }
  private fun releaseResources(){
-  releaseAudioEffects();voiceChain=null
+  runCatching{aec?.enabled=false};runCatching{ns?.enabled=false};runCatching{aec?.release()};runCatching{ns?.release()};aec=null;ns=null;voiceChain=null
   micManager?.safeStop();micManager=null
   if(includeGamePlayback)gameManager.safeStop()
  }

@@ -170,10 +170,6 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onDestroy() {
-        // stopCapture() already stops the projection on the normal path; this
-        // only guards a system-initiated destroy while capture is still live
-        // so no orphaned projection session survives the service.
-        try { projection?.stop() } catch (_: Exception) { }
         releaseCaptureResources()
         super.onDestroy()
     }

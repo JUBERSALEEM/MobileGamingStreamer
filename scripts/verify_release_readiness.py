@@ -9,7 +9,6 @@ manifest = (root / "app/src/main/AndroidManifest.xml").read_text(encoding="utf-8
 gradle = (root / "app/build.gradle.kts").read_text(encoding="utf-8")
 changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
 policy = (root / "docs/privacy-policy.html").read_text(encoding="utf-8")
-studio_status = (root / "app/src/main/java/com/jubersaleem/mobilegamingstreamer/StudioStatus.kt").read_text(encoding="utf-8")
 
 errors = []
 def require(condition, message):
@@ -53,11 +52,6 @@ if name_match:
     version = name_match.group(1)
     require(re.search(rf"^## {re.escape(version)}-dev\b", changelog, re.M) is not None,
             f"CHANGELOG.md has no top-level {version}-dev section.")
-    const_match = re.search(r'const val MgsVersionName\s*=\s*"([^"]+)"', studio_status)
-    require(const_match is not None, "MgsVersionName constant is missing from StudioStatus.kt.")
-    if const_match and name_match:
-        require(const_match.group(1) == name_match.group(1),
-                f"In-app MgsVersionName {const_match.group(1)} drifts from gradle versionName {name_match.group(1)}.")
 
 if errors:
     for error in errors:

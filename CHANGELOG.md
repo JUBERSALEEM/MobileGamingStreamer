@@ -1,29 +1,3 @@
-## 0.5.23-dev — Safe speaker mute, tuned voice chain, premium clay system
-
-### Fixed
-- Rebuild the floating-panel local speaker mute on an ownership policy: the previous music volume is recorded, restored exactly once on unmute or overlay destroy, hardware-button changes always win, only the music stream is touched, and failures are logged instead of swallowed. The stream mix is never affected.
-- Stop a live screen-capture projection defensively when the capture-test service is destroyed.
-- Make platform echo-cancellation/noise-suppression attach idempotent, log unavailable or failed effects, and skip them explicitly on the BGMI speaker route so acoustic teammate voice is preserved.
-- Correct the Tools page RTMP row to report STREAMING while live instead of a stuck CONNECTING label.
-- Centralise broadcast-status interpretation so the app, overlay and Studio page agree on standby/starting/live/error, and give the Studio hero and top bar a truthful error state.
-
-### Added
-- Add a capture-diagnostics well on the Audio page reporting the running session's microphone source, external input, stream-audio mute and capture state.
-- Add a session footer to the floating panel repeating the stream-audio toggle and microphone route.
-- Add a single clay design-token contract (`docs/DESIGN_TOKENS.md`): one palette, explicit semantic colors, depth presets and overlay fills; no screen scatters its own brand colors.
-- Add TalkBack support: control roles and labels, page-title headings, one announcement per broadcast transition, and content descriptions on every overlay control.
-- Add JVM unit tests for the speaker-mute policy, status classification, announcements and the audio-source fallback matrix.
-
-### Changed
-- Retune the studio voice chain conservatively: gentler noise gate that preserves quiet speech, slower asymmetric auto-gain, softer compression and a subtler presence lift.
-- Retune status tones: teal live, green healthy, graphite standby, violet information, new amber warnings for degraded-but-working states, red reserved for errors and destructive ends.
-- Rebuild the floating panel as dark graphite glass with mono status and IDs, 48dp controls and token-matched action colors.
-- Synchronise the in-app version label with the Gradle version through one constant enforced by the release-readiness audit.
-
-### Verification boundary
-- CI verifies compilation, unit tests, lint, APK packaging and the pinned signing certificate. Voice-chain tuning, AEC/NS behaviour, BGMI routing, speaker-restore flow and TalkBack announcements still require testing on the Galaxy S25 Ultra.
-- Android playback capture remains subject to the game's playback usage and capture policy. Accessibility microphone sharing does not grant unrestricted access to protected playback streams.
-
 ## 0.5.22-dev — Glip-style concurrent microphone capture
 
 ### Added

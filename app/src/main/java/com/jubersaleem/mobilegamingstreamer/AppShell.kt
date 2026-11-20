@@ -55,10 +55,6 @@ data class StudioUiState(
     val aecActive: Boolean = false,
     val nsActive: Boolean = false,
     val voiceOptimizationActive: Boolean = false,
-    val micSource: Int = AudioRouteLabels.SOURCE_NONE,
-    val headsetConnected: Boolean = false,
-    val streamAudioMuted: Boolean = false,
-    val audioCaptureActive: Boolean = false,
     val floatingControlsAvailable: Boolean = false,
     val server: String = "",
     val key: String = "",
@@ -135,8 +131,7 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
                 value = state.key,
                 onValueChange = actions.onKeyChange,
                 label = "Stream key",
-                password = true,
-                mono = true
+                password = true
             )
         }
     }
@@ -155,15 +150,7 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
                     .padding(horizontal = 18.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                ClayTopBar(
-                    onSettings = { actions.onPageChange("SETTINGS") },
-                    statusPill = when (classifyBroadcastStatus(state.status, state.broadcastActive, state.broadcastStarting)) {
-                        BroadcastStatusKind.LIVE -> "ON AIR" to ClayTone.Live
-                        BroadcastStatusKind.STARTING -> "CONNECTING" to ClayTone.Active
-                        BroadcastStatusKind.ERROR -> "ERROR" to ClayTone.Alert
-                        BroadcastStatusKind.STANDBY -> null
-                    }
-                )
+                ClayTopBar(onSettings = { actions.onPageChange("SETTINGS") })
                 when (state.page) {
                     "SETTINGS" -> SettingsPage(
                         onTerms = { actions.onPageChange("TERMS") },
@@ -210,16 +197,11 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
                         aecActive = state.aecActive,
                         nsActive = state.nsActive,
                         voiceOptimizationActive = state.voiceOptimizationActive,
-                        micSource = state.micSource,
-                        headsetConnected = state.headsetConnected,
-                        streamAudioMuted = state.streamAudioMuted,
-                        audioCaptureActive = state.audioCaptureActive,
                         onEnableAccessibility = actions.onEnableAccessibility
                     )
                     "TOOLS" -> ToolsPage(
                         captureActive = state.captureActive,
                         broadcastActive = state.broadcastActive,
-                        broadcastStarting = state.broadcastStarting,
                         floatingControlsAvailable = state.floatingControlsAvailable,
                         onEnableFloatingControls = actions.onEnableFloatingControls,
                         onStartCaptureTest = actions.onStartCaptureTest,
@@ -249,13 +231,9 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
     }
 }
 
-/**
- * Sculpted clay header: studio identity, a live broadcast pill only while a
- * session is getting started, running or faulted, the build badge and the
- * settings shortcut.
- */
+/** Sculpted clay header with the studio mark, build badge and settings shortcut. */
 @Composable
-private fun ClayTopBar(onSettings: () -> Unit, statusPill: Pair<String, ClayTone>?) {
+private fun ClayTopBar(onSettings: () -> Unit) {
     val palette = LocalMgsPalette.current
     Row(
         modifier = Modifier
@@ -296,11 +274,7 @@ private fun ClayTopBar(onSettings: () -> Unit, statusPill: Pair<String, ClayTone
                 fontWeight = FontWeight.ExtraBold
             )
         }
-        if (statusPill != null) {
-            ClayStatusPill(label = statusPill.first, tone = statusPill.second)
-            Spacer(Modifier.width(10.dp))
-        }
-        ClayBuildBadge(MgsVersionName)
+        ClayBuildBadge("0.5.22")
         Spacer(Modifier.width(10.dp))
         ClayIconButton(
             icon = Icons.Rounded.Settings,

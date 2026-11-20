@@ -81,27 +81,25 @@ internal class MicrophoneHighPass(sampleRate: Int, private val channels: Int, cu
 /**
  * Noise gate with hysteresis and smooth gain ramps.
  *
- * Conservative by design: thresholds sit well below quiet speech, the gate
- * opens in about a millisecond so word beginnings survive, and background
- * (fan, hiss, room tone) is pushed down gently instead of chopped to zero,
- * which avoids choppy "underwater" artefacts and preserves low acoustic
- * teammate voices rather than deleting them. When in doubt the gate preserves
- * speech over removing noise.
+ * Speech-level input opens the gate within a few milliseconds; quiet
+ * background (fan, hiss, room tone) is pushed down by [maxAttenuationDb]
+ * instead of being chopped to zero, which avoids choppy "underwater"
+ * artefacts when the streamer pauses between sentences.
  */
 internal class VoiceNoiseGate(
     sampleRate: Int,
     private val channels: Int,
-    openDb: Float = -48f,
-    closeDb: Float = -54f,
-    attackMs: Float = 1f,
-    releaseMs: Float = 250f,
-    maxAttenuationDb: Float = 12f
+    openDb: Float = -42f,
+    closeDb: Float = -50f,
+    attackMs: Float = 2f,
+    releaseMs: Float = 180f,
+    maxAttenuationDb: Float = 18f
 ) {
     private val openLevel = dbToLinear(openDb)
     private val closeLevel = dbToLinear(closeDb)
     private val floorGain = dbToLinear(-maxAttenuationDb)
-    private val envAttack = smoothingCoeff(0.2f, sampleRate)
-    private val envRelease = smoothingCoeff(60f, sampleRate)
+    private val envAttack = smoothingCoeff(0.5f, sampleRate)
+    private val envRelease = smoothingCoeff(40f, sampleRate)
     private val gainAttack = smoothingCoeff(attackMs, sampleRate)
     private val gainRelease = smoothingCoeff(releaseMs, sampleRate)
     private var envelope = 0f
@@ -143,12 +141,9 @@ internal class VoiceNoiseGate(
  * Slow automatic gain control that keeps speech at a steady loudness.
  *
  * Quiet commentary is lifted towards [targetRmsDb] (capped at [maxGainDb] so
- * distant noise is never pumped up), while loud speech is eased down gently
- * for the compressor to finish. Adaptation is asymmetric — gain rises slowly
- * so pauses between words do not pump the background up, and falls faster so
- * sudden loud speech never blasts — and freezes below [freezeBelowDb] so room
- * silence is never boosted into audible hiss. Gain is always bounded, so long
- * sessions cannot drift.
+ * distant noise is never pumped up), while loud speech is left near unity for
+ * the compressor to handle. Adaptation freezes below [freezeBelowDb] so room
+ * silence is never boosted into audible hiss.
  */
 internal class VoiceAutoGain(
     sampleRate: Int,
@@ -156,8 +151,7 @@ internal class VoiceAutoGain(
     targetRmsDb: Float = -20f,
     maxGainDb: Float = 12f,
     minGainDb: Float = -3f,
-    adaptUpMs: Float = 800f,
-    adaptDownMs: Float = 300f,
+    adaptMs: Float = 400f,
     freezeBelowDb: Float = -48f
 ) {
     private val targetRms = dbToLinear(targetRmsDb)
@@ -165,8 +159,7 @@ internal class VoiceAutoGain(
     private val maxGain = dbToLinear(maxGainDb)
     private val minGain = dbToLinear(minGainDb)
     private val window = smoothingCoeff(50f, sampleRate)
-    private val adaptUp = smoothingCoeff(adaptUpMs, sampleRate)
-    private val adaptDown = smoothingCoeff(adaptDownMs, sampleRate)
+    private val adapt = smoothingCoeff(adaptMs, sampleRate)
     private val smooth = smoothingCoeff(10f, sampleRate)
     private var meanSquare = 0f
     private var targetGain = 1f
@@ -192,8 +185,7 @@ internal class VoiceAutoGain(
             val rms = sqrt(meanSquare)
             if (rms > freezeLevel) {
                 val desired = (targetRms / rms).coerceIn(minGain, maxGain)
-                val rate = if (desired > targetGain) adaptUp else adaptDown
-                targetGain += (desired - targetGain) * rate
+                targetGain += (desired - targetGain) * adapt
             }
             gain += (targetGain - gain) * smooth
             for (c in 0 until channels) {
@@ -207,18 +199,16 @@ internal class VoiceAutoGain(
 
 /**
  * Soft-knee compressor that evens out loud laughs and shouts without pumping.
- * The gentle ratio and slow release preserve natural voice dynamics, the soft
- * attack lets transients through so speech stays lively, and quiet speech
- * below the knee passes through untouched.
+ * Quiet speech below the knee passes through untouched.
  */
 internal class VoiceCompressor(
     sampleRate: Int,
     private val channels: Int,
     private val thresholdDb: Float = -18f,
-    private val ratio: Float = 2.5f,
+    private val ratio: Float = 3f,
     private val kneeDb: Float = 6f,
-    attackMs: Float = 5f,
-    releaseMs: Float = 150f,
+    attackMs: Float = 3f,
+    releaseMs: Float = 120f,
     makeupDb: Float = 0f
 ) {
     private val attack = smoothingCoeff(attackMs, sampleRate)
@@ -262,18 +252,16 @@ internal class VoiceCompressor(
 }
 
 /**
- * Subtle presence bell (+2 dB around 3.2 kHz) that lifts speech intelligibility
- * over game audio without harshness, metallic coloration or sibilance emphasis.
- * Implemented as a standard peaking biquad (RBJ cookbook, Direct Form I,
- * per-channel state). It runs after the compressor, so boosted peaks always
- * stay inside PCM16 headroom.
+ * Gentle presence bell (+3 dB around 3.2 kHz) that lifts speech clarity and
+ * intelligibility over game audio without harshness. Implemented as a standard
+ * peaking biquad (RBJ cookbook, Direct Form I, per-channel state).
  */
 internal class VoicePresenceEq(
     sampleRate: Int,
     private val channels: Int,
     frequencyHz: Float = 3200f,
-    gainDb: Float = 2f,
-    q: Float = 0.7f
+    gainDb: Float = 3f,
+    q: Float = 0.9f
 ) {
     private val b0: Float
     private val b1: Float

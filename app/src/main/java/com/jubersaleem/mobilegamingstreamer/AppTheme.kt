@@ -23,91 +23,50 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 
 /**
- * Mobile Gaming Streamer ships with a single premium claymorphism design
- * language: deep violet brand identity, electric-violet primary actions,
- * teal reserved for live/audio/technical status, restrained coral for
- * important secondary actions, graphite text on cool neutral surfaces, and
- * explicit semantic colors. Every product color lives in [MgsPalette] — no
- * screen or component may scatter its own brand hex values.
+ * Mobile Gaming Streamer ships with a single claymorphism design language.
+ *
+ * Every page, menu, dialog and overlay surface is sculpted from the tokens
+ * below: a soft lilac page, raised surfaces that are lit from the top-left and
+ * recessed wells for every input. There is no second "classic" skin any more,
+ * so the whole product reads as one continuous piece of clay.
  */
 data class MgsPalette(
-    // Cool neutral surfaces.
     val background: Color,
-    val backgroundDeep: Color,
     val surface: Color,
     val surfaceDeep: Color,
-    val elevated: Color,
-    val inset: Color,
     val highlight: Color,
-    // Graphite text.
     val text: Color,
     val muted: Color,
-    val disabled: Color,
-    // Electric-violet primary actions.
     val primary: Color,
     val primaryDeep: Color,
-    val primaryInk: Color,
-    val primarySoft: Color,
-    val onPrimary: Color,
-    // Restrained coral secondary actions.
     val secondary: Color,
-    val secondaryDeep: Color,
-    val secondaryInk: Color,
-    // Teal live / audio / technical accent.
     val accent: Color,
-    val accentDeep: Color,
-    val accentSoft: Color,
-    // Semantic states.
-    val success: Color,
-    val successDeep: Color,
-    val successSoft: Color,
-    val warning: Color,
-    val warningDeep: Color,
-    val warningSoft: Color,
     val danger: Color,
-    val dangerDeep: Color,
-    val dangerSoft: Color,
-    // Sculpted clay material.
     val edge: Color,
     val clayShadow: Color,
-    val clayEdge: Color
+    val clayEdge: Color,
+    val inset: Color,
+    val onPrimary: Color
 )
 
 /** The single clay palette used by the whole app. */
 val ClayPalette = MgsPalette(
-    background = Color(0xFFE2E4EE),
-    backgroundDeep = Color(0xFFD2D5E4),
-    surface = Color(0xFFF4F5FA),
-    surfaceDeep = Color(0xFFDFE2EC),
-    elevated = Color(0xFFFCFCFE),
-    inset = Color(0xFFD7DBE8),
+    background = Color(0xFFE9E5F2),
+    surface = Color(0xFFF4F1FB),
+    surfaceDeep = Color(0xFFE9E5F3),
     highlight = Color(0xFFFFFFFF),
-    text = Color(0xFF23232E),
-    muted = Color(0xFF5D5A73),
-    disabled = Color(0xFFA9A5BE),
-    primary = Color(0xFF5B3DF5),
-    primaryDeep = Color(0xFF3D2AB8),
-    primaryInk = Color(0xFF4330B8),
-    primarySoft = Color(0xFFE2DBFD),
-    onPrimary = Color(0xFFFFFFFF),
-    secondary = Color(0xFFD95F45),
-    secondaryDeep = Color(0xFFB84A35),
-    secondaryInk = Color(0xFFA03A29),
-    accent = Color(0xFF0097A7),
-    accentDeep = Color(0xFF0B7280),
-    accentSoft = Color(0xFFD5EFF3),
-    success = Color(0xFF2E9E63),
-    successDeep = Color(0xFF1F7350),
-    successSoft = Color(0xFFD8EFDF),
-    warning = Color(0xFFBE7A12),
-    warningDeep = Color(0xFF8A570A),
-    warningSoft = Color(0xFFF6EACD),
-    danger = Color(0xFFD1344C),
-    dangerDeep = Color(0xFFA11F36),
-    dangerSoft = Color(0xFFF9DCE1),
+    text = Color(0xFF26233A),
+    muted = Color(0xFF6B6781),
+    primary = Color(0xFFE4736B),
+    primaryDeep = Color(0xFFC9574E),
+    secondary = Color(0xFF7A6AB8),
+    accent = Color(0xFF4E9E7C),
+    danger = Color(0xFFD9535F),
     edge = Color(0xFFFFFFFF),
-    clayShadow = Color(0xFF99A0BB),
-    clayEdge = Color(0xFFC2C8DC)
+    clayShadow = Color(0xFFB3ADC6),
+    clayEdge = Color(0xFFD3CDE3),
+    inset = Color(0xFFE7E3F1),
+    onPrimary = Color(0xFFFFFFFF)
 )
 
 val LocalMgsPalette = staticCompositionLocalOf { ClayPalette }
@@ -121,13 +80,13 @@ fun MgsTheme(content: @Composable () -> Unit) {
     val scheme = lightColorScheme(
         primary = p.primary,
         onPrimary = p.onPrimary,
-        primaryContainer = p.primarySoft,
-        onPrimaryContainer = p.primaryInk,
-        secondary = p.accent,
+        primaryContainer = p.primary.copy(alpha = 0.16f),
+        onPrimaryContainer = p.primaryDeep,
+        secondary = p.secondary,
         onSecondary = Color.White,
-        secondaryContainer = p.accentSoft,
-        onSecondaryContainer = p.accentDeep,
-        tertiary = p.secondary,
+        secondaryContainer = p.secondary.copy(alpha = 0.16f),
+        onSecondaryContainer = p.secondary,
+        tertiary = p.accent,
         onTertiary = Color.White,
         background = p.background,
         onBackground = p.text,
@@ -139,7 +98,7 @@ fun MgsTheme(content: @Composable () -> Unit) {
         outlineVariant = p.clayEdge,
         error = p.danger,
         onError = Color.White,
-        scrim = Color(0x661E1B2E)
+        scrim = Color(0x6626233A)
     )
     CompositionLocalProvider(LocalMgsPalette provides p) {
         MaterialTheme(
@@ -157,10 +116,8 @@ fun MgsTheme(content: @Composable () -> Unit) {
 }
 
 /**
- * Raised clay surface: a cool ambient shadow cast to the bottom-right, a
- * white highlight to the top-left, a restrained vertical gradient and a
- * sculpted rim. Depth presets keep every card in the same material family
- * without muddy over-shadowing.
+ * Raised clay surface: a dark shadow cast to the bottom-right, a white
+ * highlight to the top-left, a soft vertical gradient and a sculpted rim.
  */
 @Composable
 fun clayRaisedModifier(
@@ -169,19 +126,19 @@ fun clayRaisedModifier(
 ): Modifier {
     val p = LocalMgsPalette.current
     val radius = when (depth) {
-        ClayDepth.Subtle -> 10.dp
-        ClayDepth.Medium -> 16.dp
-        ClayDepth.Deep -> 22.dp
+        ClayDepth.Subtle -> 12.dp
+        ClayDepth.Medium -> 18.dp
+        ClayDepth.Deep -> 24.dp
     }
     val offset = when (depth) {
-        ClayDepth.Subtle -> DpOffset(3.dp, 4.dp)
-        ClayDepth.Medium -> DpOffset(6.dp, 7.dp)
-        ClayDepth.Deep -> DpOffset(9.dp, 10.dp)
+        ClayDepth.Subtle -> DpOffset(4.dp, 5.dp)
+        ClayDepth.Medium -> DpOffset(7.dp, 8.dp)
+        ClayDepth.Deep -> DpOffset(10.dp, 11.dp)
     }
     val alpha = when (depth) {
-        ClayDepth.Subtle -> 0.40f
-        ClayDepth.Medium -> 0.46f
-        ClayDepth.Deep -> 0.52f
+        ClayDepth.Subtle -> 0.45f
+        ClayDepth.Medium -> 0.55f
+        ClayDepth.Deep -> 0.62f
     }
     return Modifier
         .dropShadow(
@@ -192,18 +149,18 @@ fun clayRaisedModifier(
             shape,
             Shadow(
                 radius = radius - 2.dp,
-                color = Color.White.copy(alpha = 0.92f),
+                color = Color.White.copy(alpha = 0.95f),
                 offset = DpOffset(-offset.x, -offset.y)
             )
         )
         .clip(shape)
         .background(
-            Brush.linearGradient(listOf(p.elevated, p.surface, p.surfaceDeep)),
+            Brush.linearGradient(listOf(p.highlight, p.surface, p.surfaceDeep)),
             shape
         )
         .border(
             1.dp,
-            Brush.linearGradient(listOf(p.edge, p.clayEdge, p.edge)),
+            Brush.linearGradient(listOf(Color.White, p.clayEdge, Color.White)),
             shape
         )
 }

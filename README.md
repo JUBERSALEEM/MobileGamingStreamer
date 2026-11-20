@@ -4,9 +4,9 @@ An Android-first mobile livestreaming app. The first device-validation target is
 
 ## Current development version
 
-- App version: **0.5.23-dev**
-- Android version code: **30**
-- Installable test APK: **MobileGamingStreamer-0.5.23-release.apk** (published by CI as a pre-release; pull-request runs upload an Actions artifact only)
+- App version: **0.5.11-dev**
+- Android version code: **18**
+- Installable test APK: **MobileGamingStreamer-0.5.11-debug.apk**
 - Releases page: https://github.com/JUBERSALEEM/MobileGamingStreamer/releases
 
 ## Current implementation
@@ -25,18 +25,17 @@ An Android-first mobile livestreaming app. The first device-validation target is
 ## App identity, appearance and legal
 
 - About screen credits **Juber Saleem** as developer and identifies the app as an independent mobile-streaming project by a BGMI / PUBG MOBILE streamer.
-- The whole app uses one claymorphism design language governed by a single token contract (`docs/DESIGN_TOKENS.md`): raised clay cards, recessed fields, sculpted dialogs, a clay navigation dock, truthful status tones and a dark graphite floating-control overlay. There is no second appearance theme.
-- Broadcast transitions announce once each for TalkBack; every control meets the 48dp touch target.
+- The whole app uses one claymorphism design language: raised clay cards, recessed fields, sculpted dialogs, a clay navigation dock and a matching floating-control overlay. There is no second appearance theme.
 - Privacy Policy and Terms & Conditions are available in-app and as HTML pages under `docs/`.
 - The public legal-page URL is not live until GitHub Pages is enabled for the repository using the `docs/` folder.
 
 ## Install the latest test APK from your phone
 
 1. Open the [GitHub Releases page](https://github.com/JUBERSALEEM/MobileGamingStreamer/releases).
-2. Select the newest entry marked **Pre-release**. Its title starts with **MobileGamingStreamer v0.5.23**.
-3. Under **Assets**, tap **MobileGamingStreamer-0.5.23-release.apk**. Do not download the source-code ZIP files.
+2. Select the newest entry marked **Pre-release**. Its title starts with **MobileGamingStreamer v0.5.11**.
+3. Under **Assets**, tap **MobileGamingStreamer-0.5.11-debug.apk**. Do not download the source-code ZIP files.
 4. If GitHub displays an asset download warning, choose Download anyway, then open the downloaded APK and allow your browser/file manager to install unknown apps if Android asks.
-5. Install the APK. The development-signed package is separate from a future Play Store package and may install alongside another package variant.
+5. Install the APK. The debug package is separate from a future Play Store package and may install alongside another package variant.
 
 ## How builds and releases work
 
@@ -44,7 +43,7 @@ An Android-first mobile livestreaming app. The first device-validation target is
 - Pull-request checks build and upload an Actions artifact only. They do not publish a Release; this prevents unmerged PR code from being presented as an installable release.
 - A manual **Run workflow** from the Actions tab also builds and publishes a pre-release for the selected branch.
 - The workflow reads `versionName` and `versionCode` directly from `app/build.gradle.kts`, names the APK automatically, and extracts the matching top section from `CHANGELOG.md` for the release description. It fails if the matching changelog section is missing.
-- The APK is a development-signed device-testing build (pinned `androiddebugkey` identity, verified by CI against the APK certificate), not a production-signed Google Play release.
+- The APK is a debug-signed device-testing build, not a production-signed Google Play release.
 
 If a build succeeds but no release appears, check whether the run event was **pull_request**. PR runs intentionally do not publish; use a branch push or manually run the workflow on the development branch.
 
