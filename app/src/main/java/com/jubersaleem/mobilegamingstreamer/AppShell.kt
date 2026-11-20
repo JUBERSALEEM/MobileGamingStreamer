@@ -55,6 +55,10 @@ data class StudioUiState(
     val aecActive: Boolean = false,
     val nsActive: Boolean = false,
     val voiceOptimizationActive: Boolean = false,
+    val micSource: Int = AudioRouteLabels.SOURCE_NONE,
+    val headsetConnected: Boolean = false,
+    val streamAudioMuted: Boolean = false,
+    val audioCaptureActive: Boolean = false,
     val floatingControlsAvailable: Boolean = false,
     val server: String = "",
     val key: String = "",
@@ -197,6 +201,10 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
                         aecActive = state.aecActive,
                         nsActive = state.nsActive,
                         voiceOptimizationActive = state.voiceOptimizationActive,
+                        micSource = state.micSource,
+                        headsetConnected = state.headsetConnected,
+                        streamAudioMuted = state.streamAudioMuted,
+                        audioCaptureActive = state.audioCaptureActive,
                         onEnableAccessibility = actions.onEnableAccessibility
                     )
                     "TOOLS" -> ToolsPage(

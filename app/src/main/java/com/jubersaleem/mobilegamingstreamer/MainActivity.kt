@@ -36,6 +36,10 @@ class MainActivity : ComponentActivity() {
     private var aecActive by mutableStateOf(false)
     private var nsActive by mutableStateOf(false)
     private var voiceOptimizationActive by mutableStateOf(false)
+    private var micSource by mutableStateOf(AudioRouteLabels.SOURCE_NONE)
+    private var headsetConnected by mutableStateOf(false)
+    private var streamAudioMuted by mutableStateOf(false)
+    private var audioCaptureActive by mutableStateOf(false)
     private var showAccessibilityDisclosure by mutableStateOf(false)
     private var server by mutableStateOf("rtmp://a.rtmp.youtube.com/live2")
     private var key by mutableStateOf("")
@@ -56,7 +60,11 @@ class MainActivity : ComponentActivity() {
             aecActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_AEC, false)
             nsActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_NS, false)
             voiceOptimizationActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_VOICE, false)
-            broadcastStarting = !broadcastActive && listOf("Preparing", "Encoder ready", "Connecting", "RTMP connected", "Waiting for", "Stream key accepted", "60 FPS unavailable").any { status.contains(it, ignoreCase = true) }
+            micSource = intent.getIntExtra(RtmpBroadcastService.EXTRA_STATUS_MIC_SOURCE, AudioRouteLabels.SOURCE_NONE)
+            headsetConnected = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_HEADSET, false)
+            streamAudioMuted = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_STREAM_MUTED, false)
+            audioCaptureActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_CAPTURE, false)
+            broadcastStarting = !broadcastActive && isStartingBroadcastMessage(status)
         }
     }
 
@@ -198,6 +206,10 @@ class MainActivity : ComponentActivity() {
                         aecActive = aecActive,
                         nsActive = nsActive,
                         voiceOptimizationActive = voiceOptimizationActive,
+                        micSource = micSource,
+                        headsetConnected = headsetConnected,
+                        streamAudioMuted = streamAudioMuted,
+                        audioCaptureActive = audioCaptureActive,
                         floatingControlsAvailable = Settings.canDrawOverlays(this@MainActivity),
                         server = server,
                         key = key,

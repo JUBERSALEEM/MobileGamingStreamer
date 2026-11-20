@@ -62,16 +62,19 @@ fun StudioHomePage(
     onOpenStream: () -> Unit
 ) {
     val p = LocalMgsPalette.current
+    val kind = classifyBroadcastStatus(status, broadcastActive, broadcastStarting)
     val active = broadcastActive || broadcastStarting || captureActive
     val tone = when {
         broadcastActive -> ClayTone.Live
         broadcastStarting || captureActive -> ClayTone.Active
+        kind == BroadcastStatusKind.ERROR -> ClayTone.Alert
         else -> ClayTone.Idle
     }
     val stateLabel = when {
         broadcastActive -> "ON AIR"
         broadcastStarting -> "CONNECTING"
         captureActive -> "CAPTURING"
+        kind == BroadcastStatusKind.ERROR -> "ERROR"
         else -> "STANDBY"
     }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -462,6 +465,10 @@ fun AudioMixerPage(
     aecActive: Boolean,
     nsActive: Boolean,
     voiceOptimizationActive: Boolean,
+    micSource: Int,
+    headsetConnected: Boolean,
+    streamAudioMuted: Boolean,
+    audioCaptureActive: Boolean,
     onEnableAccessibility: () -> Unit
 ) {
     val p = LocalMgsPalette.current
@@ -562,6 +569,25 @@ fun AudioMixerPage(
                 }
                 Text(
                     text = "Echo cancellation and noise suppression attach automatically when Android exposes them on the microphone. Live status appears here while broadcasting with a microphone mode.",
+                    color = p.muted,
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp
+                )
+                ClayGroove()
+                ClaySectionLabel("Capture diagnostics")
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(clayInsetModifier(RoundedCornerShape(20.dp)))
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    ClayKeyValueRow("Microphone source", AudioRouteLabels.micSourceLabel(micSource), audioCaptureActive && micSource != AudioRouteLabels.SOURCE_NONE)
+                    ClayKeyValueRow("External input", if (headsetConnected) "DETECTED" else "NONE", headsetConnected)
+                    ClayKeyValueRow("Stream audio", if (streamAudioMuted) "MUTED" else "LIVE", !streamAudioMuted && audioCaptureActive)
+                    ClayKeyValueRow("Audio capture", if (audioCaptureActive) "ACTIVE" else "IDLE", audioCaptureActive)
+                }
+                Text(
+                    text = "Values report the running broadcast session. The stream-audio mute silences microphone and game together; the local speaker button on the floating panel never affects the stream.",
                     color = p.muted,
                     fontSize = 10.sp,
                     lineHeight = 14.sp
