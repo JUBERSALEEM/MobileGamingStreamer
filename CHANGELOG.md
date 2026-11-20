@@ -1,3 +1,14 @@
+## 0.5.19-dev — Audio capture lifecycle hardening
+
+### Fixed
+- Release both AudioRecord instances safely when stream preparation fails before recorder threads start.
+- Attach AEC/NS explicitly to the microphone AudioRecord session and release those effects during stop; playback capture never receives microphone effects.
+- Keep the audio-source cleanup path safe for partial startup and repeated stop/release calls.
+
+### Verification
+- Re-run JVM DSP/mixer tests, Android lint and APK compilation in CI.
+- Device validation of actual BGMI voice routing, echo cancellation, noise suppression, audio route changes and long sessions remains required.
+
 ## 0.5.18-dev — Microphone DSP and isolated game-audio mixing
 
 ### Added
