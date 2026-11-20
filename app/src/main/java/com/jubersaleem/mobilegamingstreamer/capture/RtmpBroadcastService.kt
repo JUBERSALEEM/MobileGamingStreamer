@@ -235,13 +235,23 @@ class RtmpBroadcastService : Service() {
             activeProjection = mediaProjection
             mediaProjection.registerCallback(projectionCallback, handler)
 
-            val micSource = MediaRecorder.AudioSource.DEFAULT
             val preferredInput = choosePreferredMicrophoneDevice()
+            val accessibilityMicConnected = MgsMicAccessibilityService.instance != null &&
+                MgsMicAccessibilityService.isEnabled(this)
+            // Glip's observed source-selection pattern: DEFAULT with accessibility enabled
+            // and the phone mic; VOICE_RECOGNITION for an external headset; MIC as fallback.
+            val micSource = when {
+                accessibilityMicConnected && preferredInput != null -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+                accessibilityMicConnected -> MediaRecorder.AudioSource.DEFAULT
+                else -> MediaRecorder.AudioSource.MIC
+            }
+            Log.i(TAG, "Microphone route: accessibility=" + accessibilityMicConnected +
+                " externalInput=" + (preferredInput != null) + " audioSource=" + micSource)
             val audioSource: AudioSource = when (audioMode) {
-                AUDIO_MODE_MIC -> ProcessedMixAudioSource(mediaProjection, false).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.0f) }
+                AUDIO_MODE_MIC -> ProcessedMixAudioSource(mediaProjection, false, micSource).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.0f) }
                 AUDIO_MODE_GAME -> InternalAudioSource(mediaProjection)
-                AUDIO_MODE_NORMAL, AUDIO_MODE_BOTH -> ProcessedMixAudioSource(mediaProjection, true).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.0f); setPlaybackGain(1.0f) }
-                else -> ProcessedMixAudioSource(mediaProjection, true).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.6f); setPlaybackGain(1.0f) }
+                AUDIO_MODE_NORMAL, AUDIO_MODE_BOTH -> ProcessedMixAudioSource(mediaProjection, true, micSource).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.0f); setPlaybackGain(1.0f) }
+                else -> ProcessedMixAudioSource(mediaProjection, true, micSource).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.6f); setPlaybackGain(1.0f) }
             }
 
             activeAudioSource = audioSource
