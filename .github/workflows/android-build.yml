@@ -61,13 +61,23 @@ jobs:
           ' CHANGELOG.md > release-notes.md
           test -s release-notes.md
 
-      - name: Restore stable debug signing key
+      - name: Restore pinned debug signing key
+        if: hashFiles('debug-signing/debug.keystore') != ''
+        run: |
+          mkdir -p ~/.android
+          cp debug-signing/debug.keystore ~/.android/debug.keystore
+
+      # Legacy cache is used only to recover the original installable debug key.
+      # Once pinned in the repository, every event and branch uses the same identity.
+      - name: Restore legacy debug signing key for recovery
+        if: hashFiles('debug-signing/debug.keystore') == ''
         uses: actions/cache@v4
         with:
           path: ~/.android/debug.keystore
           key: mgs-debug-signing-key-v1
 
-      - name: Create stable debug signing key if missing
+      - name: Create temporary debug signing key if missing
+        if: hashFiles('debug-signing/debug.keystore') == ''
         run: |
           mkdir -p ~/.android
           if [ ! -f ~/.android/debug.keystore ]; then
@@ -83,6 +93,14 @@ jobs:
           path: ~/.android/debug.keystore
           if-no-files-found: error
           retention-days: 7
+
+      - name: Require pinned signing identity for distributable builds
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          if [ ! -f debug-signing/debug.keystore ]; then
+            echo "::error::The original debug signing key has not been pinned yet. Use the PR recovery artifact before publishing an installable APK."
+            exit 1
+          fi
 
       - name: Verify Gradle debug signing identity
         shell: bash
@@ -109,7 +127,14 @@ jobs:
         run: |
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$APKSIGNER"
-          "$APKSIGNER" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
+          CERT_OUTPUT="$("$APKSIGNER" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk)"
+          echo "$CERT_OUTPUT"
+          EXPECTED="$(keytool -exportcert -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | sha256sum | awk '{print toupper($1)}')"
+          ACTUAL="$(printf '%s\\n' "$CERT_OUTPUT" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print toupper($2)}')"
+          if [ -z "$ACTUAL" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::APK signer does not match the pinned debug keystore."
+            exit 1
+          fi
 
       - name: Rename APK using app version
         id: apk
@@ -128,7 +153,7 @@ jobs:
           retention-days: 30
 
       - name: Publish APK to GitHub Releases
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && hashFiles('debug-signing/debug.keystore') != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.meta.outputs.version_name }}-dev.${{ github.run_number }}

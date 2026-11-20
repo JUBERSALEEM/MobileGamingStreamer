@@ -1,3 +1,14 @@
+## 0.5.21-dev — APK installation and signing continuity
+
+### Fixed
+- Recover and pin the original debug signing identity so updates install over the existing 0.5.19 app without an uninstall or loss of app-private settings.
+- Use the same keystore for pull-request, branch-push and manually dispatched builds instead of relying on event-scoped Actions caches.
+- Verify the APK certificate fingerprint against the pinned keystore before packaging or publishing.
+- Block distributable APK publishing until the recovered signing key is pinned.
+
+### Verification
+- CI checks the APK signature and exact certificate fingerprint. Device installation still needs confirmation on the Galaxy S25 Ultra.
+
 ## 0.5.20-dev — Video frame pacing and capture smoothness
 
 ### Fixed

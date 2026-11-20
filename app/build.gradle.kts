@@ -12,8 +12,8 @@ android {
         applicationId = "com.jubersaleem.mobilegamingstreamer"
         minSdk = 29
         targetSdk = 36
-        versionCode = 27
-        versionName = "0.5.20"
+        versionCode = 28
+        versionName = "0.5.21"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
