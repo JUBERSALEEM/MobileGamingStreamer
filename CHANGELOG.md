@@ -1,3 +1,21 @@
+## 0.5.12-dev — Claymorphism studio redesign
+
+### Added
+- Reworked the Claymorphism palette into a warm lavender, cream, coral and mint visual system.
+- Added a richer streaming-studio hero with clear on-air, connecting, capture and standby states.
+- Added sculpted destination fields and segmented video/audio profile controls.
+- Refined header hierarchy, spacing, card depth and tactile selection states.
+
+### Preserved
+- Classic theme remains available.
+- Existing RTMP validation, stream-key prompt, screen-capture consent and audio-mode choices remain in place.
+- Floating controls, notification controls and explicit End Broadcast behaviour are unchanged.
+
+### Validation
+- Android CI build is required before this development APK is considered installable.
+- Clay rendering and touch interaction still require testing on the Galaxy S25 Ultra.
+- Visual changes do not imply that audio echo cancellation or game-audio capture has been device-verified.
+
 ## 0.5.11-dev — Microphone input routing and stream audio controls
 
 ### Fixed
