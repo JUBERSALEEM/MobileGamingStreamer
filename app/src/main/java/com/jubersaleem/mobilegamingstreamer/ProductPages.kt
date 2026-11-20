@@ -238,7 +238,7 @@ fun LegalPage(title: String, body: String, onBack: () -> Unit) {
         ClayPageHeader(
             eyebrow = "Legal",
             title = title,
-            subtitle = "Mobile Gaming Streamer • Version 0.5.10"
+            subtitle = "Mobile Gaming Streamer • Version $MgsVersionName"
         )
         ClaySurface(shape = RoundedCornerShape(28.dp)) {
             Column(
