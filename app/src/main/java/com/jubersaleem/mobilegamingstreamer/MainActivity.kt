@@ -355,7 +355,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         if (page == "HOME") ModuleStatus(captureActive, broadcastActive)
-                        Text("Screen video • Microphone / game audio selectable", color = palette.muted, fontSize = 11.sp)
+                        Text("Made for mobile gameplay • Screen video • Microphone / game audio", color = palette.muted, fontSize = 10.sp)
                         }
                     }
                 }
@@ -436,38 +436,93 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun Header() {
     val palette = LocalMgsPalette.current
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Image(painterResource(R.drawable.ic_launcher_foreground), "Mobile Gaming Streamer", Modifier.size(48.dp))
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Text("MOBILE GAMING", color = palette.muted, fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Bold)
-            Text("STREAMER", fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
+    MgsCard(
+        shape = RoundedCornerShape(if (palette.isClay) 26.dp else 18.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 15.dp else 4.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Image(painterResource(R.drawable.ic_launcher_foreground), "Mobile Gaming Streamer", Modifier.size(48.dp))
+            Spacer(Modifier.width(11.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("YOUR MOBILE STUDIO", color = palette.muted, fontSize = 9.sp, letterSpacing = 1.7.sp, fontWeight = FontWeight.ExtraBold)
+                Text("GLIP STREAM", color = palette.text, fontSize = 19.sp, fontWeight = FontWeight.Black, letterSpacing = 0.4.sp)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text("BUILD", color = palette.muted, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Text("0.5.12", color = palette.primary, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+            }
         }
-        Text("DEV 0.5.10", color = palette.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
 
 @Composable
 private fun Hero(status: String, capture: Boolean, live: Boolean, starting: Boolean) {
     val palette = LocalMgsPalette.current
-    MgsCard(shape = RoundedCornerShape(if (palette.isClay) 34.dp else 24.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 26.dp else 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
+    val active = live || starting || capture
+    val stateLabel = when { live -> "ON AIR"; starting -> "CONNECTING"; capture -> "CAPTURING"; else -> "STANDBY" }
+    MgsCard(
+        shape = RoundedCornerShape(if (palette.isClay) 34.dp else 24.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 25.dp else 10.dp)
+    ) {
         Column(
-            Modifier.fillMaxWidth().padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            Modifier.fillMaxWidth()
+                .background(
+                    Brush.linearGradient(
+                        if (palette.isClay) listOf(Color(0xFFFFFBFF), Color(0xFFEDE8FA), Color(0xFFE6F3EF))
+                        else listOf(palette.surface, palette.highlight)
+                    )
+                )
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("YOUR STREAMING STUDIO", color = palette.muted, fontSize = 10.sp, letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold)
-                Text(if (live) "LIVE" else if (starting) "CONNECTING" else if (capture) "CAPTURING" else "STANDBY",
-                    color = if (live || starting || capture) palette.primary else palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("STREAMING CONTROL CENTRE", color = palette.muted, fontSize = 9.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Your game. Your stage.", color = palette.text, fontSize = 21.sp, fontWeight = FontWeight.Black)
+                }
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (live) Color(0xFFFFE0DE) else if (active) Color(0xFFE2F3E9) else palette.inset
+                ) {
+                    Row(Modifier.padding(horizontal = 11.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(Modifier.size(7.dp).background(if (live) Color(0xFFD94E58) else if (active) Color(0xFF319B70) else palette.muted, CircleShape))
+                        Text(stateLabel, color = if (live) Color(0xFFB63F4A) else if (active) Color(0xFF287B59) else palette.muted, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.7.sp)
+                    }
+                }
             }
-            Text(if (live) "You're\nlive." else if (starting) "Starting\nstream." else if (capture) "Capture\nis running." else "Ready when\nyou are.",
-                fontSize = 32.sp, lineHeight = 36.sp, fontWeight = FontWeight.ExtraBold)
-            Text(status, color = palette.muted, fontSize = 12.sp)
-            Text("SCREEN CAPTURE  /  H.264  /  RTMP", color = palette.primary, fontSize = 9.sp, letterSpacing = 1.3.sp, fontWeight = FontWeight.Bold)
+            Text(
+                when { live -> "YOU'RE LIVE"; starting -> "GETTING YOU ON AIR"; capture -> "CAPTURE SESSION ACTIVE"; else -> "READY WHEN YOU ARE" },
+                color = palette.secondary, fontSize = 29.sp, lineHeight = 33.sp, fontWeight = FontWeight.Black, letterSpacing = (-0.5).sp
+            )
+            Text(status, color = palette.muted, fontSize = 12.sp, lineHeight = 17.sp)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HeroPill("SCREEN", "Capture", active, Modifier.weight(1f))
+                HeroPill("VIDEO", "H.264", active, Modifier.weight(1f))
+                HeroPill("OUTPUT", "RTMP", live || starting, Modifier.weight(1f))
+            }
         }
     }
 }
 
+@Composable
+private fun HeroPill(label: String, value: String, active: Boolean, modifier: Modifier = Modifier) {
+    val p = LocalMgsPalette.current
+    Column(
+        modifier.then(clayInsetModifier(RoundedCornerShape(17.dp))).padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        Text(label, color = p.muted, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Box(Modifier.size(6.dp).background(if (active) Color(0xFF43A77A) else p.muted.copy(alpha = 0.55f), CircleShape))
+            Text(value, color = p.text, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+        }
+    }
+}
 @Composable
 private fun BroadcastPanel(
     server: String, onServer: (String) -> Unit,
@@ -479,44 +534,99 @@ private fun BroadcastPanel(
     live: Boolean, onGoLive: () -> Unit, onStopLive: () -> Unit
 ) {
     val palette = LocalMgsPalette.current
-    MgsCard(shape = RoundedCornerShape(if (palette.isClay) 32.dp else 22.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 24.dp else 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-            Text("BROADCAST SETUP", color = palette.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
-            Text("Connect to YouTube or another RTMP platform", color = palette.muted, fontSize = 12.sp)
+    MgsCard(
+        shape = RoundedCornerShape(if (palette.isClay) 32.dp else 22.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 23.dp else 9.dp)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("BROADCAST WORKSPACE", color = palette.secondary, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.3.sp)
+                    Text("Configure your stream", color = palette.text, fontSize = 19.sp, fontWeight = FontWeight.Black)
+                }
+                Surface(shape = CircleShape, color = palette.inset) {
+                    Text("01", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = palette.secondary, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                }
+            }
+            Text("DESTINATION", color = palette.muted, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
             OutlinedTextField(
                 value = server, onValueChange = onServer,
-                modifier = Modifier.fillMaxWidth().then(clayInsetModifier(RoundedCornerShape(16.dp))),
+                modifier = Modifier.fillMaxWidth().then(clayInsetModifier(RoundedCornerShape(17.dp))),
                 singleLine = true, label = { Text("RTMP server URL") },
-                shape = RoundedCornerShape(16.dp)
+                shape = RoundedCornerShape(17.dp)
             )
             OutlinedTextField(
                 value = key, onValueChange = onKey,
-                modifier = Modifier.fillMaxWidth().then(clayInsetModifier(RoundedCornerShape(16.dp))),
-                singleLine = true, label = { Text("Stream key") },
+                modifier = Modifier.fillMaxWidth().then(clayInsetModifier(RoundedCornerShape(17.dp))),
+                singleLine = true, label = { Text("Private stream key") },
                 visualTransformation = PasswordVisualTransformation(),
-                shape = RoundedCornerShape(16.dp)
+                shape = RoundedCornerShape(17.dp)
             )
-            Text("VIDEO QUALITY", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            ChoiceRow(listOf("720p", "1080p", "1440p"), quality, onQuality)
-            Text("FRAME RATE", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            ChoiceRow(listOf("30", "60"), fps, onFps, " FPS")
-            Text("ORIENTATION", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            ChoiceRow(listOf("AUTO", "LANDSCAPE", "PORTRAIT"), orientation, onOrientation)
-            Text("AUDIO SOURCE", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            ChoiceRow(listOf("MIC", "GAME", "NORMAL", "BALANCED"), audioMode, onAudioMode)
-            Text(when (audioMode) { "MIC" -> "Microphone only"; "GAME" -> "Internal game/device playback only"; "NORMAL" -> "Game playback + microphone at equal level"; else -> "Balanced mix: game playback + microphone, with microphone level boosted" }, color = palette.muted, fontSize = 10.sp, lineHeight = 14.sp)
-            Text("Higher resolutions and 60 FPS depend on encoder support, game orientation, network and device temperature.",
-                color = palette.muted, fontSize = 10.sp, lineHeight = 14.sp)
+            Text("VIDEO PROFILE", color = palette.muted, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
+            ClayOptionGroup("RESOLUTION", listOf("720p", "1080p", "1440p"), quality, onQuality)
+            ClayOptionGroup("FRAME RATE", listOf("30", "60"), fps, onFps, " FPS")
+            ClayOptionGroup("ORIENTATION", listOf("AUTO", "LANDSCAPE", "PORTRAIT"), orientation, onOrientation)
+            Text("AUDIO MIX", color = palette.muted, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
+            ClayOptionGroup("SOURCE", listOf("MIC", "GAME", "NORMAL", "BALANCED"), audioMode, onAudioMode)
+            Surface(
+                color = palette.inset,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    when (audioMode) { "MIC" -> "Microphone only"; "GAME" -> "Internal game/device playback only"; "NORMAL" -> "Game playback + microphone at equal level"; else -> "Balanced mix: game playback + microphone, with microphone level boosted" },
+                    modifier = Modifier.padding(12.dp), color = palette.muted, fontSize = 10.sp, lineHeight = 15.sp
+                )
+            }
+            Text("Higher resolutions and 60 FPS depend on encoder support, game orientation, network and device temperature.", color = palette.muted, fontSize = 10.sp, lineHeight = 14.sp)
             MgsButton(
                 onClick = if (live) onStopLive else onGoLive,
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (live) Color(0xFFB94D54) else palette.primary,
-                    contentColor = if (live) Color.White else Color(0xFF11170A))
-            ) { Text(if (live) "STOP BROADCAST" else "GO LIVE • SELECT APP", fontWeight = FontWeight.ExtraBold) }
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (live) Color(0xFFCA5360) else palette.primary,
+                    contentColor = Color.White
+                )
+            ) {
+                Text(if (live) "■  END BROADCAST" else "▶  GO LIVE  •  SELECT APP", fontWeight = FontWeight.Black, letterSpacing = 0.4.sp)
+            }
         }
     }
 }
 
+@Composable
+private fun ClayOptionGroup(
+    title: String,
+    options: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    suffix: String = ""
+) {
+    val p = LocalMgsPalette.current
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Text(title, color = p.muted, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+        Row(
+            Modifier.fillMaxWidth().then(clayInsetModifier(RoundedCornerShape(17.dp))).padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            options.forEach { item ->
+                val chosen = selected == item
+                Surface(
+                    onClick = { onSelect(item) },
+                    modifier = Modifier.weight(1f).heightIn(min = 44.dp),
+                    shape = RoundedCornerShape(13.dp),
+                    color = if (chosen) p.highlight else Color.Transparent,
+                    shadowElevation = if (chosen && p.isClay) 4.dp else 0.dp,
+                    border = if (chosen) androidx.compose.foundation.BorderStroke(1.dp, p.edge) else null
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 3.dp, vertical = 8.dp)) {
+                        Text(item + suffix, color = if (chosen) p.primary else p.muted, fontSize = 10.sp, fontWeight = if (chosen) FontWeight.ExtraBold else FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+}
 @Composable
 private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String) -> Unit, suffix: String = "") {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
