@@ -175,6 +175,19 @@ fun MgsCard(
     }
 }
 
+
+/** Raised clay surface for persistent navigation and tactile containers. */
+@Composable
+fun clayRaisedModifier(shape: RoundedCornerShape = RoundedCornerShape(24.dp)): Modifier {
+    val p = LocalMgsPalette.current
+    return if (!p.isClay) Modifier else Modifier
+        .dropShadow(shape, Shadow(radius = 17.dp, color = p.clayShadow.copy(alpha = 0.62f), offset = DpOffset(7.dp, 8.dp)))
+        .dropShadow(shape, Shadow(radius = 15.dp, color = Color.White.copy(alpha = 0.96f), offset = DpOffset((-6).dp, (-6).dp)))
+        .clip(shape)
+        .background(Brush.linearGradient(listOf(p.highlight, p.surface, p.inset.copy(alpha = 0.42f))), shape)
+        .border(1.dp, Brush.linearGradient(listOf(Color.White, p.clayEdge, Color.White)), shape)
+}
+
 /** Recessed surface for text fields and segmented controls. */
 @Composable
 fun clayInsetModifier(shape: RoundedCornerShape = RoundedCornerShape(16.dp)): Modifier {
