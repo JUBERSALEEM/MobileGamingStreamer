@@ -376,7 +376,12 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        NavigationBar(containerColor = palette.surface, contentColor = palette.text, tonalElevation = if (palette.isClay) 0.dp else 3.dp) {
+                        NavigationBar(
+                            modifier = Modifier.then(clayRaisedModifier(RoundedCornerShape(26.dp))),
+                            containerColor = if (palette.isClay) Color.Transparent else palette.surface,
+                            contentColor = palette.text,
+                            tonalElevation = if (palette.isClay) 0.dp else 3.dp
+                        ) {
                             listOf(
                                 Triple("STUDIO", "Studio", "⌂"),
                                 Triple("STREAM", "Stream", "▶"),
@@ -389,7 +394,14 @@ class MainActivity : ComponentActivity() {
                                     onClick = { page = target },
                                     icon = { Text(glyph, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
                                     label = { Text(label, fontSize = 10.sp, fontWeight = FontWeight.SemiBold) },
-                                    alwaysShowLabel = true
+                                    alwaysShowLabel = true,
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = palette.primary,
+                                        selectedTextColor = palette.primary,
+                                        indicatorColor = palette.highlight,
+                                        unselectedIconColor = palette.muted,
+                                        unselectedTextColor = palette.muted
+                                    )
                                 )
                             }
                         }
