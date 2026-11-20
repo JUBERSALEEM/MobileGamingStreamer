@@ -36,9 +36,29 @@ class StreamConnectionPolicyTest {
             "No response from server",
             "Handshake failed",
             "Error configure stream, connection reset",
-            "Connection failed: timeout"
+            "Connection failed: timeout",
+            "onStatus: NetConnection.Connect.Closed",
+            "onStatus: NetStream.Publish.Failed"
         ).forEach { reason ->
             assertTrue(reason, StreamConnectionPolicy.isRetryableReason(reason))
+        }
+    }
+
+    @Test
+    fun permanentServerRejectionsAreTerminal() {
+        listOf(
+            "onStatus: NetStream.Publish.BadName",
+            "onStatus: NetConnection.Connect.Rejected"
+        ).forEach { reason ->
+            assertFalse(reason, StreamConnectionPolicy.isRetryableReason(reason))
+            assertEquals(
+                reason,
+                RecoveryAction.Stop(StreamConnectionPolicy.terminalFailureMessage(reason)),
+                StreamConnectionPolicy.decideConnectionFailed(
+                    StreamRecoveryState(phase = StreamPhase.LIVE),
+                    stopping = false, hasStream = true, hasProjection = true, reason = reason
+                )
+            )
         }
     }
 

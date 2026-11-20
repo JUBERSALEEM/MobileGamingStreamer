@@ -51,18 +51,36 @@ class RtmpBroadcastService : Service() {
     private var lastBitrate = 0L
     private var lastPositiveBitrateAt = 0L
     private var stopping = false
-    private var recovery = StreamRecoveryState()
-    private var pendingRetryReason = ""
     private val handler = Handler(Looper.getMainLooper())
     private val startupTimeout = Runnable {
-        if (display != null && !streamingConfirmed && recovery.phase != StreamPhase.RECONNECTING) {
+        if (display != null && recoveryDriver.isStartupBoundActive(streamingConfirmed)) {
             stopBroadcast("No outgoing video bitrate after 25 seconds. Encoder or RTMP startup failed.")
         }
     }
     // Socket-only recovery: re-establishes the RTMP connection through
     // RootEncoder's retry API. Capture, encoders, mixer and the
     // MediaProjection session are never touched on this path.
-    private val reconnectRunnable = Runnable { firePendingRetry() }
+    private val reconnectRunnable: Runnable = Runnable {
+        when (val effect = recoveryDriver.onRetryTimerFired(stopping, display != null)) {
+            is RecoveryEffect.Stop -> stopBroadcast(effect.message)
+            else -> { }
+        }
+    }
+    // Explicit types break the declaration-inference cycle between the
+    // runnable, the timer seam and the driver (they reference each other).
+    private val recoveryTimer: RecoveryTimer = object : RecoveryTimer {
+        override fun schedule(delayMs: Long) {
+            handler.removeCallbacks(reconnectRunnable)
+            handler.postDelayed(reconnectRunnable, delayMs)
+        }
+        override fun cancel() {
+            handler.removeCallbacks(reconnectRunnable)
+        }
+    }
+    private val socketRetrier: SocketRetrier = SocketRetrier { reason ->
+        display?.getStreamClient()?.reTry(0L, reason) == true
+    }
+    private val recoveryDriver: StreamRecoveryDriver = StreamRecoveryDriver(recoveryTimer, socketRetrier)
     private val sessionHeartbeat = object : Runnable {
         override fun run() {
             if (display != null) {
@@ -78,8 +96,8 @@ class RtmpBroadcastService : Service() {
     private val streamHealthWatchdog = object : Runnable {
         override fun run() {
             if (display == null || stopping) return
-            when (StreamConnectionPolicy.decideWatchdog(
-                recovery, streamingConfirmed, lastPositiveBitrateAt, SystemClock.elapsedRealtime()
+            when (recoveryDriver.onWatchdogTick(
+                streamingConfirmed, lastPositiveBitrateAt, SystemClock.elapsedRealtime()
             )) {
                 WatchdogAction.STOP_STALLED -> {
                     stopBroadcast("Stream output stalled for 20 seconds. Check your network, then tap GO LIVE and approve a fresh screen-capture session.")
@@ -147,14 +165,12 @@ class RtmpBroadcastService : Service() {
         handler.removeCallbacks(startupTimeout)
         handler.removeCallbacks(streamHealthWatchdog)
         handler.removeCallbacks(sessionHeartbeat)
-        handler.removeCallbacks(reconnectRunnable)
+        recoveryDriver.startSession()
         // Suppress callbacks from a previous stream while its resources are released.
         stopping = true
         streamingConfirmed = false
         lastBitrate = 0L
         lastPositiveBitrateAt = 0L
-        recovery = StreamRecoveryState(phase = StreamPhase.STARTING)
-        pendingRetryReason = ""
         display?.let { previous ->
             try { previous.release() } catch (_: Exception) { }
             display = null
@@ -185,40 +201,49 @@ class RtmpBroadcastService : Service() {
             )
             var activeProfileLabel = "Preparing video profile"
         val checker = object : ConnectChecker {
-                override fun onConnectionStarted(url: String) = update("Connecting to streaming server…")
+                override fun onConnectionStarted(url: String) {
+                    if (stopping) return
+                    update("Connecting to streaming server…")
+                }
                 override fun onConnectionSuccess() {
-                    val wasReconnecting = recovery.phase == StreamPhase.RECONNECTING
-                    recovery = StreamConnectionPolicy.onConnectionSuccess(recovery)
-                    if (!streamingConfirmed) {
-                        // A reconnected socket still has to produce frames; re-arm
-                        // the startup bound that scheduling a retry had removed.
-                        handler.removeCallbacks(startupTimeout)
-                        handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
+                    if (stopping) return
+                    val wasReconnecting = recoveryDriver.onConnectionSuccess()
+                    if (wasReconnecting) {
+                        // Restore the library retry budget consumed by the episode
+                        // just ended, so a later independent failure gets full
+                        // attempts again. RootEncoder only resets its counter on
+                        // explicit disconnect, never on success.
+                        try {
+                            display?.getStreamClient()?.setReTries(StreamConnectionPolicy.MAX_ATTEMPTS)
+                        } catch (_: Exception) { }
+                        if (!streamingConfirmed) {
+                            // A reconnected socket still has to produce frames;
+                            // re-arm the startup bound that scheduling the retry
+                            // had removed. Untouched on a plain first connect.
+                            handler.removeCallbacks(startupTimeout)
+                            handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
+                        }
+                        update("Reconnected • Waiting for video frames")
+                    } else {
+                        update("RTMP connected • Waiting for video frames")
                     }
-                    if (wasReconnecting) update("Reconnected • Waiting for video frames")
-                    else update("RTMP connected • Waiting for video frames")
                 }
                 override fun onConnectionFailed(reason: String) {
                     Log.e(TAG, "RTMP connection failed: $reason")
-                    when (val action = StreamConnectionPolicy.decideConnectionFailed(
-                        recovery, stopping, display != null, activeProjection != null, reason
+                    when (val effect = recoveryDriver.onConnectionFailed(
+                        reason, stopping, display != null, activeProjection != null,
+                        SystemClock.elapsedRealtime()
                     )) {
-                        is RecoveryAction.ScheduleRetry -> {
-                            recovery = StreamConnectionPolicy.onRetryScheduled(
-                                recovery, SystemClock.elapsedRealtime()
-                            )
-                            pendingRetryReason = reason
+                        is RecoveryEffect.Publish -> {
                             lastBitrate = 0L
                             lastPositiveBitrateAt = 0L
                             handler.removeCallbacks(startupTimeout)
                             handler.removeCallbacks(streamHealthWatchdog)
                             handler.postDelayed(streamHealthWatchdog, STREAM_HEALTH_CHECK_INTERVAL_MS)
-                            update(StreamConnectionPolicy.reconnectMessage(action.attempt), 0L)
-                            handler.removeCallbacks(reconnectRunnable)
-                            handler.postDelayed(reconnectRunnable, action.delayMs)
+                            update(effect.message, 0L)
                         }
-                        is RecoveryAction.Stop -> stopBroadcast(action.message)
-                        RecoveryAction.Ignore -> { }
+                        is RecoveryEffect.Stop -> stopBroadcast(effect.message)
+                        RecoveryEffect.None -> { }
                     }
                 }
                 override fun onDisconnect() {
@@ -227,8 +252,7 @@ class RtmpBroadcastService : Service() {
                     handler.removeCallbacks(startupTimeout)
                     handler.removeCallbacks(streamHealthWatchdog)
                     handler.removeCallbacks(sessionHeartbeat)
-                    handler.removeCallbacks(reconnectRunnable)
-                    recovery = StreamConnectionPolicy.onStopped(recovery)
+                    recoveryDriver.onStop()
                     streamingConfirmed = false
                     lastBitrate = 0L
                     val disconnected = display
@@ -247,9 +271,14 @@ class RtmpBroadcastService : Service() {
                 override fun onAuthError() {
                     stopBroadcast("Stream authentication failed. Check the stream key.")
                 }
-                override fun onAuthSuccess() = update("Stream key accepted")
+                override fun onAuthSuccess() {
+                    if (stopping) return
+                    update("Stream key accepted")
+                }
                 override fun onNewBitrate(bitrate: Long) {
+                    if (stopping) return
                     if (bitrate > 0L) {
+                        recoveryDriver.onPositiveBitrate()
                         val firstConfirmation = !streamingConfirmed
                         streamingConfirmed = true
                         lastBitrate = bitrate
@@ -359,7 +388,7 @@ class RtmpBroadcastService : Service() {
             display = stream
             stream.setFpsListener { outputFps ->
                 handler.post {
-                    if (display === stream && streamingConfirmed && recovery.phase != StreamPhase.RECONNECTING) {
+                    if (display === stream && streamingConfirmed && recoveryDriver.state.phase != StreamPhase.RECONNECTING) {
                         update("LIVE • $activeProfileLabel • ${outputFps} FPS • ${lastBitrate / 1000} kbps", lastBitrate)
                     }
                 }
@@ -381,33 +410,13 @@ class RtmpBroadcastService : Service() {
         }
     }
 
-    /**
-     * Fires one scheduled socket-only reconnect attempt. Only the RTMP
-     * connection is re-established; capture, encoders, mixer and the
-     * MediaProjection session keep running untouched.
-     */
-    private fun firePendingRetry() {
-        val stream = display
-        if (stream == null || stopping) return
-        val attempt = recovery.attemptsUsed + 1
-        recovery = StreamConnectionPolicy.onRetryFired(recovery, attempt)
-        val accepted = try {
-            stream.getStreamClient().reTry(0L, pendingRetryReason)
-        } catch (_: Exception) {
-            false
-        }
-        if (!accepted) stopBroadcast(StreamConnectionPolicy.exhaustedMessage())
-    }
-
     private fun stopBroadcast(message: String = "Broadcast stopped") {
         if (stopping) return
         stopping = true
         handler.removeCallbacks(startupTimeout)
         handler.removeCallbacks(streamHealthWatchdog)
         handler.removeCallbacks(sessionHeartbeat)
-        handler.removeCallbacks(reconnectRunnable)
-        recovery = StreamConnectionPolicy.onStopped(recovery)
-        pendingRetryReason = ""
+        recoveryDriver.onStop()
         streamingConfirmed = false
         lastBitrate = 0L
         val active = display
@@ -462,7 +471,7 @@ class RtmpBroadcastService : Service() {
     private fun update(message: String, bitrate: Long = 0L) {
         // A session whose socket dropped is never reported live, even though
         // the confirmation flag from before the outage is retained.
-        val live = streamingConfirmed && lastBitrate > 0L && recovery.phase != StreamPhase.RECONNECTING
+        val live = streamingConfirmed && lastBitrate > 0L && recoveryDriver.state.phase != StreamPhase.RECONNECTING
         publishState(live, message, if (bitrate > 0L) bitrate else lastBitrate)
         notifications.notify(NOTIFICATION_ID, notification(message))
     }
@@ -543,6 +552,7 @@ class RtmpBroadcastService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        recoveryDriver.onDestroyed()
         if (commandReceiverRegistered) {
             try { unregisterReceiver(commandReceiver) } catch (_: IllegalArgumentException) { }
             commandReceiverRegistered = false

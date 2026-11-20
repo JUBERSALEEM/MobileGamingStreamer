@@ -91,14 +91,18 @@ object StreamConnectionPolicy {
 
     /**
      * True when a connection-failure reason is worth retrying. Authentication
-     * failures and malformed endpoints are terminal: retrying them can never
-     * succeed and only burns battery. This mirrors RootEncoder's own
-     * `RtmpClient.shouldRetry` exclusion for malformed endpoints.
+     * failures, malformed endpoints and explicit permanent server rejections
+     * (bad stream name / rejected connection) are terminal: retrying them
+     * can never succeed and only burns battery. This mirrors RootEncoder's
+     * own `RtmpClient.shouldRetry` exclusion for malformed endpoints.
+     * Ambiguous server drops ("Closed", "Publish.Failed") stay retryable:
+     * they can be transient, and the attempt/overall bounds cap the cost.
      */
     fun isRetryableReason(reason: String): Boolean {
         val lower = reason.lowercase()
         if ("endpoint malformed" in lower) return false
         if ("auth" in lower) return false
+        if ("badname" in lower || "rejected" in lower) return false
         return true
     }
 
