@@ -5,6 +5,7 @@ import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.EGLContext
 import android.opengl.EGLDisplay
+import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
@@ -200,7 +201,16 @@ internal class SceneCompositorGL(
         if (handle == null) return // Counted drop/reject: skip the draw.
         try {
             drawFrameLocked(surfaceTexture)
-            EGL14.eglPresentationTimeANDROID(eglDisplay, eglSurface, metadata.timestampNs)
+            // EGL_ANDROID_presentation_time: present-time is timestamp currency
+            // for EGL producers (per the SurfaceTexture contract), so the
+            // captured monotonic-nanoseconds timestamp keeps its clock domain
+            // across the compositor hop. EGLExt is API 18+ (minSdk 29), so no
+            // availability guard is possible or needed; the EGLBoolean result
+            // is checked and a failure is loud (frame still swaps in queue
+            // order on arrival-time fallback, matching swap handling below).
+            if (!EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, metadata.timestampNs)) {
+                Log.e(TAG, "eglPresentationTimeANDROID failed for ts=${metadata.timestampNs}")
+            }
             if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
                 // Library-lenient (SurfaceManager.swapBuffers only logs):
                 // keep the cadence; a dead output freezes like a direct-path
