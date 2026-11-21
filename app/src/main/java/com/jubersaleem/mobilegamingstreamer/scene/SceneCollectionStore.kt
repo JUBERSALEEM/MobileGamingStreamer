@@ -44,38 +44,21 @@ class SceneCollectionStore(private val prefs: SharedPreferences) {
     /**
      * Loads and validates collection metadata. The full resolution
      * core ([SceneCollectionCodec.resolveStoredCollections]) is pure
-     * and JVM-tested; this method adds the prefs plumbing plus the
-     * Scene.liveActive migration floor (K1 scope floor per the class
-     * KDoc: only when collections keys are ABSENT).
+     * and JVM-tested; this method adds the prefs plumbing. Absent
+     * keys resolve to All Scenes (fresh/migration floor, see the
+     * class KDoc); the live scene is never consulted or changed.
      */
     fun load(knownSceneIds: Set<String>): LoadedCollectionState {
         val hasKeys = prefs.contains(KEY_COLLECTIONS) ||
             prefs.contains(KEY_ACTIVE_COLLECTION) ||
             prefs.contains(KEY_DEFAULT_COLLECTION)
-        var resolution = SceneCollectionCodec.resolveStoredCollections(
+        val resolution = SceneCollectionCodec.resolveStoredCollections(
             storedCollections = prefs.getString(KEY_COLLECTIONS, null),
             storedActive = prefs.getString(KEY_ACTIVE_COLLECTION, null),
             storedDefault = prefs.getString(KEY_DEFAULT_COLLECTION, null),
             knownSceneIds = knownSceneIds
         )
-        var rewriteActive = resolution.rewriteActive
-        var rewriteDefault = resolution.rewriteDefault
-        // LIVE migration floor (keys absent only): source the stored
-        // default Scene LIVE id so an unmigrated device still lands
-        // on a coherent starting view instead of bare All Scenes.
-        if (!hasKeys) {
-            val sceneDefaults = runCatching { ScenePrefsStore(prefs).load() }.getOrNull()
-            val migrated = sceneDefaults?.activeSceneId.takeUnless { it.isNullOrBlank() }
-            if (migrated != null) {
-                resolution = resolution.copy(defaultCollectionId = migrated)
-                rewriteDefault = true
-                if (resolution.activeCollectionId == ALL_SCENES_COLLECTION_ID) {
-                    resolution = resolution.copy(activeCollectionId = migrated)
-                    rewriteActive = true
-                }
-            }
-        }
-        if (resolution.rewriteCollections || rewriteActive || rewriteDefault) {
+        if (resolution.rewriteCollections || resolution.rewriteActive || resolution.rewriteDefault) {
             prefs.edit()
                 .putString(KEY_COLLECTIONS, resolution.repairedEncoding)
                 .putString(KEY_ACTIVE_COLLECTION, resolution.activeCollectionId)
