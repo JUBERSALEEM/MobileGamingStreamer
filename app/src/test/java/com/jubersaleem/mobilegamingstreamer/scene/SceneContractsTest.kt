@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 /**
@@ -154,6 +155,72 @@ class SceneContractsTest {
         assertEquals(listOf("b", "a"), composition.layersInDrawOrder.map { it.id })
         assertNotNull(composition.findById("a"))
         assertNull(composition.findById("intruder"))
+    }
+
+    @Test
+    fun exposedDrawOrderRejectsClearThroughMutableCast() {
+        val composition = SceneComposition.of(
+            listOf(
+                SceneLayer("b", "screen", zOrder = 1),
+                SceneLayer("a", "screen", zOrder = 0)
+            )
+        )!!
+        try {
+            (composition.layersInDrawOrder as MutableList<SceneLayer>).clear()
+            fail("clear() on the exposed draw order must throw")
+        } catch (expected: UnsupportedOperationException) {
+            // Required: mutation is rejected, never applied.
+        }
+        assertEquals(2, composition.size)
+        assertEquals(listOf("a", "b"), composition.layersInDrawOrder.map { it.id })
+    }
+
+    @Test
+    fun exposedDrawOrderRejectsAddAndSetThroughMutableCast() {
+        // Two layers: without the unmodifiable wrapper the runtime list is a
+        // fixed-size Arrays$ArrayList, where add() throws but set() succeeds
+        // and silently replaces composition state. The set() attempt below is
+        // the genuine regression test for that hole.
+        val composition = SceneComposition.of(
+            listOf(
+                SceneLayer("a", "screen", zOrder = 1),
+                SceneLayer("b", "screen", zOrder = 0)
+            )
+        )!!
+        try {
+            (composition.layersInDrawOrder as MutableList<SceneLayer>)
+                .add(SceneLayer("intruder", "screen"))
+            fail("add() on the exposed draw order must throw")
+        } catch (expected: UnsupportedOperationException) {
+            // Required.
+        }
+        try {
+            (composition.layersInDrawOrder as MutableList<SceneLayer>)[0] =
+                SceneLayer("replaced", "screen")
+            fail("set() on the exposed draw order must throw")
+        } catch (expected: UnsupportedOperationException) {
+            // Required: without the wrapper this silently corrupts state.
+        }
+        assertEquals(2, composition.size)
+        assertEquals(listOf("b", "a"), composition.layersInDrawOrder.map { it.id })
+        assertNull(composition.findById("intruder"))
+        assertNull(composition.findById("replaced"))
+    }
+
+    @Test
+    fun mutatingVisibleListSnapshotCannotAffectComposition() {
+        // visibleLayersInDrawOrder builds a fresh list per access: mutating
+        // the returned snapshot must leave composition state untouched.
+        val composition = SceneComposition.of(
+            listOf(
+                SceneLayer("a", "screen", zOrder = 0),
+                SceneLayer("b", "screen", zOrder = 1)
+            )
+        )!!
+        val snapshot = composition.visibleLayersInDrawOrder as MutableList<SceneLayer>
+        snapshot.clear()
+        assertEquals(2, composition.size)
+        assertEquals(listOf("a", "b"), composition.visibleLayersInDrawOrder.map { it.id })
     }
 
     @Test

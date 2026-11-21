@@ -1,5 +1,7 @@
 package com.jubersaleem.mobilegamingstreamer.scene
 
+import java.util.Collections
+
 /**
  * H0 scene contracts: the smallest coherent metadata model for future scene
  * composition. Pure Kotlin; no Android, EGL, Surface or frame types appear
@@ -54,9 +56,16 @@ internal data class SceneLayer(
  * Validated, immutably ordered layer collection. Draw order is back-to-front
  * (ascending [SceneLayer.zOrder], ties by ascending [SceneLayer.id]).
  * Empty is valid — it simply describes a scene with nothing in it.
+ *
+ * The exposed [layersInDrawOrder] is an unmodifiable view: mutation attempts —
+ * including through a MutableList cast — throw UnsupportedOperationException
+ * instead of corrupting composition state. Ordering is unaffected.
  */
 internal class SceneComposition private constructor(
-    /** Back-to-front snapshot; mutating the input list later cannot affect it. */
+    /**
+     * Back-to-front snapshot; mutating the input list later cannot affect it,
+     * and this view itself rejects mutation.
+     */
     val layersInDrawOrder: List<SceneLayer>
 ) {
     val size: Int get() = layersInDrawOrder.size
@@ -77,8 +86,14 @@ internal class SceneComposition private constructor(
             if (layers.size > MAX_SCENE_LAYERS) return null
             if (layers.any { !it.isValid }) return null
             if (layers.map { it.id }.toSet().size != layers.size) return null
+            // sortedWith returns a fixed-size Arrays$ArrayList at runtime: add and
+            // clear throw, but set() succeeds and would replace composition
+            // state through a MutableList cast. Wrap it so every mutation
+            // attempt fails fast instead.
             return SceneComposition(
-                layers.sortedWith(compareBy({ it.zOrder }, { it.id }))
+                Collections.unmodifiableList(
+                    layers.sortedWith(compareBy({ it.zOrder }, { it.id }))
+                )
             )
         }
     }
