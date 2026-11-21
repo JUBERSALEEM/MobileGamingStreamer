@@ -48,11 +48,6 @@ class RtmpBroadcastService : Service() {
     private var lastPositiveBitrateAt = 0L
     private var lastPositiveFpsAt = 0L
     private var stopping = false
-    // Session identity for async callbacks (Phase E). Library callbacks and
-    // the projection callback can already be queued when a session ends; the
-    // gate rejects any callback whose token predates the current session, so
-    // a stale post can never stop, publish for, or retry a newer session.
-    private val sessionGate = StreamSessionGate()
     private val healthMonitor = StreamHealthMonitor()
     private var lastWatchdogDiagnosisId: String? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -85,6 +80,11 @@ class RtmpBroadcastService : Service() {
         display?.getStreamClient()?.reTry(0L, reason) == true
     }
     private val recoveryDriver: StreamRecoveryDriver = StreamRecoveryDriver(recoveryTimer, socketRetrier)
+    // Routing seam for async callbacks (Phase E). Owns the session gate and
+    // shares the driver above: every callback decision (stale/stopping guard,
+    // driver call, effect selection) runs here so JVM tests execute the real
+    // routing; the service only captures tokens and executes effects.
+    private val callbackRouter = StreamCallbackRouter(recoveryDriver)
     private val sessionHeartbeat = object : Runnable {
         override fun run() {
             if (display != null) {
@@ -208,7 +208,7 @@ class RtmpBroadcastService : Service() {
         // Invalidate old ownership BEFORE releasing previous resources:
         // release() itself triggers an async library onDisconnect that must
         // not touch the session built below.
-        val sessionToken = sessionGate.beginSession()
+        val sessionToken = callbackRouter.beginSession()
         handler.removeCallbacks(startupTimeout)
         handler.removeCallbacks(streamHealthWatchdog)
         handler.removeCallbacks(sessionHeartbeat)
@@ -252,14 +252,12 @@ class RtmpBroadcastService : Service() {
             var activeProfileLabel = "Preparing video profile"
         val checker = object : ConnectChecker {
                 override fun onConnectionStarted(url: String) {
-                    if (!sessionGate.isCurrent(sessionToken)) return
-                    if (stopping) return
+                    if (!callbackRouter.onConnectionStarted(sessionToken, stopping)) return
                     update("Connecting to streaming server…")
                 }
                 override fun onConnectionSuccess() {
-                    if (!sessionGate.isCurrent(sessionToken)) return
-                    if (stopping) return
-                    when (recoveryDriver.onConnectionSuccess(SystemClock.elapsedRealtime())) {
+                    when (callbackRouter.onConnectionSuccess(sessionToken, stopping, SystemClock.elapsedRealtime())) {
+                        null -> { }
                         SuccessOutcome.RECOVERED -> {
                             // Restore the library retry budget consumed by the episode
                             // just ended, so a later independent failure gets full
@@ -286,12 +284,12 @@ class RtmpBroadcastService : Service() {
                     }
                 }
                 override fun onConnectionFailed(reason: String) {
-                    if (!sessionGate.isCurrent(sessionToken)) return
-                    Log.e(TAG, "RTMP connection failed: $reason")
-                    when (val effect = recoveryDriver.onConnectionFailed(
-                        reason, stopping, display != null, activeProjection != null,
+                    val effect = callbackRouter.onConnectionFailed(
+                        sessionToken, reason, stopping, display != null, activeProjection != null,
                         SystemClock.elapsedRealtime()
-                    )) {
+                    ) ?: return
+                    Log.e(TAG, "RTMP connection failed: $reason")
+                    when (effect) {
                         is RecoveryEffect.Publish -> {
                             lastBitrate = 0L
                             lastPositiveBitrateAt = 0L
@@ -305,8 +303,7 @@ class RtmpBroadcastService : Service() {
                     }
                 }
                 override fun onDisconnect() {
-                    if (!sessionGate.isCurrent(sessionToken)) return
-                    if (stopping) return
+                    if (!callbackRouter.onDisconnect(sessionToken, stopping)) return
                     stopping = true
                     handler.removeCallbacks(startupTimeout)
                     handler.removeCallbacks(streamHealthWatchdog)
@@ -331,42 +328,41 @@ class RtmpBroadcastService : Service() {
                     stopSelf()
                 }
                 override fun onAuthError() {
-                    if (!sessionGate.isCurrent(sessionToken)) return
+                    if (!callbackRouter.onAuthError(sessionToken)) return
                     stopBroadcast("Stream authentication failed. Check the stream key.")
                 }
                 override fun onAuthSuccess() {
-                    if (!sessionGate.isCurrent(sessionToken)) return
-                    if (stopping) return
+                    if (!callbackRouter.onAuthSuccess(sessionToken, stopping)) return
                     update("Stream key accepted")
                 }
                 override fun onNewBitrate(bitrate: Long) {
-                    if (!sessionGate.isCurrent(sessionToken)) return
-                    if (stopping) return
                     // Bitrate ticks during a reconnect episode carry no signal:
                     // the sender is stopped while the socket is down, and any
                     // stray tick must neither flap the status message nor fake
                     // a LIVE line while the episode is open. Only a connection
-                    // success may end the episode.
-                    if (recoveryDriver.state.phase == StreamPhase.RECONNECTING) return
-                    if (bitrate > 0L) {
-                        recoveryDriver.onPositiveBitrate()
-                        val firstConfirmation = !streamingConfirmed
-                        streamingConfirmed = true
-                        lastBitrate = bitrate
-                        lastPositiveBitrateAt = SystemClock.elapsedRealtime()
-                        handler.removeCallbacks(startupTimeout)
-                        if (firstConfirmation) {
-                            handler.removeCallbacks(streamHealthWatchdog)
-                            handler.postDelayed(streamHealthWatchdog, STREAM_HEALTH_CHECK_INTERVAL_MS)
+                    // success may end the episode. Guarded inside the router.
+                    when (val routing = callbackRouter.onNewBitrate(sessionToken, bitrate, stopping, streamingConfirmed)) {
+                        BitrateRouting.None -> { }
+                        BitrateRouting.Zero -> {
+                            lastBitrate = 0L
+                            update("Connected • Waiting for outgoing video", 0L)
                         }
-                        update("LIVE • ${bitrate / 1000} kbps", bitrate)
-                        if (firstConfirmation && Settings.canDrawOverlays(this@RtmpBroadcastService) &&
-                            !getSharedPreferences("mgs_preferences", MODE_PRIVATE).getBoolean(com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService.KEY_BUBBLE_DISMISSED, false)) {
-                            startService(Intent(this@RtmpBroadcastService, com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService::class.java))
+                        is BitrateRouting.Positive -> {
+                            val firstConfirmation = routing.firstConfirmation
+                            streamingConfirmed = true
+                            lastBitrate = routing.bitrate
+                            lastPositiveBitrateAt = SystemClock.elapsedRealtime()
+                            handler.removeCallbacks(startupTimeout)
+                            if (firstConfirmation) {
+                                handler.removeCallbacks(streamHealthWatchdog)
+                                handler.postDelayed(streamHealthWatchdog, STREAM_HEALTH_CHECK_INTERVAL_MS)
+                            }
+                            update("LIVE • ${routing.bitrate / 1000} kbps", routing.bitrate)
+                            if (firstConfirmation && Settings.canDrawOverlays(this@RtmpBroadcastService) &&
+                                !getSharedPreferences("mgs_preferences", MODE_PRIVATE).getBoolean(com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService.KEY_BUBBLE_DISMISSED, false)) {
+                                startService(Intent(this@RtmpBroadcastService, com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService::class.java))
+                            }
                         }
-                    } else {
-                        lastBitrate = 0L
-                        update("Connected • Waiting for outgoing video", 0L)
                     }
                 }
             }
@@ -397,7 +393,7 @@ class RtmpBroadcastService : Service() {
             val projectionCallback = object : MediaProjection.Callback() {
                 override fun onStop() {
                     handler.post {
-                        if (display != null && sessionGate.isCurrent(sessionToken)) {
+                        if (callbackRouter.onProjectionStop(sessionToken, display != null)) {
                             stopBroadcast("Screen capture permission ended")
                         }
                     }
@@ -686,7 +682,7 @@ class RtmpBroadcastService : Service() {
         // Terminal invalidation first: the display release below triggers an
         // async library onDisconnect that posts after destruction and must
         // not overwrite the terminal state published here.
-        sessionGate.invalidate()
+        callbackRouter.invalidate()
         handler.removeCallbacksAndMessages(null)
         recoveryDriver.onDestroyed()
         if (commandReceiverRegistered) {
