@@ -57,6 +57,7 @@ import com.jubersaleem.mobilegamingstreamer.scene.TEXT_COLOR_DEFAULT
 import com.jubersaleem.mobilegamingstreamer.scene.SceneImageLayer
 import com.jubersaleem.mobilegamingstreamer.scene.SceneImageLoader
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerKind
+import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerStyle
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayLayerInput
 import com.jubersaleem.mobilegamingstreamer.scene.ScenePreviewBoxes
