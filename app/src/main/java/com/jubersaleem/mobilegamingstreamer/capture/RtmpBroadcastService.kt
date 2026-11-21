@@ -34,6 +34,7 @@ import com.pedro.encoder.input.sources.audio.AudioSource
 import com.pedro.encoder.input.sources.audio.InternalAudioSource
 import com.pedro.encoder.input.sources.audio.MicrophoneSource
 import com.jubersaleem.mobilegamingstreamer.capture.VideoSourceFallbackPolicy
+import com.jubersaleem.mobilegamingstreamer.scene.SceneConfigCodec
 import com.jubersaleem.mobilegamingstreamer.scene.SceneSource
 import com.pedro.encoder.input.sources.video.ScreenSource
 import com.pedro.encoder.input.sources.video.VideoSource
@@ -474,19 +475,36 @@ class RtmpBroadcastService : Service() {
             // launches carry no extra, so the ScreenSource path below is
             // byte-identical in behavior; SceneSource is device-tested via
             // `am start ... --ez scene_source true` before GO LIVE.
-            val useSceneSource = intent.getBooleanExtra(EXTRA_SCENE_SOURCE, false)
+            // H5 scene delivery: the GO LIVE intent carries the encoded
+            // active scene (if any); it parses through the pure codec and
+            // H4 validation stays authoritative (invalid layers dropped).
+            // An explicit ADB scene_source extra keeps legacy extras
+            // behavior (validation override wins when both are present).
+            val explicitSceneExtra = intent.getBooleanExtra(EXTRA_SCENE_SOURCE, false)
+            val sceneConfigPresent = intent.hasExtra(EXTRA_SCENE_CONFIG)
+            val sceneSpecs = SceneConfigCodec.streamableSpecs(intent.getStringExtra(EXTRA_SCENE_CONFIG))
+            val useSceneSource = explicitSceneExtra || sceneSpecs.isNotEmpty()
             val sceneFallbackDone = intent.getBooleanExtra(EXTRA_SCENE_FALLBACK_DONE, false)
-            // Sanitized: text length only, never content.
+            // Sanitized: counts and text lengths only, never content.
             val sceneText = intent.getStringExtra(EXTRA_SCENE_TEXT)
             val sceneText2 = intent.getStringExtra(EXTRA_SCENE_TEXT2)
             Log.i(TAG, "Video source requested=" + if (useSceneSource) "SceneSource" else "ScreenSource" +
                 " selected=" + if (useSceneSource) "SceneSource compositor passthrough"
                 else "ScreenSource direct passthrough" +
                 if (sceneFallbackDone) " (scene fallback retry)" else "" +
+                if (!explicitSceneExtra && sceneSpecs.isNotEmpty()) " scene=${sceneSpecs.size} layers" else "" +
+                if (!explicitSceneExtra && sceneConfigPresent && sceneSpecs.isEmpty()) " scene invalid, defaulting" else "" +
                 if (useSceneSource && !sceneText.isNullOrBlank()) " text=${sceneText.length} chars" else "" +
                 if (useSceneSource && !sceneText2.isNullOrBlank()) " text2=${sceneText2.length} chars" else "")
             val videoSource: VideoSource = if (useSceneSource) {
-                SceneSource(this, mediaProjection, sceneText, sceneText2)
+                if (!explicitSceneExtra && sceneSpecs.isNotEmpty()) {
+                    SceneSource(
+                        this, mediaProjection,
+                        sceneConfig = intent.getStringExtra(EXTRA_SCENE_CONFIG)
+                    )
+                } else {
+                    SceneSource(this, mediaProjection, sceneText, sceneText2)
+                }
             } else {
                 ScreenSource(this, mediaProjection)
             }
@@ -570,10 +588,15 @@ class RtmpBroadcastService : Service() {
                 val reason = error.message ?: error.javaClass.simpleName
                 Log.e(TAG, "SceneSource start failed ($reason); falling back to ScreenSource", error)
                 publishState(false, BroadcastStatusMessages.sceneFallbackMessage(reason), 0L)
+                // The retry strips the scene configuration (not just the
+                // source flag): a preserved scene_config would reselect
+                // SceneSource and the "fallback" would retry the scene
+                // instead of the default source.
                 startBroadcast(Intent(intent)
                     .putExtra(EXTRA_SCENE_SOURCE, false)
                     .putExtra(EXTRA_SCENE_FALLBACK_DONE, true)
-                    .putExtra(EXTRA_SCENE_FALLBACK_REASON, reason))
+                    .putExtra(EXTRA_SCENE_FALLBACK_REASON, reason)
+                    .removeExtra(EXTRA_SCENE_CONFIG))
             } else {
                 Log.e(TAG, "Unable to start RTMP broadcast", error)
                 stopBroadcast(BroadcastStatusMessages.UNABLE_TO_START_PREFIX + (error.message ?: "encoder error"))
@@ -861,6 +884,7 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_SCENE_FALLBACK_REASON = "scene_fallback_reason"
         const val EXTRA_SCENE_TEXT = "scene_text"
         const val EXTRA_SCENE_TEXT2 = "scene_text2"
+        const val EXTRA_SCENE_CONFIG = "scene_config"
         const val AUDIO_MODE_MIC = "MIC"
         const val AUDIO_MODE_GAME = "GAME"
         const val AUDIO_MODE_BOTH = "BOTH"

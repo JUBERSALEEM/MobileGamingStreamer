@@ -46,7 +46,8 @@ class SceneSource(
     context: Context,
     private val mediaProjection: MediaProjection,
     private val textContent: String? = null,
-    private val subtextContent: String? = null
+    private val subtextContent: String? = null,
+    private val sceneConfig: String? = null
 ) : VideoSource() {
 
     // Mirrors ScreenSource: dpi snapshot from context, context not retained.
@@ -81,7 +82,14 @@ class SceneSource(
         try {
             val output = Surface(librarySurfaceTexture)
             outputSurface = output
-            val gl = SceneCompositorGL(controller, output, activeLayout, textContent, subtextContent)
+            // H5 scene path: decode the validated editor configuration
+            // (service-selected only when non-empty; decode is
+            // deterministic so this agrees with the service decision).
+            val editorSpecs = SceneConfigCodec.streamableSpecs(sceneConfig)
+            val gl = SceneCompositorGL(
+                controller, output, activeLayout, textContent, subtextContent,
+                editorSpecs.ifEmpty { null }
+            )
             compositor = gl
             val input = gl.start() // Latch-inits EGL + input endpoint; throws on failure.
             val callback = object : MediaProjection.Callback() {
@@ -104,7 +112,8 @@ class SceneSource(
             // Sanitized: text length only, never content.
             Log.i(TAG, "started: ${activeLayout.displayWidth}x${activeLayout.displayHeight} dpi=$densityDpi" +
                 if (textContent.isNullOrBlank()) "" else " text=${textContent.length} chars" +
-                if (subtextContent.isNullOrBlank()) "" else " text2=${subtextContent.length} chars")
+                if (subtextContent.isNullOrBlank()) "" else " text2=${subtextContent.length} chars" +
+                if (sceneConfig.isNullOrBlank()) "" else " sceneLayers=${editorSpecs.size}")
         } catch (error: Throwable) {
             // Sanitized: framework error text only, never URLs or keys.
             Log.e(TAG, "SceneSource start failed (${error.message ?: error.javaClass.simpleName}); torn down", error)

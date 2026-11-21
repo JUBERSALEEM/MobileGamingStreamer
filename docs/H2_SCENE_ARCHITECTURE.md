@@ -185,6 +185,11 @@ adb shell am start -n com.jubersaleem.mobilegamingstreamer/.MainActivity --ez sc
 then GO LIVE in the app. Normal launch → `ScreenSource` again. No UI, no
 prefs, no new permissions.
 
+H5 update: the Scene Editor path sets `EXTRA_SCENE_SOURCE=true` together
+with `EXTRA_SCENE_CONFIG` when (and only when) a valid non-empty scene
+is active; launches with no valid scene keep the default above. An
+explicit ADB extra keeps legacy extras behavior (validation override).
+
 ## 11. Device validation (user-run; S25 Ultra, passthrough only)
 
 Maintainer must verify before any layer work: (1) GO LIVE with the extra,

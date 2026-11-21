@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Text
@@ -32,11 +33,14 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
+import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
 
 /** The clay navigation dock entries. */
 private val clayNavItems = listOf(
     ClayNavItem("STUDIO", "Studio", Icons.Rounded.Home),
     ClayNavItem("STREAM", "Stream", Icons.Rounded.PlayArrow),
+    ClayNavItem("SCENES", "Scenes", Icons.Rounded.Layers),
     ClayNavItem("AUDIO", "Audio", Icons.Rounded.GraphicEq),
     ClayNavItem("TOOLS", "Tools", Icons.Rounded.Build),
     ClayNavItem("SETTINGS", "Settings", Icons.Rounded.Settings)
@@ -68,7 +72,12 @@ data class StudioUiState(
     val orientation: String = "LANDSCAPE",
     val audioMode: String = "BALANCED",
     val showStreamKeyDialog: Boolean = false,
-    val showAccessibilityDisclosure: Boolean = false
+    val showAccessibilityDisclosure: Boolean = false,
+    val scenes: List<StreamScene> = emptyList(),
+    val activeSceneId: String? = null,
+    val editingSceneId: String? = null,
+    val sceneDeleteTargetName: String? = null,
+    val sceneError: String? = null
 )
 
 /** Callbacks the shell triggers, implemented by the activity. */
@@ -91,7 +100,25 @@ data class StudioActions(
     val onQualityChange: (String) -> Unit = {},
     val onFpsChange: (String) -> Unit = {},
     val onOrientationChange: (String) -> Unit = {},
-    val onAudioModeChange: (String) -> Unit = {}
+    val onAudioModeChange: (String) -> Unit = {},
+    val onCreateScene: () -> Unit = {},
+    val onActiveScene: (String) -> Unit = {},
+    val onEditScene: (String?) -> Unit = {},
+    val onDuplicateScene: (String) -> Unit = {},
+    val onDeleteScene: (String) -> Unit = {},
+    val onConfirmDeleteScene: () -> Unit = {},
+    val onDismissDeleteScene: () -> Unit = {},
+    val onRenameScene: (String, String) -> Unit = { _, _ -> },
+    val onAddLayer: (String) -> Unit = {},
+    val onRemoveLayer: (String, String) -> Unit = { _, _ -> },
+    val onMoveLayer: (String, String, Boolean) -> Unit = { _, _, _ -> },
+    val onToggleLayer: (String, String) -> Unit = { _, _ -> },
+    val onLayerText: (String, String, String) -> Unit = { _, _, _ -> },
+    val onLayerAnchor: (String, String, SceneOverlayAnchor) -> Unit = { _, _, _ -> },
+    val onLayerMargin: (String, String, Int) -> Unit = { _, _, _ -> },
+    val onLayerMaxWidth: (String, String, Int) -> Unit = { _, _, _ -> },
+    val onLayerAlpha: (String, String, Float) -> Unit = { _, _, _ -> },
+    val onDismissSceneError: () -> Unit = {}
 )
 
 /**
@@ -111,6 +138,21 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
         ) {
             Text(
                 text = "Mobile Gaming Streamer uses Android's Accessibility Service to help capture your microphone while BGMI is using voice chat. The service listens for window-state changes only. It does not read screen text, retrieve window content, perform gestures or control other apps. Your microphone audio is included in the live stream you start. You can decline or disable this service at any time in Android settings.",
+                color = palette.muted,
+                fontSize = 12.sp,
+                lineHeight = 18.sp
+            )
+        }
+    }
+    if (state.sceneDeleteTargetName != null) {
+        ClayDialog(
+            title = "Delete scene",
+            onDismiss = actions.onDismissDeleteScene,
+            confirmLabel = "DELETE SCENE",
+            onConfirm = actions.onConfirmDeleteScene
+        ) {
+            Text(
+                text = "Delete \"" + state.sceneDeleteTargetName + "\" and all its layers? This cannot be undone.",
                 color = palette.muted,
                 fontSize = 12.sp,
                 lineHeight = 18.sp
@@ -215,6 +257,28 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
                         streamAudioMuted = state.streamAudioMuted,
                         audioCaptureActive = state.audioCaptureActive,
                         onEnableAccessibility = actions.onEnableAccessibility
+                    )
+                    "SCENES" -> SceneEditorPage(
+                        scenes = state.scenes,
+                        activeSceneId = state.activeSceneId,
+                        editingSceneId = state.editingSceneId,
+                        sceneError = state.sceneError,
+                        onCreateScene = actions.onCreateScene,
+                        onActiveScene = actions.onActiveScene,
+                        onEditScene = actions.onEditScene,
+                        onDuplicateScene = actions.onDuplicateScene,
+                        onDeleteScene = actions.onDeleteScene,
+                        onRenameScene = actions.onRenameScene,
+                        onAddLayer = actions.onAddLayer,
+                        onRemoveLayer = actions.onRemoveLayer,
+                        onMoveLayer = actions.onMoveLayer,
+                        onToggleLayer = actions.onToggleLayer,
+                        onLayerText = actions.onLayerText,
+                        onLayerAnchor = actions.onLayerAnchor,
+                        onLayerMargin = actions.onLayerMargin,
+                        onLayerMaxWidth = actions.onLayerMaxWidth,
+                        onLayerAlpha = actions.onLayerAlpha,
+                        onDismissSceneError = actions.onDismissSceneError
                     )
                     "TOOLS" -> ToolsPage(
                         captureActive = state.captureActive,

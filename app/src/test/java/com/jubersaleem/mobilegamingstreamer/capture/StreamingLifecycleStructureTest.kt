@@ -173,6 +173,30 @@ class StreamingLifecycleStructureTest {
     }
 
     @Test
+    fun sceneConfigDeliveryToService() {
+        // H5 editor -> service contract: the GO LIVE intent carries the
+        // encoded scene; the service parses it through the pure codec and
+        // H4 validation (never around it) into the SceneSource layer list.
+        assertTrue(activity().contains("EXTRA_SCENE_CONFIG"))
+        assertTrue(service().contains("getStringExtra(EXTRA_SCENE_CONFIG)"))
+        assertTrue(service().contains("SceneConfigCodec.streamableSpecs"))
+        assertTrue(service().contains("sceneConfig = intent.getStringExtra(EXTRA_SCENE_CONFIG)"))
+        assertTrue(sceneSource().contains("SceneConfigCodec.streamableSpecs(sceneConfig)"))
+    }
+
+    @Test
+    fun sceneActivationKeepsDefaultWithoutValidScene() {
+        // SceneSource activates on the explicit ADB extra (legacy) or a
+        // non-empty validated spec list — never on a present-but-invalid
+        // config, which falls through to the ScreenSource default.
+        val body = functionBody(service(), "private fun startBroadcast(intent: Intent)")
+        assertTrue(body.contains("explicitSceneExtra || sceneSpecs.isNotEmpty()"))
+        assertTrue(body.contains("scene invalid, defaulting"))
+        assertTrue(body.contains("removeExtra(EXTRA_SCENE_CONFIG)"))
+        assertTrue(body.contains("ScreenSource(this, mediaProjection)"))
+    }
+
+    @Test
     fun projectionRevocationFlipsGuardWithoutStopping() {
         // Revocation flips the frame guard; teardown authority stays with
         // the service/library stop path — the source never stops anything.

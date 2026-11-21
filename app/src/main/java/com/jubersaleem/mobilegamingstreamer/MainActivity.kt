@@ -22,6 +22,15 @@ import com.jubersaleem.mobilegamingstreamer.capture.MgsMicAccessibilityService
 import com.jubersaleem.mobilegamingstreamer.capture.RtmpBroadcastService
 import com.jubersaleem.mobilegamingstreamer.capture.ScreenCaptureService
 import com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_SCENE_NAME_CHARS
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_STATIC_OVERLAY_LAYERS
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_STORED_SCENES
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_TEXT_LAYER_CHARS
+import com.jubersaleem.mobilegamingstreamer.scene.SceneConfigCodec
+import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
+import com.jubersaleem.mobilegamingstreamer.scene.SceneTextLayerLayout
+import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
+import com.jubersaleem.mobilegamingstreamer.scene.StreamSceneLayer
 
 class MainActivity : ComponentActivity() {
     private var status by mutableStateOf("Ready to stream")
@@ -51,6 +60,11 @@ class MainActivity : ComponentActivity() {
     private var pendingLive by mutableStateOf(false)
     private var waitingForOverlayPermission = false
     private var lastAnnouncedKind = BroadcastStatusKind.STANDBY
+    private var scenes by mutableStateOf(listOf<StreamScene>())
+    private var activeSceneId by mutableStateOf<String?>(null)
+    private var editingSceneId by mutableStateOf<String?>(null)
+    private var sceneDeleteTargetId by mutableStateOf<String?>(null)
+    private var sceneError by mutableStateOf<String?>(null)
 
     private val broadcastStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -151,18 +165,32 @@ class MainActivity : ComponentActivity() {
                 putExtra(RtmpBroadcastService.EXTRA_FPS, fps.toInt())
                 putExtra(RtmpBroadcastService.EXTRA_ORIENTATION, orientation)
                 putExtra(RtmpBroadcastService.EXTRA_AUDIO_MODE, audioMode)
-                // H2 scene seam: forwarded from our own launch intent (default
-                // false) so `am start ... --ez scene_source true` can select
-                // the compositor for device validation. Normal launches omit
-                // it, keeping the ScreenSource production path identical.
-                putExtra(RtmpBroadcastService.EXTRA_SCENE_SOURCE,
-                    getIntent().getBooleanExtra(RtmpBroadcastService.EXTRA_SCENE_SOURCE, false))
+                // H2 scene seam: an explicit launch-intent extra (default
+                // false) selects the compositor for device validation via
+                // `am start ... --ez scene_source true`. The H5 editor path
+                // below activates the same seam only with a valid scene;
+                // normal launches omit both, keeping the ScreenSource
+                // production path identical.
+                val adbSceneSource =
+                    getIntent().getBooleanExtra(RtmpBroadcastService.EXTRA_SCENE_SOURCE, false)
+                val sceneConfig = SceneConfigCodec.activeSceneEncoding(scenes, activeSceneId)
+                putExtra(
+                    RtmpBroadcastService.EXTRA_SCENE_SOURCE,
+                    adbSceneSource || sceneConfig != null
+                )
                 // H3 text layer: forwarded content (absent/null = no overlay).
                 putExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT,
                     getIntent().getStringExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT))
                 // H4 second overlay: forwarded content (absent/null = no layer).
                 putExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT2,
                     getIntent().getStringExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT2))
+                // H5 scene delivery: encoded active scene for the service
+                // (parsed through the pure codec + H4 validation there).
+                // Omitted on the legacy ADB path, which keeps H2/H3/H4
+                // extras behavior as the validation override.
+                if (!adbSceneSource && sceneConfig != null) {
+                    putExtra(RtmpBroadcastService.EXTRA_SCENE_CONFIG, sceneConfig)
+                }
             }
             try {
                 startForegroundService(liveIntent)
@@ -197,6 +225,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // H5 scenes: persisted source of truth, reloaded on every create
+        // (including Activity recreation); mutations write through.
+        val stored = ScenePrefsStore.load(this)
+        scenes = stored.scenes
+        activeSceneId = stored.activeSceneId
         notificationsAllowed = Build.VERSION.SDK_INT < 33 ||
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         if (Build.VERSION.SDK_INT >= 33 && !notificationsAllowed) {
@@ -239,7 +272,12 @@ class MainActivity : ComponentActivity() {
                         orientation = orientation,
                         audioMode = audioMode,
                         showStreamKeyDialog = showStreamKeyDialog,
-                        showAccessibilityDisclosure = showAccessibilityDisclosure
+                        showAccessibilityDisclosure = showAccessibilityDisclosure,
+                        scenes = scenes,
+                        activeSceneId = activeSceneId,
+                        editingSceneId = editingSceneId,
+                        sceneDeleteTargetName = scenes.firstOrNull { it.id == sceneDeleteTargetId }?.name,
+                        sceneError = sceneError
                     ),
                     actions = StudioActions(
                         onPageChange = { target -> page = target },
@@ -290,7 +328,52 @@ class MainActivity : ComponentActivity() {
                         onQualityChange = { quality = it },
                         onFpsChange = { fps = it },
                         onOrientationChange = { orientation = it },
-                        onAudioModeChange = { audioMode = it }
+                        onAudioModeChange = { audioMode = it },
+                        onCreateScene = { createScene() },
+                        onActiveScene = { id ->
+                            activeSceneId = id
+                            editingSceneId = id
+                            persistScenes()
+                        },
+                        onEditScene = { id -> editingSceneId = id },
+                        onDuplicateScene = { id -> duplicateScene(id) },
+                        onDeleteScene = { id -> sceneDeleteTargetId = id },
+                        onConfirmDeleteScene = { confirmDeleteScene() },
+                        onDismissDeleteScene = { sceneDeleteTargetId = null },
+                        onRenameScene = { id, name -> renameScene(id, name) },
+                        onAddLayer = { id -> addLayer(id) },
+                        onRemoveLayer = { sceneId, layerId -> removeLayer(sceneId, layerId) },
+                        onMoveLayer = { sceneId, layerId, towardFront ->
+                            moveLayer(sceneId, layerId, towardFront)
+                        },
+                        onToggleLayer = { sceneId, layerId -> toggleLayer(sceneId, layerId) },
+                        onLayerText = { sceneId, layerId, text ->
+                            updateLayerText(sceneId, layerId, text)
+                        },
+                        onLayerAnchor = { sceneId, layerId, anchor ->
+                            updateLayer(sceneId, layerId) { it.copy(anchor = anchor) }
+                        },
+                        onLayerMargin = { sceneId, layerId, margin ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(marginPx = margin.coerceIn(0, SCENE_LAYER_MAX_MARGIN_UI_PX))
+                            }
+                        },
+                        onLayerMaxWidth = { sceneId, layerId, maxWidth ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(
+                                    maxWidthPx = maxWidth.coerceIn(
+                                        SCENE_LAYER_MIN_MAX_WIDTH_UI_PX,
+                                        SCENE_LAYER_MAX_MAX_WIDTH_UI_PX
+                                    )
+                                )
+                            }
+                        },
+                        onLayerAlpha = { sceneId, layerId, alpha ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(alpha = alpha.coerceIn(0f, 1f))
+                            }
+                        },
+                        onDismissSceneError = { sceneError = null }
                     )
                 )
             }
@@ -321,6 +404,140 @@ class MainActivity : ComponentActivity() {
         broadcastStarting = true
         status = "Requesting screen/app selection permission…"
         requestProjection()
+    }
+
+    // ---- H5 scene editor mutations (write-through to prefs) ----
+
+    private fun persistScenes() {
+        ScenePrefsStore.save(this, scenes, activeSceneId ?: "")
+    }
+
+    private fun updateScene(id: String, transform: (StreamScene) -> StreamScene) {
+        scenes = scenes.map { if (it.id == id) transform(it).normalizedZ() else it }
+        persistScenes()
+    }
+
+    private fun updateLayer(
+        sceneId: String,
+        layerId: String,
+        transform: (StreamSceneLayer) -> StreamSceneLayer
+    ) {
+        updateScene(sceneId) { current ->
+            current.copy(
+                layers = current.layers.map { if (it.id == layerId) transform(it) else it }
+            )
+        }
+    }
+
+    private fun newLayerText(text: String, id: String, zOrder: Int) = StreamSceneLayer(
+        id = id,
+        text = text,
+        anchor = SceneOverlayAnchor.TOP_LEFT,
+        zOrder = zOrder,
+        marginPx = SceneTextLayerLayout.marginPxFor(1080),
+        maxWidthPx = 1920,
+        alpha = 1f
+    )
+
+    private fun createScene() {
+        if (scenes.size >= MAX_STORED_SCENES) {
+            sceneError = "Scene limit reached ($MAX_STORED_SCENES). Delete a scene to add another."
+            return
+        }
+        val scene = StreamScene(
+            id = SceneConfigCodec.freshSceneId(scenes),
+            name = SceneConfigCodec.freshSceneName(scenes),
+            layers = listOf(newLayerText("New text", "layer-1", 1))
+        )
+        scenes = scenes + scene
+        editingSceneId = scene.id
+        sceneError = null
+        persistScenes()
+    }
+
+    private fun duplicateScene(id: String) {
+        val source = scenes.firstOrNull { it.id == id } ?: return
+        if (scenes.size >= MAX_STORED_SCENES) {
+            sceneError = "Scene limit reached ($MAX_STORED_SCENES). Delete a scene to add another."
+            return
+        }
+        val copy = source.copy(
+            id = SceneConfigCodec.freshSceneId(scenes),
+            name = SceneConfigCodec.duplicateName(scenes, source.name)
+        )
+        scenes = scenes + copy
+        editingSceneId = copy.id
+        sceneError = null
+        persistScenes()
+    }
+
+    private fun confirmDeleteScene() {
+        val id = sceneDeleteTargetId ?: return
+        sceneDeleteTargetId = null
+        var remaining = scenes.filterNot { it.id == id }
+        if (remaining.isEmpty()) remaining = listOf(SceneConfigCodec.defaultScene())
+        scenes = remaining
+        if (remaining.none { it.id == activeSceneId }) activeSceneId = remaining.first().id
+        if (editingSceneId == id) editingSceneId = null
+        persistScenes()
+    }
+
+    private fun renameScene(id: String, name: String) {
+        // Raw transient text (blank allowed while typing); the codec
+        // repairs names on persist/delivery, so stored form is valid.
+        scenes = scenes.map {
+            if (it.id == id) it.copy(name = name.take(MAX_SCENE_NAME_CHARS)) else it
+        }
+        persistScenes()
+    }
+
+    private fun addLayer(sceneId: String) {
+        val scene = scenes.firstOrNull { it.id == sceneId } ?: return
+        if (scene.layers.size >= MAX_STATIC_OVERLAY_LAYERS) {
+            sceneError = "Layer limit reached ($MAX_STATIC_OVERLAY_LAYERS per scene)."
+            return
+        }
+        updateScene(sceneId) { current ->
+            current.copy(
+                layers = current.layers + newLayerText(
+                    "New text",
+                    SceneConfigCodec.freshLayerId(current),
+                    current.layers.size + 1
+                )
+            )
+        }
+        sceneError = null
+    }
+
+    private fun removeLayer(sceneId: String, layerId: String) {
+        updateScene(sceneId) { current ->
+            current.copy(layers = current.layers.filterNot { it.id == layerId })
+        }
+    }
+
+    private fun moveLayer(sceneId: String, layerId: String, towardFront: Boolean) {
+        val scene = scenes.firstOrNull { it.id == sceneId } ?: return
+        val index = scene.layers.indexOfFirst { it.id == layerId }
+        if (index < 0) return
+        // List order is back-to-front; towardFront moves later in the list.
+        val swapWith = if (towardFront) index + 1 else index - 1
+        if (swapWith !in scene.layers.indices) return // Edge: ignore, never crash.
+        updateScene(sceneId) { current ->
+            val reordered = current.layers.toMutableList()
+            val moved = reordered.removeAt(index)
+            reordered.add(swapWith, moved)
+            current.copy(layers = reordered)
+        }
+    }
+
+    private fun toggleLayer(sceneId: String, layerId: String) {
+        updateLayer(sceneId, layerId) { it.copy(enabled = !it.enabled) }
+    }
+
+    private fun updateLayerText(sceneId: String, layerId: String, text: String) {
+        // Raw transient text (blank allowed while typing); blank/invalid
+        // layers are dropped from streaming and flagged in the preview.
+        updateLayer(sceneId, layerId) { it.copy(text = text.take(MAX_TEXT_LAYER_CHARS)) }
     }
 
     private fun enableFloatingControls() {

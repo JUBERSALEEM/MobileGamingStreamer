@@ -81,7 +81,8 @@ internal class SceneCompositorGL(
     private val outputSurface: Surface,
     private val layout: SceneSourceLayout,
     private val textContent: String?,
-    private val subtextContent: String?
+    private val subtextContent: String?,
+    private val sceneLayers: List<SceneOverlaySpec>?
 ) : SurfaceTexture.OnFrameAvailableListener {
 
     private var workerThread: HandlerThread? = null
@@ -525,12 +526,24 @@ internal class SceneCompositorGL(
                 ) ?: throw RuntimeException("overlay spec invalid: $id")
             )
         }
-        // Fixed H4 mapping: primary text top-left above passthrough, second
-        // text bottom-left above that. Per-layer alpha/visibility config is
-        // an H5 decision; runtime fixes alpha=1 and derives visibility from
-        // content presence.
-        request(TEXT_LAYER_ID, textContent, SceneOverlayAnchor.TOP_LEFT, 1)
-        request(SUBTEXT_LAYER_ID, subtextContent, SceneOverlayAnchor.BOTTOM_LEFT, 2)
+        // H5 scene path: validated specs from the editor (service-mapped
+        // through H4 `of()`); disabled or blank layers are skipped, and
+        // `resolve` re-checks the cap, duplicates, and room at runtime, so
+        // a corrupt list fails loudly into the existing start-failure path.
+        // Legacy H4 path (fixed two-string mapping) is untouched.
+        val editorSpecs = sceneLayers
+        if (editorSpecs != null) {
+            for (spec in editorSpecs) {
+                if (!spec.enabled || spec.text.isBlank()) continue
+                contents.add(spec.text)
+                requests.add(spec)
+            }
+        } else {
+            // Fixed H4 mapping: primary text top-left above passthrough,
+            // second text bottom-left above that.
+            request(TEXT_LAYER_ID, textContent, SceneOverlayAnchor.TOP_LEFT, 1)
+            request(SUBTEXT_LAYER_ID, subtextContent, SceneOverlayAnchor.BOTTOM_LEFT, 2)
+        }
         if (requests.isEmpty()) return
         val paint = Paint().apply {
             isAntiAlias = true
