@@ -10,14 +10,6 @@ import org.junit.Test
 import java.lang.reflect.Modifier
 
 /**
- * Same-package forged handle: permitted by the sealed-subclass rule, but must
- * be inert — complete() only accepts the window's private implementation.
- * If this declaration ever stops compiling, the sealed boundary got
- * stronger, not weaker; see forgedSamePackageCompletionRejected.
- */
-private class ForgedCompletion : SceneFrameWindow.Completion
-
-/**
  * Deterministic tests for the H1 frame-handoff primitives. Every test drives
  * the real [SceneFrameWindow] / [SceneReleaseGuard] — no Android, no threads,
  * no sleeps.
@@ -311,18 +303,28 @@ class SceneFrameHandoffTest {
     }
 
     @Test
-    fun forgedSamePackageCompletionRejected() {
-        // Even a same-package forged implementation (permitted by the sealed
-        // rule) is inert: complete() only accepts the window's own private
-        // implementation minted by offer().
+    fun windowRejectsForeignHandleWhenFull() {
+        // Foreign rejection with no free slot: the window is full, so a
+        // confused completion could corrupt accounting — it must not.
+        // (A forged subtype cannot even be declared: the sealed type permits
+        // inheritors in the main module only, so same-package test code that
+        // tried failed compilation — the boundary is compiler-enforced, and
+        // pinned at runtime by completionImplIsSingleAndPrivate above.)
         val window = SceneFrameWindow(1)
+        val other = SceneFrameWindow(1)
         val handle = window.offer(SceneFrameMetadata(1L, 10L))!!
-        assertFalse(window.complete(ForgedCompletion()))
+        val foreign = other.offer(SceneFrameMetadata(2L, 20L))!!
+        assertFalse(window.complete(foreign))
         assertEquals(1, window.inFlight)
         assertEquals(1L, window.acceptedCount)
         assertEquals(0L, window.droppedCount)
+        assertEquals(1, other.inFlight)
+        // Ownership intact on both sides: each handle completes home exactly once.
         assertTrue(window.complete(handle))
         assertEquals(0, window.inFlight)
+        assertTrue(other.complete(foreign))
+        assertEquals(0, other.inFlight)
+        assertFalse(other.complete(foreign))
     }
 
     // ---- Release guard ----

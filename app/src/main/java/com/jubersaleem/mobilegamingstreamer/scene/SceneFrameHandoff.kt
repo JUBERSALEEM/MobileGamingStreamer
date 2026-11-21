@@ -79,17 +79,18 @@ internal class SceneFrameWindow(capacity: Int) {
      * Compile-time mint boundary (no weaker claim is made): this sealed
      * interface has exactly one implementation, [CompletionImpl], which is
      * private to the window — so only [SceneFrameWindow.offer] can name the
-     * type and call its constructor. Ordinary same-module callers can hold
-     * and pass handles, and can even declare their own (useless) [Completion]
-     * subtype under the same-package sealed rule, but [complete] only accepts
-     * the private implementation minted by the owning window with an
-     * unconsumed flag — the forged-subclass rejection test proves a
-     * same-package forgery is inert. The boundary is further pinned by
-     * reflection tests (empty interface surface, single private
-     * implementation, [offer] the sole minter), so a future refactor that
-     * weakens it fails the suite instead of silently opening it.
-     * Reflection-based attacks are out of scope, as with all JVM
-     * encapsulation.
+     * type and call its constructor. The sealed rule permits inheritors in
+     * the same package and module only, so no caller outside the main
+     * module — not even same-package test code — can declare a [Completion]
+     * subtype at all (attempting it fails compilation). Ordinary same-module
+     * callers can hold and pass handles, but [complete] only accepts the
+     * private implementation minted by the owning window with an unconsumed
+     * flag — the foreign-handle rejection tests prove a non-owner handle is
+     * inert. The boundary is further pinned by reflection tests (empty
+     * interface surface, single private implementation, [offer] the sole
+     * minter), so a future refactor that weakens it fails the suite instead
+     * of silently opening it. Reflection-based attacks are out of scope, as
+     * with all JVM encapsulation.
      *
      * Accidental reuse is prevented structurally, not by convention:
      * - Unforgeable: see the mint boundary above; dropped offers receive null.
