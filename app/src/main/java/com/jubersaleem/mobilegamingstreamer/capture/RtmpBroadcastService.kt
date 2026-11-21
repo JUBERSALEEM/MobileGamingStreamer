@@ -42,16 +42,17 @@ class RtmpBroadcastService : Service() {
     private var activeMicSource: Int = AudioRouteLabels.SOURCE_NONE
     private var activeHeadset: Boolean = false
     private var activeProjection: MediaProjection? = null
-    private val projectionCallback = object : MediaProjection.Callback() {
-        override fun onStop() {
-            handler.post { if (display != null) stopBroadcast("Screen capture permission ended") }
-        }
-    }
+    private var activeProjectionCallback: MediaProjection.Callback? = null
     private var streamingConfirmed = false
     private var lastBitrate = 0L
     private var lastPositiveBitrateAt = 0L
     private var lastPositiveFpsAt = 0L
     private var stopping = false
+    // Session identity for async callbacks (Phase E). Library callbacks and
+    // the projection callback can already be queued when a session ends; the
+    // gate rejects any callback whose token predates the current session, so
+    // a stale post can never stop, publish for, or retry a newer session.
+    private val sessionGate = StreamSessionGate()
     private val healthMonitor = StreamHealthMonitor()
     private var lastWatchdogDiagnosisId: String? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -204,6 +205,10 @@ class RtmpBroadcastService : Service() {
     }
 
     private fun startBroadcast(intent: Intent) {
+        // Invalidate old ownership BEFORE releasing previous resources:
+        // release() itself triggers an async library onDisconnect that must
+        // not touch the session built below.
+        val sessionToken = sessionGate.beginSession()
         handler.removeCallbacks(startupTimeout)
         handler.removeCallbacks(streamHealthWatchdog)
         handler.removeCallbacks(sessionHeartbeat)
@@ -247,10 +252,12 @@ class RtmpBroadcastService : Service() {
             var activeProfileLabel = "Preparing video profile"
         val checker = object : ConnectChecker {
                 override fun onConnectionStarted(url: String) {
+                    if (!sessionGate.isCurrent(sessionToken)) return
                     if (stopping) return
                     update("Connecting to streaming server…")
                 }
                 override fun onConnectionSuccess() {
+                    if (!sessionGate.isCurrent(sessionToken)) return
                     if (stopping) return
                     when (recoveryDriver.onConnectionSuccess(SystemClock.elapsedRealtime())) {
                         SuccessOutcome.RECOVERED -> {
@@ -279,6 +286,7 @@ class RtmpBroadcastService : Service() {
                     }
                 }
                 override fun onConnectionFailed(reason: String) {
+                    if (!sessionGate.isCurrent(sessionToken)) return
                     Log.e(TAG, "RTMP connection failed: $reason")
                     when (val effect = recoveryDriver.onConnectionFailed(
                         reason, stopping, display != null, activeProjection != null,
@@ -297,6 +305,7 @@ class RtmpBroadcastService : Service() {
                     }
                 }
                 override fun onDisconnect() {
+                    if (!sessionGate.isCurrent(sessionToken)) return
                     if (stopping) return
                     stopping = true
                     handler.removeCallbacks(startupTimeout)
@@ -322,13 +331,16 @@ class RtmpBroadcastService : Service() {
                     stopSelf()
                 }
                 override fun onAuthError() {
+                    if (!sessionGate.isCurrent(sessionToken)) return
                     stopBroadcast("Stream authentication failed. Check the stream key.")
                 }
                 override fun onAuthSuccess() {
+                    if (!sessionGate.isCurrent(sessionToken)) return
                     if (stopping) return
                     update("Stream key accepted")
                 }
                 override fun onNewBitrate(bitrate: Long) {
+                    if (!sessionGate.isCurrent(sessionToken)) return
                     if (stopping) return
                     // Bitrate ticks during a reconnect episode carry no signal:
                     // the sender is stopped while the socket is down, and any
@@ -378,6 +390,20 @@ class RtmpBroadcastService : Service() {
             val mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
                 ?: throw IllegalStateException("Android did not provide a MediaProjection session")
             activeProjection = mediaProjection
+            // Per-session callback: captures this session's token so a stale
+            // onStop queued from a revoked previous projection cannot stop a
+            // newer session. The display check is unchanged for the current
+            // session.
+            val projectionCallback = object : MediaProjection.Callback() {
+                override fun onStop() {
+                    handler.post {
+                        if (display != null && sessionGate.isCurrent(sessionToken)) {
+                            stopBroadcast("Screen capture permission ended")
+                        }
+                    }
+                }
+            }
+            activeProjectionCallback = projectionCallback
             mediaProjection.registerCallback(projectionCallback, handler)
 
             val preferredInput = choosePreferredMicrophoneDevice()
@@ -566,7 +592,9 @@ class RtmpBroadcastService : Service() {
     private fun releaseProjection() {
         val projection = activeProjection ?: return
         activeProjection = null
-        try { projection.unregisterCallback(projectionCallback) } catch (_: Exception) { }
+        val callback = activeProjectionCallback
+        activeProjectionCallback = null
+        try { if (callback != null) projection.unregisterCallback(callback) } catch (_: Exception) { }
         try { projection.stop() } catch (_: Exception) { }
     }
 
@@ -655,6 +683,10 @@ class RtmpBroadcastService : Service() {
     // The foreground service owns the broadcast until explicit STOP or projection revocation.
 
     override fun onDestroy() {
+        // Terminal invalidation first: the display release below triggers an
+        // async library onDisconnect that posts after destruction and must
+        // not overwrite the terminal state published here.
+        sessionGate.invalidate()
         handler.removeCallbacksAndMessages(null)
         recoveryDriver.onDestroyed()
         if (commandReceiverRegistered) {
