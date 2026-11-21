@@ -60,7 +60,7 @@ object ScenePrefsStore {
         try {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(KEY_SCENES, SceneConfigCodec.encodeStore(valid))
-                .putString(KEY_ACTIVE, activeId)
+                .putString(KEY_ACTIVE, active)
                 .apply()
         } catch (_: Exception) {
             // Best effort: a failed write keeps the in-memory state (the

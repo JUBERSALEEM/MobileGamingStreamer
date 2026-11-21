@@ -592,11 +592,12 @@ class RtmpBroadcastService : Service() {
                 // source flag): a preserved scene_config would reselect
                 // SceneSource and the "fallback" would retry the scene
                 // instead of the default source.
-                startBroadcast(Intent(intent)
-                    .putExtra(EXTRA_SCENE_SOURCE, false)
-                    .putExtra(EXTRA_SCENE_FALLBACK_DONE, true)
-                    .putExtra(EXTRA_SCENE_FALLBACK_REASON, reason)
-                    .removeExtra(EXTRA_SCENE_CONFIG))
+                startBroadcast(Intent(intent).apply {
+                    putExtra(EXTRA_SCENE_SOURCE, false)
+                    putExtra(EXTRA_SCENE_FALLBACK_DONE, true)
+                    putExtra(EXTRA_SCENE_FALLBACK_REASON, reason)
+                    removeExtra(EXTRA_SCENE_CONFIG)
+                })
             } else {
                 Log.e(TAG, "Unable to start RTMP broadcast", error)
                 stopBroadcast(BroadcastStatusMessages.UNABLE_TO_START_PREFIX + (error.message ?: "encoder error"))
