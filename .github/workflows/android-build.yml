@@ -88,22 +88,31 @@ jobs:
         run: python3 scripts/verify_release_readiness.py
 
       - name: Run unit tests
-        run: gradle :app:testDebugUnitTest --no-daemon 2>&1 | tee unit-test.log
+        run: |
+          gradle :app:testDebugUnitTest --no-daemon 2>&1 | tee unit-test.log
+          exit ${PIPESTATUS[0]}
 
       - name: Run Android lint
-        run: gradle :app:lintDebug --no-daemon 2>&1 | tee lint.log
+        run: |
+          gradle :app:lintDebug --no-daemon 2>&1 | tee lint.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Verify unit tests executed
+        run: |
+          python3 scripts/check_test_results.py app/build/test-results/testDebugUnitTest 2>&1 | tee verify.log
+          exit ${PIPESTATUS[0]}
 
       - name: Publish failure excerpt
         if: failure()
         run: |
-          for f in unit-test.log lint.log; do
-            if [ -f "$f" ]; then
-              (grep -E "^e: |FAILED$| FAILED|FAILURE:|Execution failed|> Task .* FAILED|error:" "$f" || true) | head -20 | sed 's/%/%25/g' | while IFS= read -r line; do echo "::error file=$f::$line"; done
-            fi
-          done
-
-      - name: Verify unit tests executed
-        run: python3 scripts/check_test_results.py app/build/test-results/testDebugUnitTest
+          emit() { sed 's/%/%25/g' | head -"$2" | while IFS= read -r line; do echo "::error file=$1::$line"; done; }
+          [ -f unit-test.log ] && (grep -E "^e: |FAILED|FAILURE:|Execution failed|error:" unit-test.log || true) | emit unit-test.log 12
+          [ -f lint.log ] && (grep -E "Error|FAILED|FAILURE:|Execution failed" lint.log || true) | emit lint.log 12
+          [ -f verify.log ] && cat verify.log | emit verify.log 6
+          (ls app/build/test-results/ 2>&1 || true) | emit results-dir 4
+          (ls app/build/test-results/testDebugUnitTest/ 2>&1 || true) | emit reports-dir 4
+          [ -f unit-test.log ] && tail -8 unit-test.log | emit testlog-tail 8
+          true
 
       - name: Build Android release APK
         run: gradle :app:assembleRelease --no-daemon
