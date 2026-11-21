@@ -70,6 +70,13 @@ class SceneSource(
     // best-effort rollback.
     var currentSceneConfig: String? = null
         private set
+    /** J2: true while the running stack holds paused video (service badge). */
+    val isVideoPaused: Boolean
+        get() = try {
+            compositor?.videosPaused == true
+        } catch (_: Exception) {
+            false
+        }
     private var configStarted = false
     private var lastSpecs: List<SceneOverlaySpec> = emptyList()
 
@@ -118,11 +125,25 @@ class SceneSource(
             } else {
                 SystemClock.elapsedRealtime()
             }
+            // J2 video: probe-once provider (GL thread, overlay build
+            // only) + per-slot decoder factory. Both never throw.
+            val videoProbe: (String) -> SceneSizePx? = { uri ->
+                try {
+                    SceneVideoProbe.probeSize(appContext, uri)
+                } catch (_: Throwable) {
+                    null
+                }
+            }
+            val videoPlayerFactory: (String) -> SceneVideoPlayer = { tag ->
+                SceneVideoPlayer(appContext, tag)
+            }
             val gl = SceneCompositorGL(
                 controller, output, activeLayout, textContent, subtextContent,
                 if (editorSpecs.isEmpty()) null else editorSpecs,
                 imageProvider,
-                timerEpochMs
+                timerEpochMs,
+                videoProbe,
+                videoPlayerFactory
             )
             compositor = gl
             val input = gl.start() // Latch-inits EGL + input endpoint; throws on failure.
@@ -132,6 +153,12 @@ class SceneSource(
                     // arrives via the service's stopBroadcast → release path.
                     Log.i(TAG, "projection revoked; rejecting scene frames")
                     controller.onProjectionRevoked()
+                    // J2: freeze live video now (pre-teardown); the
+                    // release path stops decoders authoritatively.
+                    try {
+                        gl.setVideosPaused(true)
+                    } catch (_: Exception) {
+                    }
                 }
             }
             projectionCallback = callback

@@ -67,7 +67,7 @@ class SceneCanvasProfileTest {
         SceneOverlaySpec.of(
             id, if (kind == SceneLayerKind.TEXT) "Parity $id" else "", anchor,
             1, 27, 1920, 1f, true, kind,
-            if (kind == SceneLayerKind.IMAGE) "content://x/$id" else null
+            if (kind == SceneLayerKind.IMAGE || kind == SceneLayerKind.VIDEO) "content://x/$id" else null
         )!!
 
     @Test

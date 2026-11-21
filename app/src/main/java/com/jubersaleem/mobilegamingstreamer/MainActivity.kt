@@ -70,7 +70,13 @@ class MainActivity : ComponentActivity() {
     private var editingSceneId by mutableStateOf<String?>(null)
     private var sceneDeleteTargetId by mutableStateOf<String?>(null)
     private var sceneError by mutableStateOf<String?>(null)
+    private var videoPaused by mutableStateOf(false)
     private var pendingImageSceneId: String? = null
+    private var pendingVideoSceneId: String? = null
+    private var pendingVideoReplaceLayerId: String? = null
+    private val videoPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        onVideoPicked(uri)
+    }
     private var pendingImageReplaceLayerId: String? = null
     private val imagePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         onImagePicked(uri)
@@ -88,6 +94,7 @@ class MainActivity : ComponentActivity() {
             micSource = intent.getIntExtra(RtmpBroadcastService.EXTRA_STATUS_MIC_SOURCE, AudioRouteLabels.SOURCE_NONE)
             headsetConnected = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_HEADSET, false)
             streamAudioMuted = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_STREAM_MUTED, false)
+            videoPaused = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_VIDEO_PAUSED, false)
             audioCaptureActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_CAPTURE, false)
             broadcastStarting = !broadcastActive && isStartingBroadcastMessage(status)
             val kind = classifyBroadcastStatus(status, broadcastActive, broadcastStarting)
@@ -262,6 +269,7 @@ class MainActivity : ComponentActivity() {
                         status = status,
                         captureActive = captureActive,
                         broadcastActive = broadcastActive,
+                        videoPaused = videoPaused,
                         broadcastStarting = broadcastStarting,
                         liveBitrate = liveBitrate,
                         notificationsAllowed = notificationsAllowed,
@@ -366,9 +374,11 @@ class MainActivity : ComponentActivity() {
                         },
                         onAddLayer = { id -> addLayer(id) },
                         onAddImageLayer = { id -> launchImagePicker(id, null) },
+                        onAddVideoLayer = { id -> launchVideoPicker(id, null) },
                         onAddClockLayer = { id -> addClockLayer(id) },
                         onAddTimerLayer = { id -> addTimerLayer(id) },
                         onReplaceImageLayer = { sceneId, layerId -> launchImagePicker(sceneId, layerId) },
+                        onReplaceVideoLayer = { sceneId, layerId -> launchVideoPicker(sceneId, layerId) },
                         onRemoveLayer = { sceneId, layerId -> removeLayer(sceneId, layerId) },
                         onMoveLayer = { sceneId, layerId, towardFront ->
                             moveLayer(sceneId, layerId, towardFront)
@@ -612,6 +622,56 @@ class MainActivity : ComponentActivity() {
                     alpha = 1f,
                     kind = SceneLayerKind.IMAGE,
                     imageUri = imageUri
+                )
+            )
+        }
+        sceneError = null
+    }
+
+    private fun launchVideoPicker(sceneId: String, replaceLayerId: String?) {
+        pendingVideoSceneId = sceneId
+        pendingVideoReplaceLayerId = replaceLayerId
+        videoPicker.launch(arrayOf("video/*"))
+    }
+
+    private fun onVideoPicked(uri: Uri?) {
+        val sceneId = pendingVideoSceneId
+        pendingVideoSceneId = null
+        val replaceLayerId = pendingVideoReplaceLayerId
+        pendingVideoReplaceLayerId = null
+        if (uri == null || sceneId == null) return
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: SecurityException) {
+            sceneError = "Couldn't keep access to that video. Pick it again."
+            return
+        }
+        if (replaceLayerId != null) {
+            updateLayer(sceneId, replaceLayerId) { it.copy(imageUri = uri.toString()) }
+        } else {
+            addVideoLayer(sceneId, uri.toString())
+        }
+        sceneError = null
+    }
+
+    private fun addVideoLayer(sceneId: String, videoUri: String) {
+        val scene = scenes.firstOrNull { it.id == sceneId } ?: return
+        if (scene.layers.size >= MAX_STATIC_OVERLAY_LAYERS) {
+            sceneError = "Layer limit reached ($MAX_STATIC_OVERLAY_LAYERS per scene)."
+            return
+        }
+        updateScene(sceneId) { current ->
+            current.copy(
+                layers = current.layers + StreamSceneLayer(
+                    id = SceneConfigCodec.freshLayerId(current),
+                    text = "",
+                    anchor = SceneOverlayAnchor.TOP_LEFT,
+                    zOrder = current.layers.size + 1,
+                    marginPx = SceneTextLayerLayout.marginPxFor(1080),
+                    maxWidthPx = SCENE_IMAGE_DEFAULT_MAX_WIDTH_PX,
+                    alpha = 1f,
+                    kind = SceneLayerKind.VIDEO,
+                    imageUri = videoUri
                 )
             )
         }

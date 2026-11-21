@@ -44,7 +44,9 @@ enum class SceneLayerKind {
     /** H9 wall-clock widget: time is rendered, never stored. */
     CLOCK,
     /** H9 session-uptime widget: time is rendered, never stored. */
-    TIMER
+    TIMER,
+    /** J2 real video: decoded frames reach the GL renderer. */
+    VIDEO
 }
 
 /**
@@ -151,7 +153,8 @@ data class StreamScene(
  * content. Colors are 8-hex ARGB (empty = null background). Decoding
  * accepts v1 (8-field text-only), v2 (10-field text/image), v3/v4
  * (17 fields), and v5 (18 fields; v1–v4 layers take the FIT
- * default); encoding always writes v5.
+ * default); encoding always writes v5. J2 VIDEO layers ride v5
+ * (see docs/J2_VIDEO_LAYERS_DESIGN.md for why no v6 bump).
  */
 internal object SceneConfigCodec {
     const val VERSION = "v5"
@@ -397,6 +400,11 @@ internal object SceneConfigCodec {
                 if (text.isBlank() || text.length > MAX_TEXT_LAYER_CHARS) return null
             }
             SceneLayerKind.IMAGE -> {
+                if (!isValidImageUri(imageUri)) return null
+            }
+            // J2 video shares the media-URI gate (scheme allowlist +
+            // length bound); decodability is runtime, checked at build.
+            SceneLayerKind.VIDEO -> {
                 if (!isValidImageUri(imageUri)) return null
             }
             // H9 widgets: stored text/URI ignored (time is rendered).

@@ -66,6 +66,7 @@ import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerStyle
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayLayerInput
 import com.jubersaleem.mobilegamingstreamer.scene.SceneScaleMode
+import com.jubersaleem.mobilegamingstreamer.scene.SceneVideoProbe
 import com.jubersaleem.mobilegamingstreamer.scene.ScenePreviewBoxes
 import com.jubersaleem.mobilegamingstreamer.scene.SceneSizePx
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTextLayerLayout
@@ -131,12 +132,16 @@ fun SceneEditorPage(
     onRenameScene: (String, String) -> Unit,
     onSceneOrientation: (String, SceneDesignOrientation) -> Unit,
     streamOrientation: String,
+    broadcastActive: Boolean,
+    videoPaused: Boolean,
     onAddLayer: (String) -> Unit,
     onAddImageLayer: (String) -> Unit,
+    onAddVideoLayer: (String) -> Unit,
     onAddClockLayer: (String) -> Unit,
     onAddTimerLayer: (String) -> Unit,
     onRemoveLayer: (String, String) -> Unit,
     onReplaceImageLayer: (String, String) -> Unit,
+    onReplaceVideoLayer: (String, String) -> Unit,
     onMoveLayer: (String, String, Boolean) -> Unit,
     onToggleLayer: (String, String) -> Unit,
     onLayerText: (String, String, String) -> Unit,
@@ -215,12 +220,16 @@ fun SceneEditorPage(
                 onRenameScene = onRenameScene,
                 onSceneOrientation = onSceneOrientation,
                 streamOrientation = streamOrientation,
+                broadcastActive = broadcastActive,
+                videoPaused = videoPaused,
                 onAddLayer = onAddLayer,
                 onAddImageLayer = onAddImageLayer,
+                onAddVideoLayer = onAddVideoLayer,
                 onAddClockLayer = onAddClockLayer,
                 onAddTimerLayer = onAddTimerLayer,
                 onRemoveLayer = onRemoveLayer,
                 onReplaceImageLayer = onReplaceImageLayer,
+                onReplaceVideoLayer = onReplaceVideoLayer,
                 onMoveLayer = onMoveLayer,
                 onToggleLayer = onToggleLayer,
                 onLayerText = onLayerText,
@@ -262,12 +271,16 @@ private fun SceneCard(
     onRenameScene: (String, String) -> Unit,
     onSceneOrientation: (String, SceneDesignOrientation) -> Unit,
     streamOrientation: String,
+    broadcastActive: Boolean,
+    videoPaused: Boolean,
     onAddLayer: (String) -> Unit,
     onAddImageLayer: (String) -> Unit,
     onAddClockLayer: (String) -> Unit,
     onAddTimerLayer: (String) -> Unit,
     onRemoveLayer: (String, String) -> Unit,
     onReplaceImageLayer: (String, String) -> Unit,
+    onAddVideoLayer: (String) -> Unit,
+    onReplaceVideoLayer: (String, String) -> Unit,
     onMoveLayer: (String, String, Boolean) -> Unit,
     onToggleLayer: (String, String) -> Unit,
     onLayerText: (String, String, String) -> Unit,
@@ -345,10 +358,14 @@ private fun SceneCard(
                     layerKey = layerKey,
                     onAddLayer = onAddLayer,
                     onAddImageLayer = onAddImageLayer,
+                    onAddVideoLayer = onAddVideoLayer,
                     onAddClockLayer = onAddClockLayer,
                     onAddTimerLayer = onAddTimerLayer,
                     onRemoveLayer = onRemoveLayer,
                     onReplaceImageLayer = onReplaceImageLayer,
+                    sceneLive = broadcastActive && isActive,
+                    videoPaused = videoPaused,
+                    onReplaceVideoLayer = onReplaceVideoLayer,
                     onMoveLayer = onMoveLayer,
                     onToggleLayer = onToggleLayer,
                     onLayerText = onLayerText,
@@ -410,10 +427,14 @@ private fun LayerListEditor(
     layerKey: (String, String) -> String,
     onAddLayer: (String) -> Unit,
     onAddImageLayer: (String) -> Unit,
+    onAddVideoLayer: (String) -> Unit,
     onAddClockLayer: (String) -> Unit,
     onAddTimerLayer: (String) -> Unit,
     onRemoveLayer: (String, String) -> Unit,
     onReplaceImageLayer: (String, String) -> Unit,
+    sceneLive: Boolean,
+    videoPaused: Boolean,
+    onReplaceVideoLayer: (String, String) -> Unit,
     onMoveLayer: (String, String, Boolean) -> Unit,
     onToggleLayer: (String, String) -> Unit,
     onLayerText: (String, String, String) -> Unit,
@@ -460,6 +481,13 @@ private fun LayerListEditor(
                     style = ClayButtonStyle.Raised,
                     icon = Icons.Rounded.Add
                 )
+                ClayButton(
+                    label = "ADD VIDEO",
+                    onClick = { onAddVideoLayer(scene.id) },
+                    enabled = !atCap,
+                    style = ClayButtonStyle.Raised,
+                    icon = Icons.Rounded.Add
+                )
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -502,6 +530,9 @@ private fun LayerListEditor(
                 canMoveBack = displayIndex < frontFirst.size - 1,
                 onRemoveLayer = onRemoveLayer,
                 onReplaceImageLayer = onReplaceImageLayer,
+                sceneLive = sceneLive,
+                videoPaused = videoPaused,
+                onReplaceVideoLayer = onReplaceVideoLayer,
                 onMoveLayer = onMoveLayer,
                 onToggleLayer = onToggleLayer,
                 onLayerText = onLayerText,
@@ -532,6 +563,9 @@ private fun LayerRow(
     canMoveBack: Boolean,
     onRemoveLayer: (String, String) -> Unit,
     onReplaceImageLayer: (String, String) -> Unit,
+    sceneLive: Boolean,
+    videoPaused: Boolean,
+    onReplaceVideoLayer: (String, String) -> Unit,
     onMoveLayer: (String, String, Boolean) -> Unit,
     onToggleLayer: (String, String) -> Unit,
     onLayerText: (String, String, String) -> Unit,
@@ -569,6 +603,7 @@ private fun LayerRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = if (layer.kind == SceneLayerKind.IMAGE) "Image layer"
+                    else if (layer.kind == SceneLayerKind.VIDEO) "Video layer"
                     else if (layer.kind == SceneLayerKind.CLOCK) "Clock widget"
                     else if (layer.kind == SceneLayerKind.TIMER) "Stream timer"
                     else if (layer.text.isBlank()) "(empty text)" else layer.text,
@@ -618,6 +653,15 @@ private fun LayerRow(
                 ScaleModeRow(
                     selected = layer.scaleMode,
                     onSelect = { onLayerScaleMode(sceneId, layer.id, it) }
+                )
+            } else if (layer.kind == SceneLayerKind.VIDEO) {
+                VideoLayerCard(
+                    videoUri = layer.imageUri,
+                    scaleMode = layer.scaleMode,
+                    onScale = { onLayerScaleMode(sceneId, layer.id, it) },
+                    onReplace = { onReplaceVideoLayer(sceneId, layer.id) },
+                    sceneLive = sceneLive && layer.enabled,
+                    videoPaused = videoPaused
                 )
             } else if (layer.kind == SceneLayerKind.CLOCK || layer.kind == SceneLayerKind.TIMER) {
                 Text(
@@ -672,7 +716,7 @@ private fun LayerRow(
                 steps = 19,
                 onChange = { onLayerAlpha(sceneId, layer.id, it) }
             )
-            if (layer.kind != SceneLayerKind.IMAGE) {
+            if (layer.kind != SceneLayerKind.IMAGE && layer.kind != SceneLayerKind.VIDEO) {
                 StyleSwatchRow(
                     title = "Text color",
                     options = textColorSwatches,
@@ -724,6 +768,128 @@ private fun LayerRow(
             )
         }
     }
+}
+
+/**
+ * J2 video layer card: poster thumbnail (honestly labeled — motion
+ * plays only in the live stream), asset line (dims + duration +
+ * size, each piece falling back honestly), playback state badge
+ * from real derived signals, replace action, and the shared FIT/FILL
+ * selector (the renderer honors it for video too).
+ */
+@Composable
+private fun VideoLayerCard(
+    videoUri: String?,
+    scaleMode: SceneScaleMode,
+    onScale: (SceneScaleMode) -> Unit,
+    onReplace: () -> Unit,
+    sceneLive: Boolean,
+    videoPaused: Boolean
+) {
+    val p = LocalMgsPalette.current
+    val context = LocalContext.current
+    val poster = remember(videoUri) {
+        if (videoUri == null) null
+        else SceneVideoProbe.posterBitmap(context, videoUri, 256)?.asImageBitmap()
+    }
+    val assetLine = remember(videoUri) {
+        if (videoUri == null) "No video selected"
+        else videoAssetLineFor(context, videoUri)
+    }
+    val probeOk = remember(videoUri) {
+        videoUri != null && SceneVideoProbe.probeSize(context, videoUri) != null
+    }
+    // Real derived signals only: probe truth + live/paused service
+    // state. No live decode happens in the editor, so PLAYING means
+    // "the live stream is showing this scene" — labeled as such.
+    val badge = when {
+        videoUri == null -> "NOT LOADED"
+        !probeOk -> "FAILED"
+        videoPaused && sceneLive -> "PAUSED"
+        sceneLive -> "PLAYING IN LIVE STREAM"
+        else -> "READY — PLAYS WHEN THE SCENE IS LIVE"
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(text = badge, color = p.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Text(text = assetLine, color = p.muted, fontSize = 11.sp)
+        Text(
+            text = "Poster preview — motion plays in the live stream.",
+            color = p.muted,
+            fontSize = 11.sp
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (poster != null) {
+                Image(
+                    bitmap = poster,
+                    contentDescription = "Video poster frame",
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(1.dp, p.clayEdge.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(p.warning.copy(alpha = 0.14f))
+                        .border(1.dp, p.warning.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (videoUri == null) "No video" else "Video unavailable",
+                        color = p.text,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            ClayButton(
+                label = "REPLACE",
+                onClick = onReplace,
+                style = ClayButtonStyle.Raised,
+                icon = Icons.Rounded.Edit
+            )
+        }
+        ScaleModeRow(selected = scaleMode, onSelect = onScale)
+    }
+}
+
+/**
+ * J2 video asset line: "<W> x <H> px - <M:SS> - <size>" from probe +
+ * duration + document bytes. Each piece falls back independently; a
+ * fully unprobable asset reports the reason. Never throws.
+ */
+private fun videoAssetLineFor(context: android.content.Context, videoUri: String): String {
+    val dims = try {
+        SceneVideoProbe.probeSize(context, videoUri)
+    } catch (_: Exception) {
+        null
+    } ?: return "Video unavailable (moved, renamed, or permission revoked)"
+    val duration = try {
+        SceneVideoProbe.probeDurationMs(context, videoUri)
+    } catch (_: Exception) {
+        null
+    }
+    val durationText = if (duration == null) "length unknown" else formatDuration(duration)
+    val bytes = try {
+        val uri = android.net.Uri.parse(videoUri)
+        if (uri == null) null
+        else context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize }
+    } catch (_: Exception) {
+        null
+    }
+    val sizeText = if (bytes == null) "size unknown" else formatBytes(bytes)
+    return "${dims.widthPx} x ${dims.heightPx} px - $durationText - $sizeText"
+}
+
+private fun formatDuration(durationMs: Long): String {
+    val totalSeconds = (durationMs / 1000).coerceAtLeast(0)
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return if (seconds < 10) "$minutes:0$seconds" else "$minutes:$seconds"
 }
 
 /**
@@ -936,7 +1102,8 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
     val p = LocalMgsPalette.current
     val measurePaint = remember { Paint().apply { isAntiAlias = true } }
     val drawPaint = remember { Paint().apply { isAntiAlias = true } }
-    val previewResolver = LocalContext.current.contentResolver
+    val previewContext = LocalContext.current
+    val previewResolver = previewContext.contentResolver
     val badgePaint = remember { Paint().apply { isAntiAlias = true; textAlign = Paint.Align.CENTER } }
     val refCanvas = remember(scene.orientation) { SceneCanvasProfile.referenceCanvas(scene.orientation) }
     val refWidthPx = refCanvas.widthPx
@@ -946,9 +1113,15 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
         measurePaint.textSize = textSize
         scene.layers.mapNotNull { layer ->
             val spec = layer.toOverlaySpec() ?: return@mapNotNull null
-            if (spec.kind == SceneLayerKind.IMAGE) {
+            if (spec.kind == SceneLayerKind.IMAGE || spec.kind == SceneLayerKind.VIDEO) {
                 val uri = spec.imageUri ?: return@mapNotNull null
-                val dims = SceneImageLoader.decodeBounds(previewResolver, uri) ?: return@mapNotNull null
+                // J2: video previews measure from probed display dims
+                // (rotation applied) — same FIT/FILL math as images.
+                val dims = if (spec.kind == SceneLayerKind.VIDEO) {
+                    SceneVideoProbe.probeSize(previewContext, uri)
+                } else {
+                    SceneImageLoader.decodeBounds(previewResolver, uri)
+                } ?: return@mapNotNull null
                 // J1: FILL previews the same full-bounds frame the
                 // renderer composes; FIT keeps the H6 aspect fit.
                 val size = if (spec.scaleMode == SceneScaleMode.FILL) {
@@ -1026,10 +1199,16 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
     val kindById = remember(measured) { measured.associate { it.first.id to it.first.kind } }
     val specById = remember(measured) { measured.associate { it.first.id to it.first } }
     val imageById = remember(measured) {
-        measured.filter { it.first.kind == SceneLayerKind.IMAGE }.associate { triple ->
+        measured.filter {
+            it.first.kind == SceneLayerKind.IMAGE || it.first.kind == SceneLayerKind.VIDEO
+        }.associate { triple ->
             val uri = triple.first.imageUri
             triple.first.id to if (uri == null) null
-            else SceneImageLoader.loadThumbnailBitmap(previewResolver, uri, 512)?.asImageBitmap()
+            else if (triple.first.kind == SceneLayerKind.VIDEO) {
+                SceneVideoProbe.posterBitmap(previewContext, uri, 512)?.asImageBitmap()
+            } else {
+                SceneImageLoader.loadThumbnailBitmap(previewResolver, uri, 512)?.asImageBitmap()
+            }
         }
     }
     // Phase I: honest mismatch note when the explicit stream output
@@ -1136,7 +1315,9 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
                                 size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
                                 style = Stroke(width = 2f)
                             )
-                            if (kindById[box.id] == SceneLayerKind.IMAGE) {
+                            if (kindById[box.id] == SceneLayerKind.IMAGE ||
+                                kindById[box.id] == SceneLayerKind.VIDEO
+                            ) {
                                 val image = imageById[box.id]
                                 if (image != null) {
                                     val dw = (right - left - borderPx * 2f - shadowPx).roundToInt().coerceAtLeast(1)

@@ -87,6 +87,10 @@ internal data class SceneOverlaySpec(
                 SceneLayerKind.IMAGE -> {
                     if (!isValidImageUri(imageUri)) return null
                 }
+                // J2 video: URI-gated like images; frames are runtime.
+                SceneLayerKind.VIDEO -> {
+                    if (!isValidImageUri(imageUri)) return null
+                }
                 // H9 widgets carry no content: time is rendered, not stored.
                 SceneLayerKind.CLOCK, SceneLayerKind.TIMER -> { }
             }
@@ -100,7 +104,7 @@ internal data class SceneOverlaySpec(
             return SceneOverlaySpec(
                 id, if (kind == SceneLayerKind.TEXT) text else "", anchor, zOrder, marginPx, maxWidthPx,
                 alpha.coerceIn(0f, 1f), enabled, kind,
-                if (kind == SceneLayerKind.IMAGE) imageUri else null,
+                if (kind == SceneLayerKind.IMAGE || kind == SceneLayerKind.VIDEO) imageUri else null,
                 textColor, backgroundColor, borderWidthPx, borderColor,
                 cornerRadiusPx, shadowOffsetPx, shadowColor, scaleMode
             )

@@ -846,6 +846,7 @@ class RtmpBroadcastService : Service() {
             putExtra(EXTRA_STATUS_HEADSET, activeHeadset)
             putExtra(EXTRA_STATUS_STREAM_MUTED, streamMuted)
             putExtra(EXTRA_STATUS_CAPTURE, captureRunning)
+            putExtra(EXTRA_STATUS_VIDEO_PAUSED, (activeVideoSource as? SceneSource)?.isVideoPaused == true)
         })
     }
 
@@ -1014,6 +1015,7 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_STATUS_HEADSET = "status_headset"
         const val EXTRA_STATUS_STREAM_MUTED = "status_stream_muted"
         const val EXTRA_STATUS_CAPTURE = "status_capture_running"
+        const val EXTRA_STATUS_VIDEO_PAUSED = "status_video_paused"
         const val EXTRA_STATUS_HEALTH = "status_health"
         const val STATE_PREFS = "broadcast_state"
         const val KEY_ACTIVE = "active"

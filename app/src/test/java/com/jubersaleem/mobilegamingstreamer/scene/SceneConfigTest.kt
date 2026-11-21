@@ -286,7 +286,7 @@ class SceneConfigTest {
     fun badKindOrUriDropsImageLayer() {
         val encoded = "v2\nscene:s1\tS\n" + listOf(
             "layer:good\t\tBOTTOM_RIGHT\t1\t8\t640\t1\ttrue\tIMAGE\tcontent://media/ok",
-            "layer:badkind\t\tTOP_LEFT\t2\t8\t640\t1\ttrue\tVIDEO\tcontent://media/ok",
+            "layer:badkind\t\tTOP_LEFT\t2\t8\t640\t1\ttrue\tBROWSER\tcontent://media/ok",
             "layer:badscheme\t\tTOP_LEFT\t3\t8\t640\t1\ttrue\tIMAGE\thttp://evil/x.png",
             "layer:emptyuri\t\tTOP_LEFT\t4\t8\t640\t1\ttrue\tIMAGE\t",
             "layer:toolong\t\tTOP_LEFT\t5\t8\t640\t1\ttrue\tIMAGE\tcontent://" + "x".repeat(MAX_IMAGE_URI_CHARS),

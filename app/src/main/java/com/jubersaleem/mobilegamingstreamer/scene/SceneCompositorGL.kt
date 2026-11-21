@@ -57,6 +57,8 @@ import java.util.concurrent.TimeUnit
  */
 internal const val GL_INIT_TIMEOUT_MS = 5_000L
 internal const val GL_TEARDOWN_TIMEOUT_MS = 5_000L
+/** J2 per-player stop/release rendezvous inside slot teardown. */
+internal const val VIDEO_RELEASE_TIMEOUT_MS = 3_000L
 
 /**
  * One static overlay's GL resources. Slots are preallocated once (fixed
@@ -73,6 +75,20 @@ private class OverlaySlot {
     var offsetLeft: Int = 0
     var offsetTop: Int = 0
     var lastContent: String? = null
+    // J2 video-slot state: decoder + OES texture + ST + Surface.
+    // `textureId`/`bitmap` carry the static style underlay; the video
+    // quad uses `videoTextureId` with `videoNdcBuffer`/`videoUvBuffer`.
+    var isVideo: Boolean = false
+    var videoTextureId: Int = 0
+    var videoSt: SurfaceTexture? = null
+    var videoSurface: Surface? = null
+    var videoPlayer: SceneVideoPlayer? = null
+    var videoNdcBuffer: FloatBuffer? = null
+    var videoUvBuffer: FloatBuffer? = null
+    var videoStMatrix: FloatArray = FloatArray(16)
+    var videoPendingFrame: Boolean = false
+    var videoHasFrame: Boolean = false
+    val videoController: SceneVideoPlaybackController = SceneVideoPlaybackController()
 }
 
 /** Init-latch scratch: one requested overlay with its measurement. */
@@ -82,7 +98,8 @@ private data class MeasuredOverlay(
     val measured: SceneSizePx,
     val offsetLeft: Int,
     val offsetTop: Int,
-    val decodedBitmap: Bitmap? = null
+    val decodedBitmap: Bitmap? = null,
+    val videoSize: SceneSizePx? = null
 )
 
 internal class SceneCompositorGL(
@@ -93,7 +110,9 @@ internal class SceneCompositorGL(
     private val subtextContent: String?,
     private val sceneLayers: List<SceneOverlaySpec>?,
     private val imageProvider: ((String) -> Bitmap?)? = null,
-    private val sessionStartElapsedMs: Long = 0L
+    private val sessionStartElapsedMs: Long = 0L,
+    private val videoProbe: ((String) -> SceneSizePx?)? = null,
+    private val videoPlayerFactory: ((String) -> SceneVideoPlayer)? = null
 ) : SurfaceTexture.OnFrameAvailableListener {
 
     private var workerThread: HandlerThread? = null
@@ -118,6 +137,16 @@ internal class SceneCompositorGL(
     private var overlayCoordHandle = -1
     private var uSamplerHandle = -1
     private var uAlphaHandle = -1
+    private var videoProgram: Int = 0
+    private var videoPositionHandle = -1
+    private var videoCoordHandle = -1
+    private var videoMvpHandle = -1
+    private var videoStMatrixHandle = -1
+    private var videoSamplerHandle = -1
+    private var videoAlphaHandle = -1
+    private var lastInputTimestampNs: Long = 0L
+    private var videoRedrawPosted: Boolean = false
+    private val videoRedrawRunnable = Runnable { onVideoRedrawLocked() }
     private val overlaySlots = Array(MAX_STATIC_OVERLAY_LAYERS) { OverlaySlot() }
     private var overlaySlotCount = 0
     private val mvpMatrix = FloatArray(16)
@@ -126,6 +155,13 @@ internal class SceneCompositorGL(
     private var texCoordBuffer: FloatBuffer? = null
     private val zoneId: ZoneId = ZoneId.systemDefault()
     private val dynamicTickRunnable = Runnable { onDynamicTickLocked() }
+    /**
+     * J2 pause flag for the service badge (revoke freeze). Written on
+     * the GL thread, read from any thread; cleared on slot release.
+     */
+    @Volatile
+    var videosPaused: Boolean = false
+        private set
 
     /**
      * Starts the GL thread and initializes EGL + input producer endpoint.
@@ -263,6 +299,35 @@ internal class SceneCompositorGL(
         return ran && ok
     }
 
+    /**
+     * J2 video pause/resume (any thread; async post, never throws).
+     * Best-effort fast path for the revoke freeze — teardown's
+     * stop/release rendezvous is the hard guarantee. Transitions run
+     * through the per-slot controller, so a stale call (no live
+     * video, already paused) is a no-op, never an error.
+     */
+    fun setVideosPaused(paused: Boolean) {
+        videosPaused = paused
+        try {
+            glHandler?.post {
+                for (index in 0 until overlaySlotCount) {
+                    val slot = overlaySlots[index]
+                    if (!slot.isVideo) continue
+                    val player = slot.videoPlayer ?: continue
+                    try {
+                        if (paused) {
+                            if (slot.videoController.onPaused()) player.pause()
+                        } else {
+                            if (slot.videoController.onPlaying()) player.resume()
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     /** Exposes the GL handler for VD/projection callbacks (cf. ScreenSource). */
     val handlerForCallbacks: Handler?
         get() = glHandler
@@ -289,9 +354,10 @@ internal class SceneCompositorGL(
         }
         val handle = controller.onFrameArrival(metadata)
         if (handle == null) return // Counted drop/reject: skip the draw.
+        lastInputTimestampNs = metadata.timestampNs
         try {
             drawFrameLocked(surfaceTexture)
-            for (index in 0 until overlaySlotCount) drawOverlaySlotLocked(overlaySlots[index])
+            drawSlotsLocked()
             // EGL_ANDROID_presentation_time: present-time is timestamp currency
             // for EGL producers (per the SurfaceTexture contract), so the
             // captured monotonic-nanoseconds timestamp keeps its clock domain
@@ -423,6 +489,63 @@ internal class SceneCompositorGL(
         return surface
     }
 
+    /**
+     * Draws every claimed slot (GL thread): static slots through the
+     * 2D blend program, video slots through the style quad + OES
+     * video quad. Shared by input-driven frames and on-demand video
+     * redraws.
+     */
+    private fun drawSlotsLocked() {
+        for (index in 0 until overlaySlotCount) {
+            val slot = overlaySlots[index]
+            if (slot.isVideo) drawVideoSlotLocked(slot) else drawOverlaySlotLocked(slot)
+        }
+    }
+
+    /**
+     * J2 coalesced redraw request from a video ST arrival (GL thread).
+     * The screen VD emits only on content change, so motion must
+     * re-present itself on static screens. At most one redraw is
+     * queued per video frame; before the first input latch the
+     * pending video frame simply waits for the first screen draw.
+     */
+    private fun requestVideoRedrawLocked() {
+        if (videoRedrawPosted) return
+        if (!glReady || frameSequence == 0L) return
+        videoRedrawPosted = true
+        try {
+            glHandler?.post(videoRedrawRunnable)
+        } catch (_: Exception) {
+            videoRedrawPosted = false
+        }
+    }
+
+    /**
+     * J2 on-demand redraw (GL thread): re-presents the last latched
+     * input frame with fresh video latches. Not a controller arrival
+     * (no counting — this is re-presentation, not a new frame) and
+     * reuses the last input timestamp (arrival-order fallback, same
+     * rationale as the swap handling in the input path).
+     */
+    private fun onVideoRedrawLocked() {
+        videoRedrawPosted = false
+        if (!controller.isAcceptingFrames) return
+        val surfaceTexture = inputSurfaceTexture
+        if (surfaceTexture == null || !glReady || frameSequence == 0L) return
+        try {
+            drawFrameLocked(surfaceTexture)
+            drawSlotsLocked()
+            if (!EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, lastInputTimestampNs)) {
+                Log.e(TAG, "video redraw eglPresentationTimeANDROID failed")
+            }
+            if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
+                Log.e(TAG, "video redraw eglSwapBuffers failed")
+            }
+        } catch (error: RuntimeException) {
+            failFrame("video redraw draw failed", error)
+        }
+    }
+
     private fun drawFrameLocked(surfaceTexture: SurfaceTexture) {
         surfaceTexture.getTransformMatrix(stMatrix)
         GLES20.glViewport(0, 0, layout.outputWidth, layout.outputHeight)
@@ -446,6 +569,18 @@ internal class SceneCompositorGL(
         GLES20.glDisableVertexAttribArray(aPositionHandle)
         GLES20.glDisableVertexAttribArray(aTextureHandle)
         checkGl("compositor draw")
+    }
+
+    /**
+     * J2 video ST arrival (GL thread — the listener was registered
+     * with glHandler, so this serializes with frames, rebuilds, and
+     * teardown exactly like the input path). Marks the frame pending
+     * and asks for a coalesced re-presentation; the latch itself
+     * happens at draw time.
+     */
+    private fun onVideoFrameLocked(slot: OverlaySlot) {
+        slot.videoPendingFrame = true
+        requestVideoRedrawLocked()
     }
 
     private fun releaseEglLocked() {
@@ -594,6 +729,30 @@ internal class SceneCompositorGL(
             glHandler?.removeCallbacks(dynamicTickRunnable)
         } catch (_: Exception) {
         }
+        // J2: video redraws cancel the same way; the pause flag dies
+        // with the slots (no badge without live video).
+        try {
+            glHandler?.removeCallbacks(videoRedrawRunnable)
+        } catch (_: Exception) {
+        }
+        videoRedrawPosted = false
+        videosPaused = false
+        // J2: decoders stop BEFORE their STs die (a player rendering
+        // into a released ST would error loudly but harmlessly; clean
+        // order avoids even that). Bounded rendezvous per player.
+        for (index in 0 until overlaySlotCount) {
+            val slot = overlaySlots[index]
+            val player = slot.videoPlayer
+            slot.videoPlayer = null
+            if (player != null) {
+                try {
+                    if (!player.stopAndRelease(VIDEO_RELEASE_TIMEOUT_MS)) {
+                        Log.w(TAG, "video release timed out: ${slot.spec?.id}")
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
         for (index in 0 until overlaySlotCount) {
             val slot = overlaySlots[index]
             try {
@@ -611,6 +770,7 @@ internal class SceneCompositorGL(
             slot.offsetLeft = 0
             slot.offsetTop = 0
             slot.lastContent = null
+            releaseVideoSlotLocked(slot)
         }
         overlaySlotCount = 0
         try {
@@ -618,6 +778,53 @@ internal class SceneCompositorGL(
         } catch (_: Exception) {
         }
         overlayProgram = 0
+        try {
+            if (videoProgram != 0) GLES20.glDeleteProgram(videoProgram)
+        } catch (_: Exception) {
+        }
+        videoProgram = 0
+    }
+
+    /**
+     * J2 video-slot resource release (GL thread only): ST listener
+     * nulled (no post-release callbacks on this queue), ST + Surface
+     * released, OES texture deleted, video fields cleared, controller
+     * reset for slot reuse. The player is already stopped above.
+     * Best-effort and exception-isolated; never throws.
+     */
+    private fun releaseVideoSlotLocked(slot: OverlaySlot) {
+        try {
+            slot.videoSt?.setOnFrameAvailableListener(null)
+        } catch (_: Exception) {
+        }
+        try {
+            slot.videoSt?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "video SurfaceTexture release failed", e)
+        }
+        slot.videoSt = null
+        try {
+            slot.videoSurface?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "video Surface release failed", e)
+        }
+        slot.videoSurface = null
+        try {
+            if (slot.videoTextureId != 0) {
+                GLES20.glDeleteTextures(1, intArrayOf(slot.videoTextureId), 0)
+            }
+        } catch (_: Exception) {
+        }
+        slot.videoTextureId = 0
+        slot.videoNdcBuffer = null
+        slot.videoUvBuffer = null
+        slot.videoPendingFrame = false
+        slot.videoHasFrame = false
+        slot.isVideo = false
+        try {
+            slot.videoController.onRebuild()
+        } catch (_: Exception) {
+        }
     }
 
     /**
@@ -636,6 +843,9 @@ internal class SceneCompositorGL(
         val textSizePx = SceneTextLayerLayout.textSizePxFor(outH)
         val requests = specs.filter { it.enabled && (it.kind != SceneLayerKind.TEXT || it.text.isNotBlank()) }
         if (requests.isEmpty()) return
+        // J2: decoder budget decided once per build (deterministic —
+        // same input, same decoders, every rebuild).
+        val videoBudget = SceneVideoBudget.assign(requests)
         val paint = Paint().apply {
             isAntiAlias = true
             color = Color.WHITE
@@ -650,6 +860,8 @@ internal class SceneCompositorGL(
             val measured = requests.mapNotNull { spec ->
                 if (spec.kind == SceneLayerKind.IMAGE) {
                     measureImageLocked(spec, outW, outH, decodedPending)
+                } else if (spec.kind == SceneLayerKind.VIDEO) {
+                    measureVideoLocked(spec, outW, outH, videoBudget)
                 } else {
                     // H9 widgets measure the worst-case box (stable
                     // placement forever) but raster the current value.
@@ -687,14 +899,23 @@ internal class SceneCompositorGL(
             uAlphaHandle = GLES20.glGetUniformLocation(overlayProgram, "uAlpha")
             val byId = measured.associateBy { it.spec.id }
             val textures = IntArray(1)
-            for ((slotIndex, entry) in entries.withIndex()) {
+            for (entry in entries) {
                 val layer = byId.getValue(entry.id)
                 val rect = entry.rectPx
-                val slot = overlaySlots[slotIndex]
+                if (layer.spec.kind == SceneLayerKind.VIDEO) {
+                    // Best-effort runtime media: a failed video slot
+                    // skips loudly and later slots stay dense — never
+                    // a hole, never a dead stream for a bad video.
+                    if (!buildVideoSlotLocked(layer, entry)) {
+                        Log.w(TAG, "overlay video slot skipped: ${entry.id}")
+                    }
+                    continue
+                }
+                val slot = overlaySlots[overlaySlotCount]
                 // Count first: if any step below throws, teardown deletes and
                 // recycles exactly the slots claimed so far — no leak, no
                 // half-built slot on the frame path.
-                overlaySlotCount = slotIndex + 1
+                overlaySlotCount += 1
                 val bitmap = if (layer.decodedBitmap != null) {
                     composeImageBitmapLocked(layer.decodedBitmap, rect, layer.spec, decodedPending)
                 } else {
@@ -727,6 +948,7 @@ internal class SceneCompositorGL(
                 slot.lastContent = layer.content
                 // Sanitized: layer id + kind/length only, never content.
                 val detail = if (layer.spec.kind == SceneLayerKind.IMAGE) "image" else "${layer.content.length} chars"
+                // (Video slots log their own ready line in buildVideoSlotLocked.)
                 Log.i(TAG, "overlay ready: ${entry.id} $detail " +
                     "${rect.width}x${rect.height}")
             }
@@ -892,6 +1114,56 @@ internal class SceneCompositorGL(
     }
 
     /**
+     * J2 video measurement (GL thread, overlay build only, never per
+     * frame): probe once via the provider, FIT/FILL through the
+     * shared J1 math. Null = skip loudly (over budget, unprobable,
+     * or unmeasurable). The probed dims ride along for UV mapping.
+     */
+    private fun measureVideoLocked(
+        spec: SceneOverlaySpec,
+        outW: Int,
+        outH: Int,
+        videoBudget: Set<String>
+    ): MeasuredOverlay? {
+        val uri = spec.imageUri
+        if (uri == null) {
+            Log.w(TAG, "overlay video layer without uri, skipping: ${spec.id}")
+            return null
+        }
+        if (!videoBudget.contains(spec.id)) {
+            Log.w(TAG, "overlay video over decoder budget, skipping: ${spec.id}")
+            return null
+        }
+        val dims = try {
+            videoProbe?.invoke(uri)
+        } catch (_: Throwable) {
+            null
+        }
+        if (dims == null) {
+            Log.w(TAG, "overlay video unprobable, skipping: ${spec.id}")
+            return null
+        }
+        // Same shared math as images: FIT aspect-fit, FILL full frame.
+        val size = if (spec.scaleMode == SceneScaleMode.FILL) {
+            SceneImageLayer.fillSize(
+                spec.maxWidthPx, outH - spec.marginPx * 2,
+                outW - spec.marginPx * 2, outH - spec.marginPx * 2
+            )
+        } else {
+            SceneImageLayer.measuredSize(
+                dims.widthPx, dims.heightPx, spec.maxWidthPx, outH - spec.marginPx * 2
+            )
+        }
+        if (size == null) {
+            Log.w(TAG, "overlay video unmeasurable, skipping: ${spec.id}")
+            return null
+        }
+        val styled = SceneLayerStyle.styledSize(size, spec.borderWidthPx, spec.shadowOffsetPx)
+            ?: throw RuntimeException("overlay styled size invalid: ${spec.id}")
+        return MeasuredOverlay(spec, "", styled, 0, 0, null, dims)
+    }
+
+    /**
      * H7 text slot bitmap: style underlay (shadow → background → border)
      * then glyphs in the layer text color at the padding offset. The
      * resolved rect may clip oversized content (same capping as H3–H6).
@@ -1008,6 +1280,310 @@ internal class SceneCompositorGL(
                 half, half, (width - shadow).toFloat() - half, (height - shadow).toFloat() - half,
                 radius, radius, stroke
             )
+        }
+    }
+
+    /**
+     * J2 video slot build (GL thread only): static style-underlay 2D
+     * texture + OES video texture + SurfaceTexture + Surface +
+     * decoder, with content-inset NDC and scale-mode UVs. Returns
+     * false (never throws) when anything fails — the caller skips
+     * the slot loudly and the stack stays dense. A partial build is
+     * always unwound by [abandonVideoSlotLocked]: no leaked texture,
+     * ST, Surface, or player thread.
+     */
+    private fun buildVideoSlotLocked(layer: MeasuredOverlay, entry: SceneOverlayDrawEntry): Boolean {
+        val spec = layer.spec
+        val dims = layer.videoSize ?: return false
+        val uri = spec.imageUri ?: return false
+        val factory = videoPlayerFactory ?: return false
+        val rect = entry.rectPx
+        val slot = overlaySlots[overlaySlotCount]
+        var success = false
+        try {
+            if (videoProgram == 0) buildVideoProgramLocked()
+            // Style-only 2D texture: underlay over transparent content.
+            val style = Bitmap.createBitmap(rect.width, rect.height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(style)
+            drawStyleUnderlayLocked(canvas, rect.width, rect.height, spec)
+            val textures = IntArray(1)
+            GLES20.glGenTextures(1, textures, 0)
+            checkGl("glGenTextures(video style)")
+            slot.textureId = textures[0]
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, slot.textureId)
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR
+            )
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR
+            )
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE
+            )
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE
+            )
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, style, 0)
+            checkGl("video style upload")
+            slot.bitmap = style
+            // OES video texture + SurfaceTexture + Surface. Created on
+            // the GL thread with this context current, consumed on
+            // the same thread — no attach/detach dance needed.
+            GLES20.glGenTextures(1, textures, 0)
+            checkGl("glGenTextures(video oes)")
+            slot.videoTextureId = textures[0]
+            GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, slot.videoTextureId)
+            GLES20.glTexParameteri(
+                GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR
+            )
+            GLES20.glTexParameteri(
+                GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR
+            )
+            GLES20.glTexParameteri(
+                GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE
+            )
+            GLES20.glTexParameteri(
+                GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE
+            )
+            checkGl("video oes texture setup")
+            val surfaceTexture = SurfaceTexture(slot.videoTextureId)
+            surfaceTexture.setDefaultBufferSize(dims.widthPx, dims.heightPx)
+            slot.videoSt = surfaceTexture
+            slot.videoSurface = Surface(surfaceTexture)
+            val content = contentRect(rect, spec)
+            val ndc = SceneTextLayerLayout.ndcQuad(content, layout.outputWidth, layout.outputHeight)
+                ?: throw RuntimeException("video content ndc invalid: ${spec.id}")
+            slot.videoNdcBuffer = floatBufferOf(ndc)
+            slot.videoUvBuffer = floatBufferOf(videoUvFor(spec, dims, content))
+            slot.quadBuffer = floatBufferOf(entry.ndcQuad)
+            slot.alpha = entry.alpha
+            slot.spec = spec
+            slot.isVideo = true
+            Matrix.setIdentityM(slot.videoStMatrix, 0)
+            slot.videoController.onRebuild()
+            if (!slot.videoController.onSlotAssigned()) {
+                throw RuntimeException("video controller stuck: ${spec.id}")
+            }
+            surfaceTexture.setOnFrameAvailableListener(
+                SurfaceTexture.OnFrameAvailableListener { onVideoFrameLocked(slot) },
+                glHandler
+            )
+            val player = factory(spec.id)
+            slot.videoPlayer = player
+            val surface = slot.videoSurface ?: throw RuntimeException("video surface missing")
+            player.prepare(uri, surface, playerListener(slot, player))
+            overlaySlotCount += 1
+            Log.i(TAG, "overlay ready: ${entry.id} video ${rect.width}x${rect.height}")
+            success = true
+            return true
+        } catch (t: Exception) {
+            Log.w(TAG, "overlay video build failed: ${spec.id}", t)
+        } finally {
+            if (!success) abandonVideoSlotLocked(slot)
+        }
+    }
+
+    /**
+     * J2 player callbacks for one slot (called on the player thread;
+     * re-posted to GL). Identity-guarded: a callback from a retired
+     * player (rebuild won the race) is ignored, so an old decoder can
+     * never steer the reused slot.
+     */
+    private fun playerListener(slot: OverlaySlot, player: SceneVideoPlayer): SceneVideoPlayer.Listener =
+        object : SceneVideoPlayer.Listener {
+            override fun onPrepared(videoWidth: Int, videoHeight: Int) {
+                postToGl {
+                    if (slot.videoPlayer !== player) return@postToGl
+                    slot.videoController.onPlaying()
+                    Log.i(TAG, "video playing: ${slot.spec?.id} ${videoWidth}x${videoHeight}")
+                }
+            }
+
+            override fun onVideoSizeChanged(width: Int, height: Int) {
+                Log.i(TAG, "video size: ${slot.spec?.id} ${width}x${height}")
+            }
+
+            override fun onError(what: Int, extra: Int) {
+                // Release on the player thread (already there — no
+                // rendezvous, no GL block, no deadlock); state moves
+                // on GL. The slot keeps its style quad, draws no
+                // video, and the stream continues.
+                try {
+                    player.releaseAsync()
+                } catch (_: Exception) {
+                }
+                postToGl {
+                    if (slot.videoPlayer !== player) return@postToGl
+                    slot.videoPlayer = null
+                    slot.videoPendingFrame = false
+                    slot.videoHasFrame = false
+                    slot.videoController.onError("decoder $what/$extra")
+                    Log.e(TAG, "video failed: ${slot.spec?.id} what=$what extra=$extra")
+                }
+            }
+
+            override fun onCompletion() {
+                Log.i(TAG, "video completed (looping): ${slot.spec?.id}")
+            }
+        }
+
+    /**
+     * J2 partial-build unwind (GL thread only): releases everything
+     * [buildVideoSlotLocked] may have claimed. Best-effort and
+     * exception-isolated; never throws.
+     */
+    private fun abandonVideoSlotLocked(slot: OverlaySlot) {
+        val player = slot.videoPlayer
+        slot.videoPlayer = null
+        if (player != null) {
+            try {
+                player.releaseAsync()
+            } catch (_: Exception) {
+            }
+        }
+        releaseVideoSlotLocked(slot)
+        try {
+            if (slot.textureId != 0) GLES20.glDeleteTextures(1, intArrayOf(slot.textureId), 0)
+        } catch (_: Exception) {
+        }
+        slot.textureId = 0
+        try {
+            slot.bitmap?.recycle()
+        } catch (_: Exception) {
+        }
+        slot.bitmap = null
+        slot.quadBuffer = null
+        slot.spec = null
+    }
+
+    /** Posts [block] to the GL queue (any thread; drops when gone). Never throws. */
+    private fun postToGl(block: () -> Unit) {
+        try {
+            glHandler?.post {
+                try {
+                    block()
+                } catch (_: Exception) {
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * J2 content rect: the resolved rect minus style padding (border
+     * + shadow), at least 1px — the same content box the image path
+     * draws into. Pure geometry on resolved values.
+     */
+    private fun contentRect(rect: SceneRectPx, spec: SceneOverlaySpec): SceneRectPx {
+        val left = rect.left + spec.borderWidthPx
+        val top = rect.top + spec.borderWidthPx
+        val w = (rect.width - spec.borderWidthPx * 2 - spec.shadowOffsetPx).coerceAtLeast(1)
+        val h = (rect.height - spec.borderWidthPx * 2 - spec.shadowOffsetPx).coerceAtLeast(1)
+        return SceneRectPx(left, top, left + w, top + h)
+    }
+
+    /**
+     * J2 video UVs in triangle-strip order: full texture for FIT, the
+     * shared cover-crop mapped to 0..1 UVs for FILL. A null crop is
+     * logic-impossible (same inputs measured); fall back to full
+     * loudly like the image path.
+     */
+    private fun videoUvFor(spec: SceneOverlaySpec, dims: SceneSizePx, content: SceneRectPx): FloatArray {
+        if (spec.scaleMode != SceneScaleMode.FILL) return QUAD_TEX_COORDS
+        val crop = SceneImageLayer.fillCrop(dims.widthPx, dims.heightPx, content.width, content.height)
+        if (crop == null) {
+            Log.w(TAG, "overlay video fill crop failed, drawing full: ${spec.id}")
+            return QUAD_TEX_COORDS
+        }
+        val u0 = crop.left.toFloat() / dims.widthPx
+        val u1 = crop.right.toFloat() / dims.widthPx
+        val v0 = crop.top.toFloat() / dims.heightPx
+        val v1 = crop.bottom.toFloat() / dims.heightPx
+        return floatArrayOf(u0, v0, u1, v0, u0, v1, u1, v1)
+    }
+
+    /** J2 video program: OES sampler + ST matrix + alpha. Built lazily on first video slot. */
+    private fun buildVideoProgramLocked() {
+        videoProgram = buildProgramFor(VERTEX_SHADER.trimIndent(), VIDEO_FRAGMENT_SHADER.trimIndent())
+        videoPositionHandle = GLES20.glGetAttribLocation(videoProgram, "aPosition")
+        videoCoordHandle = GLES20.glGetAttribLocation(videoProgram, "aTextureCoord")
+        videoMvpHandle = GLES20.glGetUniformLocation(videoProgram, "uMVPMatrix")
+        videoStMatrixHandle = GLES20.glGetUniformLocation(videoProgram, "uSTMatrix")
+        videoSamplerHandle = GLES20.glGetUniformLocation(videoProgram, "uSampler")
+        videoAlphaHandle = GLES20.glGetUniformLocation(videoProgram, "uAlpha")
+    }
+
+    /**
+     * J2 video slot draw (GL thread): style quad first (always — the
+     * underlay is static), then the OES video quad at the content
+     * inset when a frame has latched. Before the first frame the slot
+     * is style-only (video fades in; no poster in-stream — honest
+     * motion-or-nothing). A latch failure fails the slot loudly and
+     * skips the video quad; the style quad already drew and the
+     * stream continues.
+     */
+    private fun drawVideoSlotLocked(slot: OverlaySlot) {
+        drawOverlaySlotLocked(slot)
+        val surfaceTexture = slot.videoSt ?: return
+        if (slot.videoPendingFrame) {
+            slot.videoPendingFrame = false
+            try {
+                surfaceTexture.updateTexImage()
+                surfaceTexture.getTransformMatrix(slot.videoStMatrix, 0)
+                slot.videoHasFrame = true
+            } catch (e: RuntimeException) {
+                Log.e(TAG, "video latch failed: ${slot.spec?.id}", e)
+                failVideoSlotLocked(slot, "latch failed")
+                return
+            }
+        }
+        if (!slot.videoHasFrame) return
+        val ndc = slot.videoNdcBuffer
+        val uv = slot.videoUvBuffer
+        if (ndc == null || uv == null || videoProgram == 0 || slot.videoTextureId == 0) {
+            throw RuntimeException("video slot state missing")
+        }
+        GLES20.glUseProgram(videoProgram)
+        ndc.position(0)
+        GLES20.glVertexAttribPointer(videoPositionHandle, 2, GLES20.GL_FLOAT, false, 0, ndc)
+        GLES20.glEnableVertexAttribArray(videoPositionHandle)
+        uv.position(0)
+        GLES20.glVertexAttribPointer(videoCoordHandle, 2, GLES20.GL_FLOAT, false, 0, uv)
+        GLES20.glEnableVertexAttribArray(videoCoordHandle)
+        GLES20.glUniformMatrix4fv(videoMvpHandle, 1, false, mvpMatrix, 0)
+        GLES20.glUniformMatrix4fv(videoStMatrixHandle, 1, false, slot.videoStMatrix, 0)
+        GLES20.glUniform1f(videoAlphaHandle, slot.alpha)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, slot.videoTextureId)
+        GLES20.glUniform1i(videoSamplerHandle, 0)
+        GLES20.glEnable(GLES20.GL_BLEND)
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        GLES20.glDisable(GLES20.GL_BLEND)
+        GLES20.glDisableVertexAttribArray(videoPositionHandle)
+        GLES20.glDisableVertexAttribArray(videoCoordHandle)
+        checkGl("video overlay draw")
+    }
+
+    /**
+     * J2 runtime video failure (GL thread): marks the slot FAILED and
+     * drops its decoder (async — no GL block). The ST survives for
+     * style-only rendering. Never throws.
+     */
+    private fun failVideoSlotLocked(slot: OverlaySlot, reason: String) {
+        try {
+            slot.videoController.onError(reason)
+        } catch (_: Exception) {
+        }
+        val player = slot.videoPlayer
+        slot.videoPlayer = null
+        slot.videoPendingFrame = false
+        slot.videoHasFrame = false
+        if (player != null) {
+            try {
+                player.releaseAsync()
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -1133,6 +1709,17 @@ internal class SceneCompositorGL(
             uniform samplerExternalOES uSampler;
             void main() {
               gl_FragColor = texture2D(uSampler, vTextureCoord);
+            }
+        """
+        private const val VIDEO_FRAGMENT_SHADER = """
+            #extension GL_OES_EGL_image_external : require
+            precision mediump float;
+            varying vec2 vTextureCoord;
+            uniform samplerExternalOES uSampler;
+            uniform float uAlpha;
+            void main() {
+              vec4 c = texture2D(uSampler, vTextureCoord);
+              gl_FragColor = vec4(c.rgb, c.a * uAlpha);
             }
         """
         private const val OVERLAY_VERTEX_SHADER = """
