@@ -27,25 +27,19 @@ object ScenePrefsStore {
     fun load(context: Context): Loaded {
         try {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val stored = prefs.getString(KEY_SCENES, null)
-            var scenes = SceneConfigCodec.decodeStore(stored)
-            if (scenes.isEmpty()) scenes = listOf(SceneConfigCodec.defaultScene())
-            var activeId = prefs.getString(KEY_ACTIVE, null)
-            if (activeId == null || scenes.none { it.id == activeId }) {
-                activeId = scenes.first().id
-            }
-            val repaired = SceneConfigCodec.encodeStore(scenes)
-            if (repaired != (stored ?: "")) {
+            val resolved = SceneConfigCodec.resolveStoredScenes(
+                prefs.getString(KEY_SCENES, null),
+                prefs.getString(KEY_ACTIVE, null)
+            )
+            if (resolved.rewriteScenes || resolved.rewriteActive) {
                 // Self-heal: persist the repaired/normalized form so a
                 // corrupt file cannot linger and surprise a later load.
-                prefs.edit()
-                    .putString(KEY_SCENES, repaired)
-                    .putString(KEY_ACTIVE, activeId)
-                    .apply()
-            } else if (prefs.getString(KEY_ACTIVE, null) != activeId) {
-                prefs.edit().putString(KEY_ACTIVE, activeId).apply()
+                prefs.edit().apply {
+                    if (resolved.rewriteScenes) putString(KEY_SCENES, resolved.repairedEncoding)
+                    putString(KEY_ACTIVE, resolved.activeSceneId)
+                }.apply()
             }
-            return Loaded(scenes, activeId)
+            return Loaded(resolved.scenes, resolved.activeSceneId)
         } catch (_: Exception) {
             // Unreadable store (e.g. corrupt prefs XML): fall back to the
             // default scene in memory; the next mutation rewrites the file.
@@ -55,12 +49,11 @@ object ScenePrefsStore {
     }
 
     fun save(context: Context, scenes: List<StreamScene>, activeSceneId: String) {
-        val valid = scenes.ifEmpty { listOf(SceneConfigCodec.defaultScene()) }
-        val active = if (valid.any { it.id == activeSceneId }) activeSceneId else valid.first().id
+        val resolved = SceneConfigCodec.resolveSceneSave(scenes, activeSceneId)
         try {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString(KEY_SCENES, SceneConfigCodec.encodeStore(valid))
-                .putString(KEY_ACTIVE, active)
+                .putString(KEY_SCENES, resolved.encoding)
+                .putString(KEY_ACTIVE, resolved.activeSceneId)
                 .apply()
         } catch (_: Exception) {
             // Best effort: a failed write keeps the in-memory state (the

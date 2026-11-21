@@ -43,6 +43,9 @@ class StreamingLifecycleStructureTest {
     private fun sceneSource(): String =
         source("java/com/jubersaleem/mobilegamingstreamer/scene/SceneSource.kt")
 
+    private fun sceneEditor(): String =
+        source("java/com/jubersaleem/mobilegamingstreamer/SceneEditorPage.kt")
+
     /** Body of the first function whose declaration contains [marker]. */
     private fun functionBody(src: String, marker: String): String {
         val decl = src.indexOf(marker)
@@ -194,6 +197,17 @@ class StreamingLifecycleStructureTest {
         assertTrue(body.contains("scene invalid, defaulting"))
         assertTrue(body.contains("removeExtra(EXTRA_SCENE_CONFIG)"))
         assertTrue(body.contains("ScreenSource(this, mediaProjection)"))
+    }
+
+    @Test
+    fun layerSlidersClampStoredValuesToUiRange() {
+        // Stored layers may carry codec-valid values outside the narrower
+        // UI slider ranges (foreign/corrupt prefs); every slider input
+        // coerces. Structural pin: the JVM suite cannot render Compose.
+        val editor = sceneEditor()
+        assertTrue(editor.contains("layer.marginPx.toFloat().coerceIn(0f, SCENE_LAYER_MAX_MARGIN_UI_PX.toFloat())"))
+        assertTrue(editor.contains("layer.maxWidthPx.toFloat().coerceIn("))
+        assertTrue(editor.contains("layer.alpha.coerceIn(0f, 1f)"))
     }
 
     @Test

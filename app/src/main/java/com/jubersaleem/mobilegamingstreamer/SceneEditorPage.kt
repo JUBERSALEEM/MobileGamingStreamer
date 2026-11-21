@@ -460,7 +460,9 @@ private fun LayerRow(
             LayerSlider(
                 label = "Margin",
                 valueLabel = "${layer.marginPx} px",
-                value = layer.marginPx.toFloat(),
+                // Stored layers may carry codec-valid margins above the UI
+                // range (foreign/corrupt prefs); coerce like the siblings.
+                value = layer.marginPx.toFloat().coerceIn(0f, SCENE_LAYER_MAX_MARGIN_UI_PX.toFloat()),
                 range = 0f..SCENE_LAYER_MAX_MARGIN_UI_PX.toFloat(),
                 steps = 31,
                 onChange = { onLayerMargin(sceneId, layer.id, it.roundToInt()) }

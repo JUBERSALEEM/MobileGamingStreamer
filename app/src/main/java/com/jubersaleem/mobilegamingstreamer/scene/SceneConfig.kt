@@ -218,6 +218,52 @@ internal object SceneConfigCodec {
         return encodeScene(active)
     }
 
+    /**
+     * Pure load resolution: the [ScenePrefsStore] decision core, JVM-tested.
+     * Returns valid scenes (never empty), the active id, the repaired
+     * encoding, and which keys need rewriting. Mirrors the store's
+     * self-heal rules exactly: corrupt entries are dropped, the default
+     * scene seeds an empty store, an unknown active id falls back to the
+     * first scene, and a rewrite happens only when the repaired form
+     * differs from what is stored.
+     */
+    data class ResolvedStore(
+        val scenes: List<StreamScene>,
+        val activeSceneId: String,
+        val repairedEncoding: String,
+        val rewriteScenes: Boolean,
+        val rewriteActive: Boolean
+    )
+
+    fun resolveStoredScenes(storedScenes: String?, storedActive: String?): ResolvedStore {
+        var scenes = decodeStore(storedScenes)
+        if (scenes.isEmpty()) scenes = listOf(defaultScene())
+        var activeId = storedActive
+        if (activeId == null || scenes.none { it.id == activeId }) activeId = scenes.first().id
+        val repaired = encodeStore(scenes)
+        val rewriteScenes = repaired != (storedScenes ?: "")
+        return ResolvedStore(
+            scenes = scenes,
+            activeSceneId = activeId,
+            repairedEncoding = repaired,
+            rewriteScenes = rewriteScenes,
+            rewriteActive = rewriteScenes || storedActive != activeId
+        )
+    }
+
+    /** Pure save resolution: never-empty valid scenes + validated active id. */
+    data class ResolvedSave(
+        val scenes: List<StreamScene>,
+        val activeSceneId: String,
+        val encoding: String
+    )
+
+    fun resolveSceneSave(scenes: List<StreamScene>, activeSceneId: String): ResolvedSave {
+        val valid = scenes.ifEmpty { listOf(defaultScene()) }
+        val active = if (valid.any { it.id == activeSceneId }) activeSceneId else valid.first().id
+        return ResolvedSave(valid, active, encodeStore(valid))
+    }
+
     private fun decodeLayer(body: String): StreamSceneLayer? {
         val fields = body.split("\t")
         if (fields.size != 8) return null
