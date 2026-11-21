@@ -37,8 +37,16 @@ enum class StreamHealth {
  * A zero timestamp means "never observed in this session".
  *
  * @param bitrateBps last smoothed outgoing bits/sec (0 when unknown/none).
- * @param sentVideoTotal cumulative transmitted video frames (per connection).
- * @param sentAudioTotal cumulative transmitted audio frames (per connection).
+ * @param bytesSendTotal cumulative bytes written to the socket (per
+ * connection). Unlike the frame counters below, the library increments this
+ * only after a packet write returns, so it is the primary evidence of
+ * completed outgoing transmission.
+ * @param sentVideoTotal cumulative dequeued/packetized video frames (per
+ * connection). Incremented before the socket write; a sender-side
+ * diagnostic, never standalone transmission evidence.
+ * @param sentAudioTotal cumulative dequeued/packetized audio frames (per
+ * connection). Incremented before the socket write; a sender-side
+ * diagnostic, never standalone transmission evidence.
  * @param droppedVideoTotal cumulative queue-full video drops (per connection).
  * @param droppedAudioTotal cumulative queue-full audio drops (per connection).
  * @param queueItems frames currently queued for transmission (0..capacity).
@@ -51,6 +59,7 @@ enum class StreamHealth {
 data class StreamHealthSample(
     val nowMs: Long,
     val bitrateBps: Long = 0L,
+    val bytesSendTotal: Long = 0L,
     val sentVideoTotal: Long = 0L,
     val sentAudioTotal: Long = 0L,
     val droppedVideoTotal: Long = 0L,
@@ -72,10 +81,14 @@ data class StreamHealthSample(
  */
 object StreamHealthThresholds {
     /**
-     * Ticks with progress required before HEALTHY. One sample is never
-     * enough: the first tick after startup has no baseline for deltas.
+     * Consecutive valid transmission-progress ticks required before HEALTHY.
+     * A valid tick is an accepted (in-session, in-order) sample whose byte
+     * counter advanced or whose positive-bitrate evidence is new since the
+     * previous sample. Missing, stale, duplicate and non-progress ticks
+     * never count; a non-progress tick resets the run. Three in a row
+     * confirms a genuinely flowing session instead of one lucky sample.
      */
-    const val HEALTHY_ENTER_SAMPLES = 2
+    const val HEALTHY_ENTER_PROGRESS_TICKS = 3
 
     /**
      * Consecutive concerning ticks required before DEGRADED. A single hot
@@ -100,17 +113,21 @@ object StreamHealthThresholds {
 
     /**
      * Consecutive progress ticks required to leave STALLED. Progress means
-     * positive bitrate or advancing sent counters on the tick.
+     * advancing byte counters or new positive-bitrate evidence on the tick;
+     * frame-counter movement alone never counts. Clearing the hold takes the
+     * verdict back to unconfirmed (UNKNOWN) until the healthy-entry run
+     * completes; a single stray tick can never clear a confirmed stall.
      */
     const val STALL_EXIT_TICKS = 2
 
     /**
-     * Sustained outgoing bitrate below this floor means starved transmission.
-     * A healthy session always carries 128 kbps AAC audio plus video; even a
-     * static screen exceeds this floor. Content-dependent dips above it stay
-     * HEALTHY when no pressure signal is present.
+     * Sustained outgoing bitrate strictly below this floor means starved
+     * transmission; a reading exactly at the floor is not starved. The 200
+     * kbps floor sits far under every encoding profile (audio alone is 128
+     * kbps AAC plus video), so only a genuinely throttled socket trips it
+     * while content-dependent dips stay HEALTHY absent other pressure.
      */
-    const val LOW_BITRATE_BPS = 100_000L
+    const val LOW_BITRATE_BPS = 200_000L
 
     /**
      * Queued backlog above this many bytes means multi-second transmit

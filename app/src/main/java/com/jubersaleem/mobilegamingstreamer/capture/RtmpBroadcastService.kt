@@ -98,9 +98,16 @@ class RtmpBroadcastService : Service() {
     private val streamHealthWatchdog = object : Runnable {
         override fun run() {
             if (display == null || stopping) return
-            when (recoveryDriver.onWatchdogTick(
-                streamingConfirmed, lastPositiveBitrateAt, SystemClock.elapsedRealtime()
-            )) {
+            // Sample-before-decide on the existing tick (no new loop): the
+            // observational monitor shares the 20-second stall window, so it
+            // must see the final sample before the authoritative decision
+            // below can stop on the critical tick. The decision itself is
+            // unchanged and remains the sole termination authority.
+            when (runWatchdogCycle(::sampleStreamHealth) {
+                recoveryDriver.onWatchdogTick(
+                    streamingConfirmed, lastPositiveBitrateAt, SystemClock.elapsedRealtime()
+                )
+            }) {
                 WatchdogAction.STOP_STALLED -> {
                     stopBroadcast("Stream output stalled for 20 seconds. Check your network, then tap GO LIVE and approve a fresh screen-capture session.")
                     return
@@ -111,9 +118,6 @@ class RtmpBroadcastService : Service() {
                 }
                 WatchdogAction.NONE -> { }
             }
-            // Observational health sampling on the existing tick. No new loop:
-            // this line is reached only when the watchdog above did not stop.
-            sampleStreamHealth()
             handler.postDelayed(this, STREAM_HEALTH_CHECK_INTERVAL_MS)
         }
     }
@@ -265,7 +269,6 @@ class RtmpBroadcastService : Service() {
                     handler.removeCallbacks(streamHealthWatchdog)
                     handler.removeCallbacks(sessionHeartbeat)
                     recoveryDriver.onStop()
-                    healthMonitor.onStopped()
                     streamingConfirmed = false
                     lastBitrate = 0L
                     val disconnected = display
@@ -278,6 +281,9 @@ class RtmpBroadcastService : Service() {
                     }
                     releaseProjection()
                     publishState(false, "Broadcast disconnected. Tap GO LIVE to start a fresh capture session.", 0L)
+                    // Halt only after the final status event so it preserves
+                    // the terminal health verdict instead of UNKNOWN.
+                    healthMonitor.onStopped()
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                 }
@@ -437,9 +443,10 @@ class RtmpBroadcastService : Service() {
 
     /**
      * Feed one observational health sample from the live pipeline. Runs only
-     * on the existing watchdog tick; a sampling failure skips the tick and
-     * never affects the session. Health transitions are logged for device
-     * debugging and ride along the next status broadcast as an extra.
+     * on the existing watchdog tick, before the authoritative driver
+     * decision; a sampling failure skips the tick and never affects the
+     * session. Health transitions are logged for device debugging and ride
+     * along the next status broadcast as an extra.
      */
     private fun sampleStreamHealth() {
         val stream = display ?: return
@@ -449,6 +456,7 @@ class RtmpBroadcastService : Service() {
             StreamHealthSample(
                 nowMs = SystemClock.elapsedRealtime(),
                 bitrateBps = lastBitrate,
+                bytesSendTotal = client.getBytesSend(),
                 sentVideoTotal = client.getSentVideoFrames(),
                 sentAudioTotal = client.getSentAudioFrames(),
                 droppedVideoTotal = client.getDroppedVideoFrames(),
@@ -474,7 +482,6 @@ class RtmpBroadcastService : Service() {
         handler.removeCallbacks(streamHealthWatchdog)
         handler.removeCallbacks(sessionHeartbeat)
         recoveryDriver.onStop()
-        healthMonitor.onStopped()
         streamingConfirmed = false
         lastBitrate = 0L
         val active = display
@@ -487,6 +494,9 @@ class RtmpBroadcastService : Service() {
         }
         releaseProjection()
         publishState(false, message, 0L)
+        // Halt only after the final status event so it preserves the
+        // terminal health verdict (e.g. STALLED) instead of UNKNOWN.
+        healthMonitor.onStopped()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

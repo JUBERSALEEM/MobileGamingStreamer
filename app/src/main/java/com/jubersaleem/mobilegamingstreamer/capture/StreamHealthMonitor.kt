@@ -12,15 +12,26 @@ import kotlin.math.max
  * recovery driver and the termination watchdogs.
  *
  * Design notes:
+ * - Transmission progress rests on bytes the socket actually accepted: the
+ *   library increments its sent-frame counters before the socket write but
+ *   its byte counter only after a packet write returns, so positive byte
+ *   deltas are the primary evidence and newly arrived positive-bitrate
+ *   callbacks the supporting evidence. Frame-counter movement alone — frames
+ *   merely consumed from the queue — never establishes transmission.
  * - Library counters reset on every socket reconnect, so all deltas are
  *   reset-aware (a backwards counter re-baselines; this also covers the
- *   theoretical Long rollover uniformly).
+ *   theoretical Long rollover uniformly). A reset to zero with no new bytes
+ *   is silence, not progress.
+ * - Samples are timestamp-validated: anything older than the session start,
+ *   duplicated or out of order is rejected without touching counts,
+ *   baselines, totals, progress timestamps or state.
  * - Windows are time-based (robust to delayed ticks); confirmations are
  *   consecutive-tick based (robust to single-sample noise); hysteresis
  *   separates degraded entry from healthy exit.
- * - Encoder progress (fps callbacks) and transmission progress (bitrate and
- *   sent counters) are tracked independently so a stall with a live encoder
- *   is distinguishable whenever the metrics allow it.
+ * - Encoder progress (fps callbacks), sender progress (frames dequeued) and
+ *   transmission progress (bytes written) are tracked independently so a
+ *   stall with a live encoder stays distinguishable whenever the metrics
+ *   allow it.
  * - Missing metrics are conservative: a session that never showed progress
  *   reports UNKNOWN, never STALLED.
  *
@@ -36,8 +47,16 @@ class StreamHealthMonitor {
     var encoderProgressing: Boolean = false
         private set
 
-    /** True when transmission recently progressed (bitrate or sent counters). */
+    /** True when the sender recently dequeued frames toward the socket. */
+    var senderProgressing: Boolean = false
+        private set
+
+    /** True when the socket recently accepted bytes (primary) or bitrate evidence is fresh. */
     var transmissionProgressing: Boolean = false
+        private set
+
+    /** Accepted in-session samples; rejected stale/duplicate/out-of-order samples never count. */
+    var samplesAccepted: Int = 0
         private set
 
     /** Reset-aware session totals of queue-full drops (diagnostic aid). */
@@ -48,13 +67,16 @@ class StreamHealthMonitor {
 
     private var halted = false
     private var sessionStartMs = 0L
-    private var samplesSeen = 0
+    private var lastSampleMs = 0L
+    private var lastBytesSend = 0L
     private var lastSentVideo = 0L
     private var lastSentAudio = 0L
     private var lastDroppedVideo = 0L
     private var lastDroppedAudio = 0L
     private var lastProgressMs = 0L
+    private var lastSenderProgressMs = 0L
     private var lastEncoderProgressMs = 0L
+    private var prevPositiveBitrateMs = 0L
     private var consecutiveBad = 0
     private var consecutiveGood = 0
     private var consecutiveProgress = 0
@@ -65,13 +87,17 @@ class StreamHealthMonitor {
     fun startSession(nowMs: Long) {
         halted = false
         sessionStartMs = nowMs
-        samplesSeen = 0
+        lastSampleMs = 0L
+        samplesAccepted = 0
+        lastBytesSend = 0L
         lastSentVideo = 0L
         lastSentAudio = 0L
         lastDroppedVideo = 0L
         lastDroppedAudio = 0L
         lastProgressMs = 0L
+        lastSenderProgressMs = 0L
         lastEncoderProgressMs = 0L
+        prevPositiveBitrateMs = 0L
         consecutiveBad = 0
         consecutiveGood = 0
         consecutiveProgress = 0
@@ -80,6 +106,7 @@ class StreamHealthMonitor {
         sessionDroppedVideo = 0L
         sessionDroppedAudio = 0L
         encoderProgressing = false
+        senderProgressing = false
         transmissionProgressing = false
         state = StreamHealth.UNKNOWN
     }
@@ -92,18 +119,26 @@ class StreamHealthMonitor {
 
     /**
      * Classify one sampling tick. Returns the (possibly unchanged) state.
-     * Baselines advance on every tick, including recovering ticks, so a
-     * sender restart mid-episode never produces a false delta afterwards.
+     * Rejected samples (older than the session, duplicated or out of order)
+     * return the current state without touching any counter, baseline, total
+     * or timestamp. Baselines advance on every accepted tick, including
+     * recovering ticks, so a sender restart mid-episode never produces a
+     * false delta afterwards.
      */
     fun onSample(sample: StreamHealthSample): StreamHealth {
         if (halted) return StreamHealth.UNKNOWN
         val now = sample.nowMs
-        samplesSeen++
+        if (now < sessionStartMs) return state
+        if (samplesAccepted > 0 && now <= lastSampleMs) return state
+        samplesAccepted++
+        lastSampleMs = now
 
+        val byteDelta = resetAwareDelta(sample.bytesSendTotal, lastBytesSend)
         val sentVideoDelta = resetAwareDelta(sample.sentVideoTotal, lastSentVideo)
         val sentAudioDelta = resetAwareDelta(sample.sentAudioTotal, lastSentAudio)
         val dropVideoDelta = resetAwareDelta(sample.droppedVideoTotal, lastDroppedVideo)
         val dropAudioDelta = resetAwareDelta(sample.droppedAudioTotal, lastDroppedAudio)
+        lastBytesSend = sample.bytesSendTotal.coerceAtLeast(0L)
         lastSentVideo = sample.sentVideoTotal.coerceAtLeast(0L)
         lastSentAudio = sample.sentAudioTotal.coerceAtLeast(0L)
         lastDroppedVideo = sample.droppedVideoTotal.coerceAtLeast(0L)
@@ -111,9 +146,17 @@ class StreamHealthMonitor {
         sessionDroppedVideo += dropVideoDelta
         sessionDroppedAudio += dropAudioDelta
 
-        val progressOnTick = sample.bitrateBps > 0L || sentVideoDelta > 0L || sentAudioDelta > 0L
-        if (progressOnTick) lastProgressMs = max(lastProgressMs, now)
+        // Supporting evidence must be new since the previous sample: a frozen
+        // timestamp (bitrate callbacks paused while the socket is down) is
+        // history, not progress.
+        val newPositiveBitrate = sample.lastPositiveBitrateMs > prevPositiveBitrateMs
+        prevPositiveBitrateMs = max(prevPositiveBitrateMs, sample.lastPositiveBitrateMs)
+        val progressOnTick = byteDelta > 0L || newPositiveBitrate
+        if (byteDelta > 0L) lastProgressMs = max(lastProgressMs, now)
         lastProgressMs = max(lastProgressMs, sample.lastPositiveBitrateMs)
+        if (sentVideoDelta > 0L || sentAudioDelta > 0L) {
+            lastSenderProgressMs = max(lastSenderProgressMs, now)
+        }
         lastEncoderProgressMs = max(lastEncoderProgressMs, sample.lastEncoderFpsMs)
 
         // Pressure evidence for this tick. Starved bitrate needs a positive
@@ -128,6 +171,8 @@ class StreamHealthMonitor {
 
         transmissionProgressing = lastProgressMs > 0L &&
             now - lastProgressMs < StreamHealthThresholds.STALL_NO_PROGRESS_MS
+        senderProgressing = lastSenderProgressMs > 0L &&
+            now - lastSenderProgressMs < StreamHealthThresholds.STALL_NO_PROGRESS_MS
         encoderProgressing = lastEncoderProgressMs > 0L &&
             now - lastEncoderProgressMs < StreamHealthThresholds.STALL_NO_PROGRESS_MS
 
@@ -170,12 +215,14 @@ class StreamHealthMonitor {
             }
             return state
         }
-        val progressFresh = lastProgressMs > 0L &&
-            now - lastProgressMs < StreamHealthThresholds.STALL_NO_PROGRESS_MS
-        state = if (samplesSeen >= StreamHealthThresholds.HEALTHY_ENTER_SAMPLES && progressFresh) {
-            StreamHealth.HEALTHY
-        } else {
-            StreamHealth.UNKNOWN
+        if (consecutiveProgress >= StreamHealthThresholds.HEALTHY_ENTER_PROGRESS_TICKS) {
+            state = StreamHealth.HEALTHY
+        } else if (state != StreamHealth.HEALTHY) {
+            // Below the confirmation run and not previously healthy: no
+            // verdict yet. A previously healthy session holds HEALTHY through
+            // transient non-progress; the stall window and the degraded
+            // confirmation above own the exits.
+            state = StreamHealth.UNKNOWN
         }
         return state
     }
@@ -185,6 +232,7 @@ class StreamHealthMonitor {
      * means the library restarted its per-connection counters (every socket
      * reconnect does this); the new total re-baselines and counts as
      * tick-local activity rather than producing a negative or a false stall.
+     * A reset that lands on zero yields a zero delta: silence, not progress.
      */
     private fun resetAwareDelta(newTotal: Long, oldTotal: Long): Long {
         val fresh = newTotal.coerceAtLeast(0L)
