@@ -87,8 +87,20 @@ jobs:
       - name: Verify release-readiness declarations
         run: python3 scripts/verify_release_readiness.py
 
-      - name: Run unit tests and Android lint
-        run: gradle :app:testDebugUnitTest :app:lintDebug --no-daemon
+      - name: Run unit tests
+        run: gradle :app:testDebugUnitTest --no-daemon 2>&1 | tee unit-test.log
+
+      - name: Run Android lint
+        run: gradle :app:lintDebug --no-daemon 2>&1 | tee lint.log
+
+      - name: Publish failure excerpt
+        if: failure()
+        run: |
+          for f in unit-test.log lint.log; do
+            if [ -f "$f" ]; then
+              (grep -E "^e: |FAILED$| FAILED|FAILURE:|Execution failed|> Task .* FAILED|error:" "$f" || true) | head -20 | sed 's/%/%25/g' | while IFS= read -r line; do echo "::error file=$f::$line"; done
+            fi
+          done
 
       - name: Verify unit tests executed
         run: python3 scripts/check_test_results.py app/build/test-results/testDebugUnitTest

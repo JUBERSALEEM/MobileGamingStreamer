@@ -58,7 +58,7 @@ class ScenePreviewBoxesTest {
             )
         )!!
         assertEquals(listOf("bottom", "top"), boxes.map { it.id })
-        assertEquals(0.5f, boxes[1].alpha)
+        assertEquals(0.5f, boxes[1].alpha, 0.001f)
         assertTrue(boxes.all { it.enabled })
     }
 

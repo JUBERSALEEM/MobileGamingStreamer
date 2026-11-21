@@ -54,7 +54,7 @@ class SceneOverlayStackTest {
         assertEquals(SceneOverlayAnchor.BOTTOM_LEFT, parsed.anchor)
         assertEquals(2, parsed.zOrder)
         assertEquals(48, parsed.marginPx)
-        assertEquals(1f, parsed.alpha)
+        assertEquals(1f, parsed.alpha, 0.001f)
         assertTrue(parsed.enabled)
     }
 
@@ -88,15 +88,18 @@ class SceneOverlayStackTest {
         )
         assertEquals(
             1f,
-            SceneOverlaySpec.of("t", "ok", SceneOverlayAnchor.TOP_LEFT, 1, 8, 100, 2f)!!.alpha
+            SceneOverlaySpec.of("t", "ok", SceneOverlayAnchor.TOP_LEFT, 1, 8, 100, 2f)!!.alpha,
+            0.001f
         )
         assertEquals(
             0f,
-            SceneOverlaySpec.of("t", "ok", SceneOverlayAnchor.TOP_LEFT, 1, 8, 100, -0.5f)!!.alpha
+            SceneOverlaySpec.of("t", "ok", SceneOverlayAnchor.TOP_LEFT, 1, 8, 100, -0.5f)!!.alpha,
+            0.001f
         )
         assertEquals(
             0.5f,
-            SceneOverlaySpec.of("t", "ok", SceneOverlayAnchor.TOP_LEFT, 1, 8, 100, 0.5f)!!.alpha
+            SceneOverlaySpec.of("t", "ok", SceneOverlayAnchor.TOP_LEFT, 1, 8, 100, 0.5f)!!.alpha,
+            0.001f
         )
     }
 
@@ -255,7 +258,7 @@ class SceneOverlayStackTest {
             canvas, listOf(input(spec(alpha = 0.5f)))
         )!!
         assertEquals(1, entries.size)
-        assertEquals(0.5f, entries[0].alpha)
+        assertEquals(0.5f, entries[0].alpha, 0.001f)
         assertQuadsNear(
             "ndc",
             SceneTextLayerLayout.ndcQuad(entries[0].rectPx, 1080, 1920)!!,
