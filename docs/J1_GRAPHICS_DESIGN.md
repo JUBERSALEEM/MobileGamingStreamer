@@ -1,6 +1,6 @@
 # J1 — Advanced Graphics & Asset Layers
 
-Status: SPECIFICATION (flip to IMPLEMENTED only when the subphase commits green).
+Status: IMPLEMENTED on `375c996` (FIT default + FILL cover-crop, codec v5, shared fillSize/fillCrop, editor selector + asset line; 579/579 local, K222 0).
 
 ## 0. Baseline findings (inspected, not assumed)
 
