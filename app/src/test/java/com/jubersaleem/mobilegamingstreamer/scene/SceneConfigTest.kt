@@ -54,8 +54,8 @@ class SceneConfigTest {
     @Test
     fun decodeNeverThrowsOnGarbage() {
         val garbage = listOf(
-            null, "", "   ", "v5\nscene:a\tb", "v1", "v1\nbogus", "v2", "v2\nbogus", "v3", "v3\nbogus",
-            "v4", "v4\nbogus",
+            null, "", "   ", "v6\nscene:a\tb", "v1", "v1\nbogus", "v2", "v2\nbogus", "v3", "v3\nbogus",
+            "v4", "v4\nbogus", "v5", "v5\nbogus",
             "v1\nscene:onlyonefield", "v1\nscene:\t", "===",
             "\n===\n", "v1\nscene:a\tb\\"
         )
@@ -257,7 +257,7 @@ class SceneConfigTest {
     fun imageLayerRoundTripPreservesKindAndUri() {
         val original = scene(layers = listOf(layer(id = "t"), imageLayer()))
         val encoded = SceneConfigCodec.encodeScene(original)
-        assertTrue(encoded.startsWith("v4\n"))
+        assertTrue(encoded.startsWith("v5\n"))
         assertEquals(original, SceneConfigCodec.decodeScene(encoded))
     }
 
@@ -334,7 +334,7 @@ class SceneConfigTest {
     fun styledRoundTripPreservesStyle() {
         val original = scene(layers = listOf(styledLayer(), imageLayer(id = "img")))
         val encoded = SceneConfigCodec.encodeScene(original)
-        assertTrue(encoded.startsWith("v4\n"))
+        assertTrue(encoded.startsWith("v5\n"))
         assertEquals(original, SceneConfigCodec.decodeScene(encoded))
     }
 
@@ -434,7 +434,7 @@ class SceneConfigTest {
             )
         )
         val encoded = SceneConfigCodec.encodeScene(original)
-        assertTrue(encoded.startsWith("v4\n"))
+        assertTrue(encoded.startsWith("v5\n"))
         val decoded = SceneConfigCodec.decodeScene(encoded)!!
         assertEquals(original, decoded)
         // Widgets stream without stored content.
@@ -494,7 +494,7 @@ class SceneConfigTest {
         for (orientation in SceneDesignOrientation.values()) {
             val original = scene().copy(orientation = orientation)
             val encoded = SceneConfigCodec.encodeScene(original)
-            assertTrue(encoded.startsWith("v4\n"))
+            assertTrue(encoded.startsWith("v5\n"))
             assertEquals(original, SceneConfigCodec.decodeScene(encoded))
         }
     }

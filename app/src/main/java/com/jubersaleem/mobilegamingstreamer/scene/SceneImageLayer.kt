@@ -40,4 +40,58 @@ internal object SceneImageLayer {
         if (width > Int.MAX_VALUE || height > Int.MAX_VALUE) return null
         return SceneSizePx(width.toInt(), height.toInt())
     }
+
+    /**
+     * J1 FILL frame: the full available bounds capped to room
+     * (maxWidth × full available height). Null on any invalid input.
+     * Both renderer and preview call this, so FILL boxes agree.
+     */
+    fun fillSize(
+        maxWidthPx: Int,
+        maxHeightPx: Int,
+        roomW: Int,
+        roomH: Int
+    ): SceneSizePx? {
+        if (maxWidthPx <= 0 || maxHeightPx <= 0) return null
+        if (roomW <= 0 || roomH <= 0) return null
+        val width = minOf(maxWidthPx, roomW)
+        val height = minOf(maxHeightPx, roomH)
+        if (width <= 0 || height <= 0) return null
+        return SceneSizePx(width, height)
+    }
+
+    /**
+     * J1 centered cover-crop of a [bitmapWidthPx]x[bitmapHeightPx]
+     * bitmap into a [boxW]x[boxH] frame, in bitmap pixels. The crop
+     * keeps the frame aspect exactly; the overflow is cut centered
+     * with floored bias (a leftover pixel goes right/bottom,
+     * matching the repo centering convention). Long math, null on
+     * any invalid input or a collapsed crop.
+     */
+    fun fillCrop(
+        bitmapWidthPx: Int,
+        bitmapHeightPx: Int,
+        boxW: Int,
+        boxH: Int
+    ): SceneRectPx? {
+        if (bitmapWidthPx <= 0 || bitmapHeightPx <= 0) return null
+        if (boxW <= 0 || boxH <= 0) return null
+        val cropW: Long
+        val cropH: Long
+        if (boxW.toLong() * bitmapHeightPx >= boxH.toLong() * bitmapWidthPx) {
+            // Frame relatively wider: full width, crop the height.
+            cropW = bitmapWidthPx.toLong()
+            cropH = bitmapWidthPx.toLong() * boxH / boxW
+        } else {
+            cropH = bitmapHeightPx.toLong()
+            cropW = bitmapHeightPx.toLong() * boxW / boxH
+        }
+        if (cropW <= 0 || cropH <= 0) return null
+        if (cropW > Int.MAX_VALUE || cropH > Int.MAX_VALUE) return null
+        val cw = cropW.toInt()
+        val ch = cropH.toInt()
+        val left = (bitmapWidthPx - cw) / 2
+        val top = (bitmapHeightPx - ch) / 2
+        return SceneRectPx(left, top, left + cw, top + ch)
+    }
 }

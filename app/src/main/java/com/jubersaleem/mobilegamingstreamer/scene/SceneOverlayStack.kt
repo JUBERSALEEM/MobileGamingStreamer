@@ -54,7 +54,8 @@ internal data class SceneOverlaySpec(
     val borderColor: Int = BORDER_COLOR_DEFAULT,
     val cornerRadiusPx: Int = 0,
     val shadowOffsetPx: Int = 0,
-    val shadowColor: Int = SHADOW_COLOR_DEFAULT
+    val shadowColor: Int = SHADOW_COLOR_DEFAULT,
+    val scaleMode: SceneScaleMode = SceneScaleMode.FIT
 ) {
     companion object {
         fun of(
@@ -74,7 +75,8 @@ internal data class SceneOverlaySpec(
             borderColor: Int = BORDER_COLOR_DEFAULT,
             cornerRadiusPx: Int = 0,
             shadowOffsetPx: Int = 0,
-            shadowColor: Int = SHADOW_COLOR_DEFAULT
+            shadowColor: Int = SHADOW_COLOR_DEFAULT,
+            scaleMode: SceneScaleMode = SceneScaleMode.FIT
         ): SceneOverlaySpec? {
             if (id.isBlank()) return null
             when (kind) {
@@ -100,7 +102,7 @@ internal data class SceneOverlaySpec(
                 alpha.coerceIn(0f, 1f), enabled, kind,
                 if (kind == SceneLayerKind.IMAGE) imageUri else null,
                 textColor, backgroundColor, borderWidthPx, borderColor,
-                cornerRadiusPx, shadowOffsetPx, shadowColor
+                cornerRadiusPx, shadowOffsetPx, shadowColor, scaleMode
             )
         }
     }

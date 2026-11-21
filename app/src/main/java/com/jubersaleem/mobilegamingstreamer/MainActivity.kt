@@ -32,6 +32,7 @@ import com.jubersaleem.mobilegamingstreamer.scene.MAX_TEXT_LAYER_CHARS
 import com.jubersaleem.mobilegamingstreamer.scene.SceneConfigCodec
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerKind
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
+import com.jubersaleem.mobilegamingstreamer.scene.SceneScaleMode
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTextLayerLayout
 import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
 import com.jubersaleem.mobilegamingstreamer.scene.StreamSceneLayer
@@ -397,6 +398,11 @@ class MainActivity : ComponentActivity() {
                         onLayerAlpha = { sceneId, layerId, alpha ->
                             updateLayer(sceneId, layerId) {
                                 it.copy(alpha = alpha.coerceIn(0f, 1f))
+                            }
+                        },
+                        onLayerScaleMode = { sceneId, layerId, mode ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(scaleMode = mode)
                             }
                         },
                         onLayerTextColor = { sceneId, layerId, color ->

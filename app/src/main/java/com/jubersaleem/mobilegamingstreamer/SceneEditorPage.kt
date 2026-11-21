@@ -65,6 +65,7 @@ import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerKind
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerStyle
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayLayerInput
+import com.jubersaleem.mobilegamingstreamer.scene.SceneScaleMode
 import com.jubersaleem.mobilegamingstreamer.scene.ScenePreviewBoxes
 import com.jubersaleem.mobilegamingstreamer.scene.SceneSizePx
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTextLayerLayout
@@ -143,6 +144,7 @@ fun SceneEditorPage(
     onLayerMargin: (String, String, Int) -> Unit,
     onLayerMaxWidth: (String, String, Int) -> Unit,
     onLayerAlpha: (String, String, Float) -> Unit,
+    onLayerScaleMode: (String, String, SceneScaleMode) -> Unit,
     onLayerTextColor: (String, String, Int) -> Unit,
     onLayerBackground: (String, String, Int?) -> Unit,
     onLayerBorderWidth: (String, String, Int) -> Unit,
@@ -226,6 +228,7 @@ fun SceneEditorPage(
                 onLayerMargin = onLayerMargin,
                 onLayerMaxWidth = onLayerMaxWidth,
                 onLayerAlpha = onLayerAlpha,
+                onLayerScaleMode = onLayerScaleMode,
                 onLayerTextColor = onLayerTextColor,
                 onLayerBackground = onLayerBackground,
                 onLayerBorderWidth = onLayerBorderWidth,
@@ -272,6 +275,7 @@ private fun SceneCard(
     onLayerMargin: (String, String, Int) -> Unit,
     onLayerMaxWidth: (String, String, Int) -> Unit,
     onLayerAlpha: (String, String, Float) -> Unit,
+    onLayerScaleMode: (String, String, SceneScaleMode) -> Unit,
     onLayerTextColor: (String, String, Int) -> Unit,
     onLayerBackground: (String, String, Int?) -> Unit,
     onLayerBorderWidth: (String, String, Int) -> Unit,
@@ -352,6 +356,7 @@ private fun SceneCard(
                     onLayerMargin = onLayerMargin,
                     onLayerMaxWidth = onLayerMaxWidth,
                     onLayerAlpha = onLayerAlpha,
+                    onLayerScaleMode = onLayerScaleMode,
                     onLayerTextColor = onLayerTextColor,
                     onLayerBackground = onLayerBackground,
                     onLayerBorderWidth = onLayerBorderWidth,
@@ -416,6 +421,7 @@ private fun LayerListEditor(
     onLayerMargin: (String, String, Int) -> Unit,
     onLayerMaxWidth: (String, String, Int) -> Unit,
     onLayerAlpha: (String, String, Float) -> Unit,
+    onLayerScaleMode: (String, String, SceneScaleMode) -> Unit,
     onLayerTextColor: (String, String, Int) -> Unit,
     onLayerBackground: (String, String, Int?) -> Unit,
     onLayerBorderWidth: (String, String, Int) -> Unit,
@@ -503,6 +509,7 @@ private fun LayerListEditor(
                 onLayerMargin = onLayerMargin,
                 onLayerMaxWidth = onLayerMaxWidth,
                 onLayerAlpha = onLayerAlpha,
+                onLayerScaleMode = onLayerScaleMode,
                 onLayerTextColor = onLayerTextColor,
                 onLayerBackground = onLayerBackground,
                 onLayerBorderWidth = onLayerBorderWidth,
@@ -532,6 +539,7 @@ private fun LayerRow(
     onLayerMargin: (String, String, Int) -> Unit,
     onLayerMaxWidth: (String, String, Int) -> Unit,
     onLayerAlpha: (String, String, Float) -> Unit,
+    onLayerScaleMode: (String, String, SceneScaleMode) -> Unit,
     onLayerTextColor: (String, String, Int) -> Unit,
     onLayerBackground: (String, String, Int?) -> Unit,
     onLayerBorderWidth: (String, String, Int) -> Unit,
@@ -606,6 +614,10 @@ private fun LayerRow(
                 ImageLayerThumbnail(
                     imageUri = layer.imageUri,
                     onReplace = { onReplaceImageLayer(sceneId, layer.id) }
+                )
+                ScaleModeRow(
+                    selected = layer.scaleMode,
+                    onSelect = { onLayerScaleMode(sceneId, layer.id, it) }
                 )
             } else if (layer.kind == SceneLayerKind.CLOCK || layer.kind == SceneLayerKind.TIMER) {
                 Text(
@@ -714,6 +726,29 @@ private fun LayerRow(
     }
 }
 
+/**
+ * J1 FIT/FILL selector. FIT is the default (H6 aspect-fit);
+ * FILL cover-crops to the full max-width frame. Surfaced only
+ * for IMAGE layers, only where the renderer honors it.
+ */
+@Composable
+private fun ScaleModeRow(selected: SceneScaleMode, onSelect: (SceneScaleMode) -> Unit) {
+    val p = LocalMgsPalette.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(text = "Scale", color = p.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        SceneScaleMode.entries.forEach { mode ->
+            ClayButton(
+                label = mode.name,
+                onClick = { onSelect(mode) },
+                style = if (mode == selected) ClayButtonStyle.Pressed else ClayButtonStyle.Raised
+            )
+        }
+    }
+}
+
 @Composable
 private fun ImageLayerThumbnail(imageUri: String?, onReplace: () -> Unit) {
     val p = LocalMgsPalette.current
@@ -722,7 +757,16 @@ private fun ImageLayerThumbnail(imageUri: String?, onReplace: () -> Unit) {
         if (imageUri == null) null
         else SceneImageLoader.loadThumbnailBitmap(context.contentResolver, imageUri, 256)?.asImageBitmap()
     }
-    Row(
+    // J1 honest asset line: real dimensions + byte size, or the
+    // reason when the asset cannot be inspected. Reads are
+    // guarded — a revoked/renamed document reports, never throws.
+    val assetLine = remember(imageUri) {
+        if (imageUri == null) "No image selected"
+        else assetLineFor(context, imageUri)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(text = assetLine, color = p.muted, fontSize = 11.sp)
+        Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -757,7 +801,43 @@ private fun ImageLayerThumbnail(imageUri: String?, onReplace: () -> Unit) {
             style = ClayButtonStyle.Raised,
             icon = Icons.Rounded.Edit
         )
+        }
     }
+}
+
+/**
+ * J1 asset inspection line: "<W> x <H> - <size>" from a
+ * bounds-only decode plus the document byte size. Every failure
+ * mode returns a plain-English reason instead of throwing.
+ */
+private fun assetLineFor(context: android.content.Context, imageUri: String): String {
+    val resolver = context.contentResolver
+    val uri = try {
+        android.net.Uri.parse(imageUri)
+    } catch (_: Exception) {
+        return "Unreadable image URI"
+    } ?: return "Unreadable image URI"
+    val dims = try {
+        SceneImageLoader.decodeBounds(resolver, imageUri)
+    } catch (_: Exception) {
+        null
+    } ?: return "Image unavailable (moved, renamed, or permission revoked)"
+    val bytes = try {
+        resolver.openFileDescriptor(uri, "r")?.use { it.statSize }
+    } catch (_: Exception) {
+        null
+    } ?: return "${dims.widthPx} x ${dims.heightPx} px - size unknown"
+    return "${dims.widthPx} x ${dims.heightPx} px - ${formatBytes(bytes)}"
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return "%.1f KB".format(kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return "%.1f MB".format(mb)
+    return "%.2f GB".format(mb / 1024.0)
+}
 }
 
 @Composable
@@ -870,10 +950,19 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
             if (spec.kind == SceneLayerKind.IMAGE) {
                 val uri = spec.imageUri ?: return@mapNotNull null
                 val dims = SceneImageLoader.decodeBounds(previewResolver, uri) ?: return@mapNotNull null
-                val size = SceneImageLayer.measuredSize(
-                    dims.widthPx, dims.heightPx, spec.maxWidthPx,
-                    refHeightPx - spec.marginPx * 2
-                ) ?: return@mapNotNull null
+                // J1: FILL previews the same full-bounds frame the
+                // renderer composes; FIT keeps the H6 aspect fit.
+                val size = if (spec.scaleMode == SceneScaleMode.FILL) {
+                    SceneImageLayer.fillSize(
+                        spec.maxWidthPx, refHeightPx - spec.marginPx * 2,
+                        refWidthPx - spec.marginPx * 2, refHeightPx - spec.marginPx * 2
+                    )
+                } else {
+                    SceneImageLayer.measuredSize(
+                        dims.widthPx, dims.heightPx, spec.maxWidthPx,
+                        refHeightPx - spec.marginPx * 2
+                    )
+                } ?: return@mapNotNull null
                 val styled = SceneLayerStyle.styledSize(
                     size, spec.borderWidthPx, spec.shadowOffsetPx
                 ) ?: return@mapNotNull null
@@ -1051,16 +1140,24 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
                             if (kindById[box.id] == SceneLayerKind.IMAGE) {
                                 val image = imageById[box.id]
                                 if (image != null) {
+                                    val dw = (right - left - borderPx * 2f - shadowPx).roundToInt().coerceAtLeast(1)
+                                    val dh = (bottom - top - borderPx * 2f - shadowPx).roundToInt().coerceAtLeast(1)
+                                    // J1: FILL crops the same centered
+                                    // cover rect the renderer draws.
+                                    val crop = if (specById[box.id]?.scaleMode == SceneScaleMode.FILL) {
+                                        SceneImageLayer.fillCrop(image.width, image.height, dw, dh)
+                                    } else null
                                     drawImage(
                                         image = image,
+                                        srcOffset = if (crop == null) IntOffset.Zero
+                                            else IntOffset(crop.left, crop.top),
+                                        srcSize = if (crop == null) IntSize(image.width, image.height)
+                                            else IntSize(crop.right - crop.left, crop.bottom - crop.top),
                                         dstOffset = IntOffset(
                                             (left + borderPx).roundToInt(),
                                             (top + borderPx).roundToInt()
                                         ),
-                                        dstSize = IntSize(
-                                            (right - left - borderPx * 2f - shadowPx).roundToInt().coerceAtLeast(1),
-                                            (bottom - top - borderPx * 2f - shadowPx).roundToInt().coerceAtLeast(1)
-                                        ),
+                                        dstSize = IntSize(dw, dh),
                                         alpha = box.alpha
                                     )
                                 }

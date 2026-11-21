@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.SurfaceTexture
 import android.opengl.EGL14
 import android.opengl.EGLConfig
@@ -648,7 +649,7 @@ internal class SceneCompositorGL(
         try {
             val measured = requests.mapNotNull { spec ->
                 if (spec.kind == SceneLayerKind.IMAGE) {
-                    measureImageLocked(spec, outH, decodedPending)
+                    measureImageLocked(spec, outW, outH, decodedPending)
                 } else {
                     // H9 widgets measure the worst-case box (stable
                     // placement forever) but raster the current value.
@@ -850,6 +851,7 @@ internal class SceneCompositorGL(
      */
     private fun measureImageLocked(
         spec: SceneOverlaySpec,
+        outW: Int,
         outH: Int,
         decodedPending: MutableList<Bitmap>
     ): MeasuredOverlay? {
@@ -868,9 +870,18 @@ internal class SceneCompositorGL(
             return null
         }
         decodedPending.add(bitmap)
-        val size = SceneImageLayer.measuredSize(
-            bitmap.width, bitmap.height, spec.maxWidthPx, outH - spec.marginPx * 2
-        )
+        // J1 FILL measures the full bounds frame (cover-crop at
+        // compose); FIT keeps the H6 aspect-fit measurement.
+        val size = if (spec.scaleMode == SceneScaleMode.FILL) {
+            SceneImageLayer.fillSize(
+                spec.maxWidthPx, outH - spec.marginPx * 2,
+                outW - spec.marginPx * 2, outH - spec.marginPx * 2
+            )
+        } else {
+            SceneImageLayer.measuredSize(
+                bitmap.width, bitmap.height, spec.maxWidthPx, outH - spec.marginPx * 2
+            )
+        }
         if (size == null) {
             Log.w(TAG, "overlay image unmeasurable, skipping: ${spec.id}")
             return null
@@ -924,6 +935,24 @@ internal class SceneCompositorGL(
         val bitmap = Bitmap.createBitmap(rect.width, rect.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         drawStyleUnderlayLocked(canvas, rect.width, rect.height, spec)
+        if (spec.scaleMode == SceneScaleMode.FILL) {
+            // J1: cover-crop first, then one direct src->dst draw (no
+            // scaler temp). A null crop is logic-impossible (same
+            // inputs measured); fall back to the full bitmap loudly.
+            val crop = SceneImageLayer.fillCrop(src.width, src.height, contentW, contentH)
+            if (crop == null) Log.w(TAG, "overlay fill crop failed, drawing full: ${spec.id}")
+            val srcRect = if (crop == null) null else Rect(crop.left, crop.top, crop.right, crop.bottom)
+            val dst = RectF(
+                spec.borderWidthPx.toFloat(), spec.borderWidthPx.toFloat(),
+                (spec.borderWidthPx + contentW).toFloat(), (spec.borderWidthPx + contentH).toFloat()
+            )
+            canvas.drawBitmap(src, srcRect, dst, null)
+            try {
+                src.recycle()
+            } catch (_: Throwable) {
+            }
+            return bitmap
+        }
         val scaled = Bitmap.createScaledBitmap(src, contentW, contentH, true)
         canvas.drawBitmap(scaled, spec.borderWidthPx.toFloat(), spec.borderWidthPx.toFloat(), null)
         try {

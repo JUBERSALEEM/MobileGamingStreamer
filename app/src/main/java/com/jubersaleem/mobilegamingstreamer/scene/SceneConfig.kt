@@ -29,6 +29,14 @@ internal const val DEFAULT_LAYER_ID = "text"
 internal const val DEFAULT_LAYER_TEXT = "MGS • LIVE"
 internal const val REPAIRED_SCENE_NAME = "Untitled scene"
 
+/** Image scale behavior. Public: carried by the public UI-held model. */
+enum class SceneScaleMode {
+    /** Aspect-fit inside the bounds (H6 behavior). */
+    FIT,
+    /** Cover-crop into the full bounds frame (J1). */
+    FILL
+}
+
 /** Layer content kind. Public: carried by the public UI-held model. */
 enum class SceneLayerKind {
     TEXT,
@@ -72,7 +80,8 @@ data class StreamSceneLayer(
     val borderColor: Int = BORDER_COLOR_DEFAULT,
     val cornerRadiusPx: Int = 0,
     val shadowOffsetPx: Int = 0,
-    val shadowColor: Int = SHADOW_COLOR_DEFAULT
+    val shadowColor: Int = SHADOW_COLOR_DEFAULT,
+    val scaleMode: SceneScaleMode = SceneScaleMode.FIT
 ) {
     /**
      * Validated H4 spec, or null when this layer cannot render. H4
@@ -96,7 +105,8 @@ data class StreamSceneLayer(
         borderColor = borderColor,
         cornerRadiusPx = cornerRadiusPx,
         shadowOffsetPx = shadowOffsetPx,
-        shadowColor = shadowColor
+        shadowColor = shadowColor,
+        scaleMode = scaleMode
     )
 }
 
@@ -132,23 +142,23 @@ data class StreamScene(
 /**
  * Versioned text encoding for scenes and the scene store. Format v4:
  * `scene:<id>\\t<name>\\t<ORIENTATION>` header line, then one `layer:` line per layer
- * with 17 tab-separated fields
+ * with 18 tab-separated fields (17 v3/v4 fields + J1 scaleMode)
  * (id, text, ANCHOR, z, margin, maxWidth, alpha, enabled, KIND,
  * imageUri, textColor, backgroundColor, borderWidth, borderColor,
  * cornerRadius, shadowOffset, shadowColor); store blocks joined by a
  * lone `===` line. Tabs, newlines, and backslashes inside free text
  * are backslash-escaped, so the framing can never be confused by user
  * content. Colors are 8-hex ARGB (empty = null background). Decoding
- * accepts v1 (8-field text-only), v2 (10-field text/image), v3, and
- * v4 (v3 layers; v1–v3 scenes take the LANDSCAPE default, v4 carries
- * the Phase I design orientation in the header); encoding always
- * writes v4.
+ * accepts v1 (8-field text-only), v2 (10-field text/image), v3/v4
+ * (17 fields), and v5 (18 fields; v1–v4 layers take the FIT
+ * default); encoding always writes v5.
  */
 internal object SceneConfigCodec {
-    const val VERSION = "v4"
+    const val VERSION = "v5"
     private const val VERSION_V1 = "v1"
     private const val VERSION_V2 = "v2"
     private const val VERSION_V3 = "v3"
+    private const val VERSION_V4 = "v4"
     private const val SCENE_PREFIX = "scene:"
     private const val LAYER_PREFIX = "layer:"
     private const val BLOCK_SEPARATOR = "\n===\n"
@@ -218,7 +228,8 @@ internal object SceneConfigCodec {
                     layer.kind.name + "\t" + escape(layer.imageUri ?: "") + "\t" +
                     colorHex(layer.textColor) + "\t" + (layer.backgroundColor?.let { colorHex(it) } ?: "") + "\t" +
                     layer.borderWidthPx + "\t" + colorHex(layer.borderColor) + "\t" +
-                    layer.cornerRadiusPx + "\t" + layer.shadowOffsetPx + "\t" + colorHex(layer.shadowColor)
+                    layer.cornerRadiusPx + "\t" + layer.shadowOffsetPx + "\t" + colorHex(layer.shadowColor) +
+                    "\t" + layer.scaleMode.name
             )
         }
         return VERSION + "\n" + lines.joinToString("\n")
@@ -232,7 +243,8 @@ internal object SceneConfigCodec {
             VERSION_V1 -> 1
             VERSION_V2 -> 2
             VERSION_V3 -> 3
-            VERSION -> 4
+            VERSION_V4 -> 4
+            VERSION -> 5
             else -> return null
         }
         if (lines.size < 2 || !lines[1].startsWith(SCENE_PREFIX)) return null
@@ -358,7 +370,8 @@ internal object SceneConfigCodec {
         if (fields.size != when (version) {
                 1 -> 8
                 2 -> 10
-                else -> 17
+                3, 4 -> 17
+                else -> 18
             }
         ) return null
         val id = unescape(fields[0]) ?: return null
@@ -431,10 +444,21 @@ internal object SceneConfigCodec {
             if (shadowOffsetPx < 0 || shadowOffsetPx > MAX_STYLE_SHADOW_PX) return null
             shadowColor = parseColorHex(fields[16]) ?: return null
         }
+        // J1: v1–v4 predate scale modes (FIT default preserves H6
+        // pixels); corrupt v5 tokens drop the layer like kind/anchor.
+        val scaleMode = if (version < 5) {
+            SceneScaleMode.FIT
+        } else {
+            try {
+                SceneScaleMode.valueOf(fields[17])
+            } catch (_: IllegalArgumentException) {
+                return null
+            }
+        }
         return StreamSceneLayer(
             id, text, anchor, z, margin, maxWidth, alpha, enabled, kind, imageUri,
             textColor, backgroundColor, borderWidthPx, borderColor,
-            cornerRadiusPx, shadowOffsetPx, shadowColor
+            cornerRadiusPx, shadowOffsetPx, shadowColor, scaleMode
         )
     }
 
