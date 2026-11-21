@@ -37,6 +37,7 @@ import com.jubersaleem.mobilegamingstreamer.capture.VideoSourceFallbackPolicy
 import com.jubersaleem.mobilegamingstreamer.scene.SceneConfigCodec
 import com.jubersaleem.mobilegamingstreamer.scene.SceneSource
 import com.jubersaleem.mobilegamingstreamer.scene.SceneSwitchPlanner
+import com.jubersaleem.mobilegamingstreamer.scene.SceneTransitions
 import com.jubersaleem.mobilegamingstreamer.scene.SwitchAction
 import com.jubersaleem.mobilegamingstreamer.scene.SwitchCurrent
 import com.pedro.encoder.input.sources.video.ScreenSource
@@ -185,7 +186,11 @@ class RtmpBroadcastService : Service() {
                 ACTION_STOP -> stopBroadcast()
                 ACTION_SET_BITRATE -> setBitrate(intent)
                 ACTION_SET_STREAM_AUDIO_MUTED -> setStreamAudioMuted(intent.getBooleanExtra(EXTRA_STREAM_AUDIO_MUTED, false))
-                ACTION_UPDATE_SCENE -> updateScene(intent?.getStringExtra(EXTRA_SCENE_CONFIG), null)
+                ACTION_UPDATE_SCENE -> updateScene(
+                    intent?.getStringExtra(EXTRA_SCENE_CONFIG),
+                    intent?.getStringExtra(EXTRA_SCENE_TRANSITION),
+                    null
+                )
             }
         }
     }
@@ -212,7 +217,11 @@ class RtmpBroadcastService : Service() {
             ACTION_STOP -> stopBroadcast()
             ACTION_SET_BITRATE -> intent?.let { setBitrate(it) }
             ACTION_SET_STREAM_AUDIO_MUTED -> intent?.let { setStreamAudioMuted(it.getBooleanExtra(EXTRA_STREAM_AUDIO_MUTED, false)) }
-            ACTION_UPDATE_SCENE -> updateScene(intent?.getStringExtra(EXTRA_SCENE_CONFIG), startId)
+            ACTION_UPDATE_SCENE -> updateScene(
+                intent?.getStringExtra(EXTRA_SCENE_CONFIG),
+                intent?.getStringExtra(EXTRA_SCENE_TRANSITION),
+                startId
+            )
         }
         return START_NOT_STICKY
     }
@@ -241,13 +250,17 @@ class RtmpBroadcastService : Service() {
      * `startService` (null from the command receiver): with no session
      * the service stops itself instead of idling.
      */
-    private fun updateScene(newConfig: String?, startId: Int?) {
+    private fun updateScene(newConfig: String?, transitionExtra: String?, startId: Int?) {
         val active = display
         if (active == null) {
             publishState(false, BroadcastStatusMessages.NO_ACTIVE_STREAM, 0L)
             if (startId != null) stopSelf(startId)
             return
         }
+        // J4: null/garbage parses to CUT (never throws, never half-config).
+        // Source swaps ignore it (cross-source blending would need dual
+        // capture sessions — swaps stay CUT, exactly today's behavior).
+        val transition = SceneTransitions.parseExtra(transitionExtra)
         val current = when (val source = activeVideoSource) {
             is SceneSource -> {
                 val applied = source.currentSceneConfig
@@ -259,7 +272,7 @@ class RtmpBroadcastService : Service() {
             SwitchAction.NOOP -> { }
             SwitchAction.IN_PLACE -> {
                 val source = activeVideoSource as? SceneSource
-                if (source != null && source.updateScene(newConfig)) {
+                if (source != null && source.updateScene(newConfig, transition)) {
                     update(BroadcastStatusMessages.SCENE_SWITCHED)
                 } else {
                     update(BroadcastStatusMessages.SCENE_SWITCH_FAILED)
@@ -980,9 +993,11 @@ class RtmpBroadcastService : Service() {
                 .putExtra(EXTRA_STREAM_AUDIO_MUTED, muted))
         }
         /** H8 push: absent extra = "no scene" (swap home to passthrough). */
-        fun requestSceneUpdate(context: Context, sceneConfig: String?) {
+        fun requestSceneUpdate(context: Context, sceneConfig: String?, transition: String? = null) {
             val update = Intent(ACTION_UPDATE_SCENE).setPackage(context.packageName)
             if (sceneConfig != null) update.putExtra(EXTRA_SCENE_CONFIG, sceneConfig)
+            // J4: absent/garbage transition extra = CUT (today's behavior).
+            if (transition != null) update.putExtra(EXTRA_SCENE_TRANSITION, transition)
             context.sendBroadcast(update)
         }
         const val EXTRA_BITRATE = "video_bitrate"
@@ -998,6 +1013,7 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_SCENE_FALLBACK_REASON = "scene_fallback_reason"
         const val EXTRA_SCENE_TEXT = "scene_text"
         const val EXTRA_SCENE_TEXT2 = "scene_text2"
+        const val EXTRA_SCENE_TRANSITION = "scene_transition"
         const val EXTRA_SCENE_CONFIG = "scene_config"
         const val AUDIO_MODE_MIC = "MIC"
         const val AUDIO_MODE_GAME = "GAME"

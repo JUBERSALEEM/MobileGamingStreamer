@@ -2,6 +2,8 @@ package com.jubersaleem.mobilegamingstreamer
 
 import android.content.Context
 import com.jubersaleem.mobilegamingstreamer.scene.SceneConfigCodec
+import com.jubersaleem.mobilegamingstreamer.scene.SceneTransition
+import com.jubersaleem.mobilegamingstreamer.scene.SceneTransitions
 import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
 
 /**
@@ -20,6 +22,7 @@ object ScenePrefsStore {
     const val PREFS = "mgs_scenes"
     const val KEY_SCENES = "scenes_v1"
     const val KEY_ACTIVE = "active_scene_id"
+    const val KEY_TRANSITION = "scene_transition_v1"
 
     /** Loaded state: valid scenes (never empty) + the active scene id. */
     data class Loaded(val scenes: List<StreamScene>, val activeSceneId: String)
@@ -45,6 +48,39 @@ object ScenePrefsStore {
             // default scene in memory; the next mutation rewrites the file.
             val seeded = SceneConfigCodec.defaultScene()
             return Loaded(listOf(seeded), seeded.id)
+        }
+    }
+
+    /**
+     * J4 global switch effect: the default transition applied to live
+     * scene switches. Corrupt or missing data self-heals to CUT (never
+     * crashes, never a half-config) and persists the repaired form.
+     */
+    fun loadTransition(context: Context): SceneTransition {
+        return try {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val stored = prefs.getString(KEY_TRANSITION, null)
+            val parsed = SceneTransitions.parseExtra(stored)
+            if (stored != parsed.encode()) {
+                try {
+                    prefs.edit().putString(KEY_TRANSITION, parsed.encode()).apply()
+                } catch (_: Exception) {
+                }
+            }
+            parsed
+        } catch (_: Exception) {
+            SceneTransition.DEFAULT
+        }
+    }
+
+    fun saveTransition(context: Context, transition: SceneTransition) {
+        try {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(KEY_TRANSITION, transition.encode())
+                .apply()
+        } catch (_: Exception) {
+            // Best effort: in-memory state stays usable, retries on the
+            // next mutation (same contract as scene saves).
         }
     }
 

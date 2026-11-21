@@ -35,6 +35,7 @@ import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
 import com.jubersaleem.mobilegamingstreamer.scene.SceneScaleMode
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTextLayerLayout
 import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
+import com.jubersaleem.mobilegamingstreamer.scene.SceneTransition
 import com.jubersaleem.mobilegamingstreamer.scene.StreamSceneLayer
 
 class MainActivity : ComponentActivity() {
@@ -66,6 +67,7 @@ class MainActivity : ComponentActivity() {
     private var waitingForOverlayPermission = false
     private var lastAnnouncedKind = BroadcastStatusKind.STANDBY
     private var scenes by mutableStateOf(listOf<StreamScene>())
+    private var sceneTransition by mutableStateOf(SceneTransition.DEFAULT)
     private var activeSceneId by mutableStateOf<String?>(null)
     private var editingSceneId by mutableStateOf<String?>(null)
     private var sceneDeleteTargetId by mutableStateOf<String?>(null)
@@ -247,6 +249,7 @@ class MainActivity : ComponentActivity() {
         val stored = ScenePrefsStore.load(this)
         scenes = stored.scenes
         activeSceneId = stored.activeSceneId
+        sceneTransition = ScenePrefsStore.loadTransition(this)
         notificationsAllowed = Build.VERSION.SDK_INT < 33 ||
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         if (Build.VERSION.SDK_INT >= 33 && !notificationsAllowed) {
@@ -295,7 +298,8 @@ class MainActivity : ComponentActivity() {
                         activeSceneId = activeSceneId,
                         editingSceneId = editingSceneId,
                         sceneDeleteTargetName = scenes.firstOrNull { it.id == sceneDeleteTargetId }?.name,
-                        sceneError = sceneError
+                        sceneError = sceneError,
+                        sceneTransition = sceneTransition
                     ),
                     actions = StudioActions(
                         onPageChange = { target -> page = target },
@@ -359,7 +363,8 @@ class MainActivity : ComponentActivity() {
                             if (broadcastActive || broadcastStarting) {
                                 RtmpBroadcastService.requestSceneUpdate(
                                     this@MainActivity,
-                                    SceneConfigCodec.activeSceneEncoding(scenes, activeSceneId)
+                                    SceneConfigCodec.activeSceneEncoding(scenes, activeSceneId),
+                                    sceneTransition.encode()
                                 )
                             }
                         },
@@ -369,6 +374,10 @@ class MainActivity : ComponentActivity() {
                         onConfirmDeleteScene = { confirmDeleteScene() },
                         onDismissDeleteScene = { sceneDeleteTargetId = null },
                         onRenameScene = { id, name -> renameScene(id, name) },
+                        onSceneTransition = {
+                            sceneTransition = it
+                            ScenePrefsStore.saveTransition(this@MainActivity, it)
+                        },
                         onSceneOrientation = { id, canvas ->
                             updateScene(id) { it.copy(orientation = canvas) }
                         },

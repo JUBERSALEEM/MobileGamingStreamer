@@ -199,14 +199,18 @@ class SceneSource(
      * failure the previous stack is best-effort restored; if that also
      * fails the source stays live on clean passthrough — never a
      * half-built stack, never a dead source.
+     *
+     * J4: [transition] blends from the outgoing scene (CUT default =
+     * the historical instant switch). Rollback stays a plain CUT
+     * rebuild, which cancels any in-flight blend deterministically.
      */
-    fun updateScene(newConfig: String?): Boolean {
+    fun updateScene(newConfig: String?, transition: SceneTransition = SceneTransition.DEFAULT): Boolean {
         if (!configStarted) return false
         if (controller.state != SceneSourceState.STARTED) return false
         val specs = SceneConfigCodec.streamableSpecs(newConfig)
         if (specs.isEmpty()) return false
         val gl = compositor ?: return false
-        if (gl.rebuildOverlays(specs)) {
+        if (gl.transitionToScene(specs, transition)) {
             currentSceneConfig = newConfig
             lastSpecs = specs
             Log.i(TAG, "scene updated: ${specs.size} layers")

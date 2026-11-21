@@ -159,6 +159,20 @@ internal class SceneCompositorGL(
     private var motionRedrawPosted: Boolean = false
     private val motionRedrawRunnable = Runnable { onMotionRedrawLocked() }
     private val animTickRunnable = Runnable { onAnimTickLocked() }
+    // J4 transition state: exactly one RGBA snapshot texture (the
+    // retained outgoing frame) + an optional 1x1 black texture (fade
+    // through black). All touched on the GL thread only; cleared by
+    // clearTransitionLocked on end/cancel/degrade/teardown.
+    private var transTextureId: Int = 0
+    private var transBlackTexId: Int = 0
+    private var transConfig: SceneTransition? = null
+    private var transStartElapsedMs: Long = 0L
+    private var transWidth: Int = 0
+    private var transHeight: Int = 0
+    private var transRectPx: SceneRectPx? = null
+    private var transScratchNdc: FloatBuffer? = null
+    private var transScratchArr: FloatArray = FloatArray(8)
+    private var transFullscreenNdc: FloatBuffer? = null
     private val overlaySlots = Array(MAX_STATIC_OVERLAY_LAYERS) { OverlaySlot() }
     private var overlaySlotCount = 0
     private val mvpMatrix = FloatArray(16)
@@ -312,6 +326,29 @@ internal class SceneCompositorGL(
     }
 
     /**
+     * J4 transition switch: replaces the overlay stack with [specs],
+     * blending from the outgoing scene under [transition] (CUT =
+     * plain rebuild). Any thread; rendezvous with timeout; returns
+     * false (never throws) like [rebuildOverlays] — the caller runs
+     * the existing rollback, which cancels any transition state.
+     */
+    fun transitionToScene(specs: List<SceneOverlaySpec>, transition: SceneTransition): Boolean {
+        var ok = false
+        val ran = runOnGlThread(GL_TEARDOWN_TIMEOUT_MS) {
+            ok = try {
+                transitionToSceneLocked(specs, transition)
+            } catch (_: Throwable) {
+                try {
+                    clearTransitionLocked()
+                } catch (_: Exception) {
+                }
+                false
+            }
+        }
+        return ran && ok
+    }
+
+    /**
      * J2 video pause/resume (any thread; async post, never throws).
      * Best-effort fast path for the revoke freeze — teardown's
      * stop/release rendezvous is the hard guarantee. Transitions run
@@ -368,8 +405,7 @@ internal class SceneCompositorGL(
         if (handle == null) return // Counted drop/reject: skip the draw.
         lastInputTimestampNs = metadata.timestampNs
         try {
-            drawFrameLocked(surfaceTexture)
-            drawSlotsLocked()
+            composeCurrentVisualLocked(surfaceTexture)
             // EGL_ANDROID_presentation_time: present-time is timestamp currency
             // for EGL producers (per the SurfaceTexture contract), so the
             // captured monotonic-nanoseconds timestamp keeps its clock domain
@@ -547,8 +583,7 @@ internal class SceneCompositorGL(
         val surfaceTexture = inputSurfaceTexture
         if (surfaceTexture == null || !glReady || frameSequence == 0L) return
         try {
-            drawFrameLocked(surfaceTexture)
-            drawSlotsLocked()
+            composeCurrentVisualLocked(surfaceTexture)
             if (!EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, lastInputTimestampNs)) {
                 Log.e(TAG, "motion redraw eglPresentationTimeANDROID failed")
             }
@@ -562,9 +597,23 @@ internal class SceneCompositorGL(
 
     private fun drawFrameLocked(surfaceTexture: SurfaceTexture) {
         surfaceTexture.getTransformMatrix(stMatrix)
+        clearFrameLocked()
+        drawPassthroughLocked()
+    }
+
+    /** Fullscreen opaque-black clear (GL thread). Split for J4 wipes. */
+    private fun clearFrameLocked() {
         GLES20.glViewport(0, 0, layout.outputWidth, layout.outputHeight)
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
         GLES20.glClear(GLES20.GL_DEPTH_BUFFER_BIT or GLES20.GL_COLOR_BUFFER_BIT)
+    }
+
+    /**
+     * Passthrough draw without the clear (GL thread): the ST matrix
+     * is already latched by the caller path. Split for J4 wipes,
+     * which clear + snapshot first, then scissor this.
+     */
+    private fun drawPassthroughLocked() {
         GLES20.glUseProgram(program)
         val positions = vertexBuffer
         val texCoords = texCoordBuffer
@@ -599,6 +648,9 @@ internal class SceneCompositorGL(
 
     private fun releaseEglLocked() {
         glReady = false
+        // J4: the snapshot dies with the slots (stop/revoke/destroy
+        // mid-transition need no new path — this funnel owns it).
+        clearTransitionLocked()
         // Overlay slots die first (reverse of creation), inside the same
         // EGL step that owns the OES program — see the teardown-order
         // contract pinned in SceneCompositorControllerTest.
@@ -727,6 +779,10 @@ internal class SceneCompositorGL(
      * passthrough (slots already released) until the next rebuild.
      */
     private fun rebuildOverlaysLocked(specs: List<SceneOverlaySpec>) {
+        // J4 cancel rule: any plain rebuild (edits, rollback) ends an
+        // in-flight blend deterministically — the rebuilt stack draws
+        // clean (CUT), never half-blended.
+        clearTransitionLocked()
         releaseOverlaySlotsLocked()
         buildSlotsLocked(specs)
     }
@@ -1099,6 +1155,18 @@ internal class SceneCompositorGL(
                 break
             }
         }
+        if (!anyActive) {
+            // J4: an unfinished blend arms the tick like an active
+            // animation (same queue, same coalesced redraw).
+            val trans = transConfig
+            if (trans != null && transTextureId != 0) {
+                anyActive = try {
+                    !SceneTransitions.isDoneAt(trans, nowMs - transStartElapsedMs)
+                } catch (_: Exception) {
+                    false
+                }
+            }
+        }
         if (!anyActive) return
         try {
             glHandler?.postDelayed(animTickRunnable, ANIM_TICK_MS)
@@ -1113,8 +1181,485 @@ internal class SceneCompositorGL(
      */
     private fun onAnimTickLocked() {
         if (!glReady) return
+        // J4: a finished blend clears before the final present, so the
+        // last frame is clean incoming (no one-frame pop).
+        val trans = transConfig
+        if (trans != null && transTextureId != 0) {
+            val done = try {
+                SceneTransitions.isDoneAt(trans, SystemClock.elapsedRealtime() - transStartElapsedMs)
+            } catch (_: Exception) {
+                true
+            }
+            if (done) {
+                clearTransitionLocked()
+                Log.i(TAG, "transition ended: ${trans.type} ${trans.durationMs}ms")
+            }
+        }
         requestMotionRedrawLocked()
         armAnimTickLocked()
+    }
+
+    /**
+     * J4 transition switch core (GL thread only): CUT (or any degrade)
+     * is a plain rebuild; otherwise the current visual is snapshotted
+     * GPU-side, the incoming stack builds, and the blend runs. Returns
+     * false only when the incoming build itself fails (snapshot
+     * already deleted — the caller rolls back to a clean CUT).
+     */
+    private fun transitionToSceneLocked(
+        specs: List<SceneOverlaySpec>,
+        transition: SceneTransition
+    ): Boolean {
+        if (transition.isInstant()) {
+            rebuildOverlaysLocked(specs)
+            return true
+        }
+        val surfaceTexture = inputSurfaceTexture
+        if (surfaceTexture == null || !glReady || frameSequence == 0L) {
+            Log.i(TAG, "transition ${transition.type}: no composed frame yet, cutting")
+            rebuildOverlaysLocked(specs)
+            return true
+        }
+        val outW = layout.outputWidth
+        val outH = layout.outputHeight
+        if (!SceneTransitions.allowsSnapshot(outW, outH)) {
+            Log.w(TAG, "transition ${transition.type}: ${outW}x${outH} over snapshot budget, cutting")
+            rebuildOverlaysLocked(specs)
+            return true
+        }
+        if (!snapshotCurrentVisualLocked(surfaceTexture, transition.type)) {
+            Log.w(TAG, "transition ${transition.type}: snapshot failed, cutting")
+            rebuildOverlaysLocked(specs)
+            return true
+        }
+        try {
+            releaseOverlaySlotsLocked()
+            buildSlotsLocked(specs)
+        } catch (t: Throwable) {
+            try {
+                clearTransitionLocked()
+            } catch (_: Exception) {
+            }
+            throw t
+        }
+        if (overlayProgram == 0) {
+            // Incoming has no blend program (nothing drew) — the
+            // rebuild stands, the blend degrades to its CUT.
+            Log.i(TAG, "transition ${transition.type}: no incoming program, cutting")
+            clearTransitionLocked()
+            return true
+        }
+        if (transition.type == SceneTransitionType.FADE_THROUGH_BLACK) {
+            try {
+                ensureBlackTextureLocked()
+            } catch (_: Exception) {
+                // The incoming rebuild stands (the SWITCH succeeded);
+                // only the blend effect failed, so CUT, not rollback.
+                Log.w(TAG, "transition ${transition.type}: black texture failed, cutting")
+                clearTransitionLocked()
+                return true
+            }
+        }
+        transRectPx = SceneRectPx(0, 0, outW, outH)
+        transConfig = transition
+        transStartElapsedMs = SystemClock.elapsedRealtime()
+        Log.i(TAG, "transition started: ${transition.type} ${transition.durationMs}ms")
+        armAnimTickLocked()
+        return true
+    }
+
+    /**
+     * J4 snapshot (GL thread only): composes the current visual into
+     * the back buffer (no present, no controller counting — a
+     * re-presentation like the motion redraw) and GPU-copies it into
+     * the reused snapshot texture. Rapid re-switches re-copy the live
+     * blend, so chains stay smooth with still one texture. False on
+     * any failure (state cleared — the caller CUTs).
+     */
+    private fun snapshotCurrentVisualLocked(surfaceTexture: SurfaceTexture, type: SceneTransitionType): Boolean {
+        try {
+            if (!ensureSnapshotTextureLocked()) return false
+            if (type != SceneTransitionType.FADE_THROUGH_BLACK && transBlackTexId != 0) {
+                try {
+                    GLES20.glDeleteTextures(1, intArrayOf(transBlackTexId), 0)
+                } catch (_: Exception) {
+                }
+                transBlackTexId = 0
+            }
+            composeCurrentVisualLocked(surfaceTexture)
+            GLES20.glCopyTexSubImage2D(
+                GLES20.GL_TEXTURE_2D, 0, 0, 0, 0, 0, transWidth, transHeight
+            )
+            checkGl("transition snapshot copy")
+            return true
+        } catch (_: Exception) {
+            try {
+                clearTransitionLocked()
+            } catch (_: Exception) {
+            }
+            return false
+        }
+    }
+
+    /**
+     * J4 snapshot storage (GL thread only): reuses the live texture
+     * when dims match (rapid switches copy for free), else reallocs.
+     * Pure GPU-side allocation (no pixels, no bitmap, no readback).
+     */
+    private fun ensureSnapshotTextureLocked(): Boolean {
+        val outW = layout.outputWidth
+        val outH = layout.outputHeight
+        if (transTextureId != 0 && transWidth == outW && transHeight == outH) return true
+        try {
+            if (transTextureId != 0) {
+                GLES20.glDeleteTextures(1, intArrayOf(transTextureId), 0)
+            }
+        } catch (_: Exception) {
+        }
+        transTextureId = 0
+        transWidth = 0
+        transHeight = 0
+        return try {
+            val textures = IntArray(1)
+            GLES20.glGenTextures(1, textures, 0)
+            checkGl("transition snapshot gen")
+            transTextureId = textures[0]
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, transTextureId)
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR
+            )
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR
+            )
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE
+            )
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE
+            )
+            GLES20.glTexImage2D(
+                GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
+                outW, outH, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null
+            )
+            checkGl("transition snapshot alloc")
+            transWidth = outW
+            transHeight = outH
+            true
+        } catch (_: Exception) {
+            try {
+                if (transTextureId != 0) {
+                    GLES20.glDeleteTextures(1, intArrayOf(transTextureId), 0)
+                }
+            } catch (_: Exception) {
+            }
+            transTextureId = 0
+            transWidth = 0
+            transHeight = 0
+            false
+        }
+    }
+
+    /**
+     * J4 1x1 opaque-black texture for fade-through-black phase B (GL
+     * thread only). Throws on failure — the entry maps this to a CUT
+     * degrade (the switch stands), never a half-blend.
+     */
+    private fun ensureBlackTextureLocked() {
+        if (transBlackTexId != 0) return
+        val textures = IntArray(1)
+        GLES20.glGenTextures(1, textures, 0)
+        checkGl("transition black gen")
+        transBlackTexId = textures[0]
+        try {
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, transBlackTexId)
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST
+            )
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST
+            )
+            val pixels = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder())
+            pixels.put(0.toByte()).put(0.toByte()).put(0.toByte()).put(255.toByte())
+            pixels.position(0)
+            GLES20.glTexImage2D(
+                GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
+                1, 1, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pixels
+            )
+            checkGl("transition black upload")
+        } catch (e: Exception) {
+            try {
+                GLES20.glDeleteTextures(1, intArrayOf(transBlackTexId), 0)
+            } catch (_: Exception) {
+            }
+            transBlackTexId = 0
+            throw e
+        }
+    }
+
+    /**
+     * J4 state clear (GL thread only): deletes snapshot + black
+     * textures, drops the clock. End, cancel, degrade, and teardown
+     * are all this one function — idempotent, never throws.
+     */
+    private fun clearTransitionLocked() {
+        try {
+            if (transTextureId != 0) {
+                GLES20.glDeleteTextures(1, intArrayOf(transTextureId), 0)
+            }
+        } catch (_: Exception) {
+        }
+        transTextureId = 0
+        try {
+            if (transBlackTexId != 0) {
+                GLES20.glDeleteTextures(1, intArrayOf(transBlackTexId), 0)
+            }
+        } catch (_: Exception) {
+        }
+        transBlackTexId = 0
+        transConfig = null
+        transStartElapsedMs = 0L
+        transWidth = 0
+        transHeight = 0
+        transRectPx = null
+        transScratchNdc = null
+    }
+
+    /** Current blend sample, or null when no transition is live. */
+    private fun currentTransitionSample(): TransitionProgress.Sample? {
+        val config = transConfig ?: return null
+        if (transTextureId == 0) return null
+        return TransitionProgress(config, transStartElapsedMs)
+            .sampleAt(SystemClock.elapsedRealtime())
+    }
+
+    /**
+     * J4 frame compose (GL thread only): the scene (passthrough +
+     * slots) plus the live blend layer. Shared by input-driven
+     * presents, motion redraws, and the snapshot copy — every pixel
+     * the stream (or the next snapshot) sees funnels through here.
+     * Blend failure degrades to the clean incoming scene loudly
+     * (never a render failure — the stream continues unblended).
+     */
+    private fun composeCurrentVisualLocked(surfaceTexture: SurfaceTexture) {
+        val sample = currentTransitionSample()
+        if (sample == null) {
+            drawComposedSceneLocked(surfaceTexture)
+            return
+        }
+        val config = transConfig ?: run {
+            drawComposedSceneLocked(surfaceTexture)
+            return
+        }
+        try {
+            val ftb = if (config.type == SceneTransitionType.FADE_THROUGH_BLACK) {
+                SceneTransitions.fadeThroughBlack(sample.eased01)
+            } else null
+            when {
+                isWipeTransition(config.type) -> drawWipeFrameLocked(surfaceTexture, sample)
+                ftb != null && ftb.outgoingPhase -> {
+                    // Phase A skips the incoming draws entirely (fully
+                    // covered): black clear + fading snapshot.
+                    clearFrameLocked()
+                    drawSnapshotQuadLocked(ftb.topAlpha, fullscreenNdcLocked())
+                }
+                else -> {
+                    drawComposedSceneLocked(surfaceTexture)
+                    drawTransitionTopLocked(config, sample)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "transition draw failed, clearing", e)
+            try {
+                clearTransitionLocked()
+            } catch (_: Exception) {
+            }
+            drawComposedSceneLocked(surfaceTexture)
+        }
+    }
+
+    /** Scene compose without any blend (GL thread): clear + passthrough + slots. */
+    private fun drawComposedSceneLocked(surfaceTexture: SurfaceTexture) {
+        drawFrameLocked(surfaceTexture)
+        drawSlotsLocked()
+    }
+
+    /**
+     * J4 wipe frame (GL thread only): clear, snapshot fullscreen,
+     * then the incoming scene inside the Y-up scissor. The scissor is
+     * `try/finally`-disabled — later draws (and clears, which honor
+     * it) can never inherit a stale clip.
+     */
+    private fun drawWipeFrameLocked(surfaceTexture: SurfaceTexture, sample: TransitionProgress.Sample) {
+        val config = transConfig
+        val scissor = if (config == null) null else SceneTransitions.wipeScissor(
+            config.type, sample.eased01, layout.outputWidth, layout.outputHeight
+        )
+        if (scissor == null) {
+            drawComposedSceneLocked(surfaceTexture)
+            return
+        }
+        surfaceTexture.getTransformMatrix(stMatrix)
+        clearFrameLocked()
+        drawSnapshotQuadLocked(1f, fullscreenNdcLocked())
+        try {
+            GLES20.glEnable(GLES20.GL_SCISSOR_TEST)
+            GLES20.glScissor(scissor.x, scissor.y, scissor.w, scissor.h)
+            drawPassthroughLocked()
+            drawSlotsLocked()
+        } finally {
+            try {
+                GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
+            } catch (_: Exception) {
+            }
+        }
+        checkGl("transition wipe draw")
+    }
+
+    /**
+     * J4 top layer (GL thread only): the snapshot/effect quad over the
+     * already-composed incoming scene. Slide offsets reuse the J3
+     * preset path; NDC mapping reuses `writeTransformedNdc`; zoom
+     * curves are J4-owned (pinned by tests).
+     */
+    private fun drawTransitionTopLocked(config: SceneTransition, sample: TransitionProgress.Sample) {
+        val e = sample.eased01
+        when (config.type) {
+            SceneTransitionType.CROSSFADE ->
+                drawSnapshotQuadLocked(SceneTransitions.crossfadeAlpha(e), fullscreenNdcLocked())
+            SceneTransitionType.FADE_THROUGH_BLACK -> {
+                // Incoming phase only (phase A never reaches here):
+                // black overlay lifts off the live incoming scene.
+                val ftb = SceneTransitions.fadeThroughBlack(e)
+                if (!ftb.outgoingPhase) drawBlackQuadLocked(ftb.topAlpha)
+            }
+            SceneTransitionType.SLIDE_LEFT, SceneTransitionType.SLIDE_RIGHT,
+            SceneTransitionType.SLIDE_UP, SceneTransitionType.SLIDE_DOWN -> {
+                val rect = transRectPx
+                val t = if (rect == null) null else SceneTransitions.slideTransform(
+                    config.type, e, layout.outputWidth, layout.outputHeight
+                )
+                if (t == null || rect == null || t.isIdentity()) {
+                    drawSnapshotQuadLocked(1f, fullscreenNdcLocked())
+                } else {
+                    SceneAnimation.writeTransformedNdc(
+                        rect, t, layout.outputWidth, layout.outputHeight, transScratchArr
+                    )
+                    drawSnapshotQuadLocked(1f, scratchNdcLocked())
+                }
+            }
+            SceneTransitionType.ZOOM_IN, SceneTransitionType.ZOOM_OUT -> {
+                val rect = transRectPx
+                val zoom = SceneTransitions.zoomFor(config.type, e)
+                if (rect == null || zoom == null) {
+                    drawSnapshotQuadLocked(1f, fullscreenNdcLocked())
+                } else {
+                    SceneAnimation.writeTransformedNdc(
+                        rect, SceneAnimTransform(0f, 0f, zoom.scale, zoom.alpha, 0f),
+                        layout.outputWidth, layout.outputHeight, transScratchArr
+                    )
+                    drawSnapshotQuadLocked(zoom.alpha, scratchNdcLocked())
+                }
+            }
+            SceneTransitionType.CUT,
+            SceneTransitionType.WIPE_LEFT, SceneTransitionType.WIPE_RIGHT,
+            SceneTransitionType.WIPE_UP, SceneTransitionType.WIPE_DOWN -> {
+                // Unreachable: CUT never sets state, wipes own their frame.
+            }
+        }
+    }
+
+    /**
+     * J4 snapshot quad (GL thread only): the fullscreen (or scratch
+     * transformed) outgoing frame through the shared 2D blend
+     * program. Blend state mirrors the slot draws exactly. Missing
+     * program/texture ends the transition (clean incoming).
+     */
+    private fun drawSnapshotQuadLocked(alpha: Float, positions: FloatBuffer) {
+        val texCoords = texCoordBuffer
+        if (overlayProgram == 0 || transTextureId == 0 || texCoords == null) {
+            clearTransitionLocked()
+            return
+        }
+        GLES20.glUseProgram(overlayProgram)
+        positions.position(0)
+        GLES20.glVertexAttribPointer(overlayPositionHandle, 2, GLES20.GL_FLOAT, false, 0, positions)
+        GLES20.glEnableVertexAttribArray(overlayPositionHandle)
+        texCoords.position(0)
+        GLES20.glVertexAttribPointer(overlayCoordHandle, 2, GLES20.GL_FLOAT, false, 0, texCoords)
+        GLES20.glEnableVertexAttribArray(overlayCoordHandle)
+        GLES20.glUniform1f(uAlphaHandle, alpha.coerceIn(0f, 1f))
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, transTextureId)
+        GLES20.glUniform1i(uSamplerHandle, 0)
+        GLES20.glEnable(GLES20.GL_BLEND)
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        GLES20.glDisable(GLES20.GL_BLEND)
+        GLES20.glDisableVertexAttribArray(overlayPositionHandle)
+        GLES20.glDisableVertexAttribArray(overlayCoordHandle)
+        checkGl("transition snapshot draw")
+    }
+
+    /**
+     * J4 black quad (GL thread only): the 1x1 black texture stretched
+     * fullscreen for fade-through-black phase B. A missing texture
+     * simply reveals incoming (safe degrade, no state change).
+     */
+    private fun drawBlackQuadLocked(alpha: Float) {
+        val texCoords = texCoordBuffer
+        if (overlayProgram == 0) {
+            clearTransitionLocked()
+            return
+        }
+        if (transBlackTexId == 0 || texCoords == null) return
+        GLES20.glUseProgram(overlayProgram)
+        val positions = fullscreenNdcLocked()
+        positions.position(0)
+        GLES20.glVertexAttribPointer(overlayPositionHandle, 2, GLES20.GL_FLOAT, false, 0, positions)
+        GLES20.glEnableVertexAttribArray(overlayPositionHandle)
+        texCoords.position(0)
+        GLES20.glVertexAttribPointer(overlayCoordHandle, 2, GLES20.GL_FLOAT, false, 0, texCoords)
+        GLES20.glEnableVertexAttribArray(overlayCoordHandle)
+        GLES20.glUniform1f(uAlphaHandle, alpha.coerceIn(0f, 1f))
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, transBlackTexId)
+        GLES20.glUniform1i(uSamplerHandle, 0)
+        GLES20.glEnable(GLES20.GL_BLEND)
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        GLES20.glDisable(GLES20.GL_BLEND)
+        GLES20.glDisableVertexAttribArray(overlayPositionHandle)
+        GLES20.glDisableVertexAttribArray(overlayCoordHandle)
+        checkGl("transition black draw")
+    }
+
+    private fun isWipeTransition(type: SceneTransitionType): Boolean =
+        type == SceneTransitionType.WIPE_LEFT || type == SceneTransitionType.WIPE_RIGHT ||
+            type == SceneTransitionType.WIPE_UP || type == SceneTransitionType.WIPE_DOWN
+
+    /** Cached fullscreen strip (BL, BR, TL, TR — matches the shared UVs). */
+    private fun fullscreenNdcLocked(): FloatBuffer {
+        var full = transFullscreenNdc
+        if (full == null) {
+            full = floatBufferOf(
+                floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
+            )
+            transFullscreenNdc = full
+        }
+        return full
+    }
+
+    /** Scratch NDC fed from [transScratchArr] (reused, no per-frame alloc). */
+    private fun scratchNdcLocked(): FloatBuffer {
+        var scratch = transScratchNdc
+        if (scratch == null) {
+            scratch = floatBufferOf(FloatArray(8))
+            transScratchNdc = scratch
+        }
+        scratch.clear()
+        scratch.put(transScratchArr)
+        scratch.position(0)
+        return scratch
     }
 
     /**

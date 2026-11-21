@@ -297,10 +297,13 @@ class StreamingLifecycleStructureTest {
     fun sceneSourceUpdateRebuildsWithRollback() {
         // H8: only live config-started sources update in place, through
         // the GL rebuild; failure best-effort restores the last stack.
+        // J4: switches route through the transition entry (CUT default
+        // = the historical plain rebuild); rollback stays plain.
         val src = sceneSource()
         assertTrue(src.contains("fun updateScene"))
         assertTrue(src.contains("controller.state != SceneSourceState.STARTED"))
-        assertTrue(src.contains("gl.rebuildOverlays(specs)"))
+        assertTrue(src.contains("transition: SceneTransition = SceneTransition.DEFAULT"))
+        assertTrue(src.contains("gl.transitionToScene(specs, transition)"))
         assertTrue(src.contains("gl.rebuildOverlays(previous)"))
     }
 

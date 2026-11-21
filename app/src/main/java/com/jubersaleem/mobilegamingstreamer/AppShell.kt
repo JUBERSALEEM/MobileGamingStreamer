@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerAnimation
+import com.jubersaleem.mobilegamingstreamer.scene.SceneTransition
 import com.jubersaleem.mobilegamingstreamer.scene.SceneScaleMode
 import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
 
@@ -80,7 +81,8 @@ data class StudioUiState(
     val activeSceneId: String? = null,
     val editingSceneId: String? = null,
     val sceneDeleteTargetName: String? = null,
-    val sceneError: String? = null
+    val sceneError: String? = null,
+    val sceneTransition: SceneTransition = SceneTransition.DEFAULT
 )
 
 /** Callbacks the shell triggers, implemented by the activity. */
@@ -112,6 +114,7 @@ data class StudioActions(
     val onConfirmDeleteScene: () -> Unit = {},
     val onDismissDeleteScene: () -> Unit = {},
     val onRenameScene: (String, String) -> Unit = { _, _ -> },
+    val onSceneTransition: (SceneTransition) -> Unit = { _ -> },
     val onSceneOrientation: (String, com.jubersaleem.mobilegamingstreamer.scene.SceneDesignOrientation) -> Unit = { _, _ -> },
     val onAddLayer: (String) -> Unit = {},
     val onAddImageLayer: (String) -> Unit = {},
@@ -288,6 +291,8 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
                         onDuplicateScene = actions.onDuplicateScene,
                         onDeleteScene = actions.onDeleteScene,
                         onRenameScene = actions.onRenameScene,
+                        sceneTransition = state.sceneTransition,
+                        onSceneTransition = actions.onSceneTransition,
                         onSceneOrientation = actions.onSceneOrientation,
                         streamOrientation = state.orientation,
                         broadcastActive = state.broadcastActive,

@@ -3,6 +3,7 @@ package com.jubersaleem.mobilegamingstreamer
 import android.graphics.Paint
 import android.os.SystemClock
 import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -75,6 +76,9 @@ import com.jubersaleem.mobilegamingstreamer.scene.SceneScaleMode
 import com.jubersaleem.mobilegamingstreamer.scene.SceneVideoProbe
 import com.jubersaleem.mobilegamingstreamer.scene.ScenePreviewBoxes
 import com.jubersaleem.mobilegamingstreamer.scene.SceneRectPx
+import com.jubersaleem.mobilegamingstreamer.scene.SceneTransition
+import com.jubersaleem.mobilegamingstreamer.scene.SceneTransitionType
+import com.jubersaleem.mobilegamingstreamer.scene.SceneTransitions
 import com.jubersaleem.mobilegamingstreamer.scene.SceneSizePx
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTextLayerLayout
 import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
@@ -137,6 +141,8 @@ fun SceneEditorPage(
     onDuplicateScene: (String) -> Unit,
     onDeleteScene: (String) -> Unit,
     onRenameScene: (String, String) -> Unit,
+    sceneTransition: SceneTransition,
+    onSceneTransition: (SceneTransition) -> Unit,
     onSceneOrientation: (String, SceneDesignOrientation) -> Unit,
     streamOrientation: String,
     broadcastActive: Boolean,
@@ -206,6 +212,11 @@ fun SceneEditorPage(
             onClick = onCreateScene,
             modifier = Modifier.fillMaxWidth(),
             icon = Icons.Rounded.Add
+        )
+        TransitionCard(
+            transition = sceneTransition,
+            demoScene = scenes.firstOrNull { it.id == (editingSceneId ?: activeSceneId) },
+            onChange = onSceneTransition
         )
         scenes.forEach { scene ->
             SceneCard(
@@ -908,6 +919,307 @@ private fun formatDuration(durationMs: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return if (seconds < 10) "$minutes:0$seconds" else "$minutes:$seconds"
+}
+
+private val transTypeLabels = mapOf(
+    SceneTransitionType.CUT to "Cut",
+    SceneTransitionType.CROSSFADE to "Crossfade",
+    SceneTransitionType.FADE_THROUGH_BLACK to "Fade to black",
+    SceneTransitionType.SLIDE_LEFT to "Slide left",
+    SceneTransitionType.SLIDE_RIGHT to "Slide right",
+    SceneTransitionType.SLIDE_UP to "Slide up",
+    SceneTransitionType.SLIDE_DOWN to "Slide down",
+    SceneTransitionType.WIPE_LEFT to "Wipe left",
+    SceneTransitionType.WIPE_RIGHT to "Wipe right",
+    SceneTransitionType.WIPE_UP to "Wipe up",
+    SceneTransitionType.WIPE_DOWN to "Wipe down",
+    SceneTransitionType.ZOOM_IN to "Zoom in",
+    SceneTransitionType.ZOOM_OUT to "Zoom out"
+)
+
+/** Simplified demo box: anchor-grid fractions + short label. */
+private data class DemoBox(val x: Float, val y: Float, val w: Float, val h: Float, val label: String)
+
+private fun demoBoxFor(anchor: SceneOverlayAnchor, dupeIndex: Int, label: String): DemoBox {
+    // 2x3 anchor diagram (fractions of the demo canvas): real layout
+    // lives in the full preview below; this shows layer presence +
+    // motion only (labeled as simplified).
+    val w = 0.40f
+    val h = 0.16f
+    val col = when (anchor) {
+        SceneOverlayAnchor.TOP_LEFT, SceneOverlayAnchor.BOTTOM_LEFT -> 0f
+        SceneOverlayAnchor.CENTER -> 0.5f
+        else -> 1f
+    }
+    val row = when (anchor) {
+        SceneOverlayAnchor.TOP_LEFT, SceneOverlayAnchor.TOP_RIGHT -> 0f
+        SceneOverlayAnchor.CENTER -> 1f
+        else -> 2f
+    }
+    val x = (col * (1f - w) + dupeIndex * 0.04f).coerceIn(0f, 1f - w)
+    val y = (row * (1f - h) / 2f + dupeIndex * 0.04f).coerceIn(0f, 1f - h)
+    return DemoBox(x, y, w, h, label)
+}
+
+/**
+ * J4 global switch effect (one per app, not per scene): type +
+ * duration + easing, persisted write-through and attached to every
+ * live scene switch. CUT (the default) is instant — duration/easing
+ * and the demo hide, honestly showing there is nothing to tune.
+ */
+@Composable
+private fun TransitionCard(
+    transition: SceneTransition,
+    demoScene: StreamScene?,
+    onChange: (SceneTransition) -> Unit
+) {
+    val p = LocalMgsPalette.current
+    fun update(
+        type: SceneTransitionType = transition.type,
+        durationMs: Int = transition.durationMs,
+        easing: SceneAnimEasing = transition.easing
+    ) {
+        onChange(SceneTransition.of(type, durationMs, easing) ?: transition)
+    }
+    ClaySurface(shape = RoundedCornerShape(30.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ClaySectionLabel("Scene transition")
+            Text(
+                text = "Effect used when switching live scenes.",
+                color = p.muted,
+                fontSize = 12.sp
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                transTypeLabels.forEach { (type, label) ->
+                    ClayButton(
+                        label = label,
+                        onClick = { update(type = type) },
+                        style = if (type == transition.type) ClayButtonStyle.Filled
+                            else ClayButtonStyle.Raised
+                    )
+                }
+            }
+            if (transition.type == SceneTransitionType.CUT) {
+                Text(
+                    text = "Cut switches instantly — nothing to preview.",
+                    color = p.muted,
+                    fontSize = 11.sp
+                )
+            } else {
+                LayerSlider(
+                    label = "Duration",
+                    valueLabel = "%.1f s".format(
+                        java.util.Locale.US, transition.durationMs / 1000f
+                    ),
+                    value = (transition.durationMs / 1000f).coerceIn(
+                        MIN_TRANSITION_DURATION_MS / 1000f,
+                        MAX_TRANSITION_DURATION_MS / 1000f
+                    ),
+                    range = (MIN_TRANSITION_DURATION_MS / 1000f)..
+                        (MAX_TRANSITION_DURATION_MS / 1000f),
+                    steps = 17,
+                    onChange = {
+                        update(durationMs = (it * 1000f).roundToInt().coerceIn(
+                            MIN_TRANSITION_DURATION_MS, MAX_TRANSITION_DURATION_MS
+                        ))
+                    }
+                )
+                ClayOptionGroup(
+                    title = "Easing",
+                    options = animEasingLabels.values.toList(),
+                    selected = animEasingLabels.getValue(transition.easing),
+                    onSelect = { label ->
+                        update(easing = animEasingLabels.entries.first { it.value == label }.key)
+                    }
+                )
+                if (demoScene != null) {
+                    TransitionDemoCanvas(transition = transition, scene = demoScene)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * J4 transition demo: simplified anchor-diagram boxes for the editing
+ * scene over black, driven by the SAME pure transition clock +
+ * geometry the live renderer samples (slides/zooms/wipes reuse the
+ * tested functions; only the canvas differs). Plays once per tap.
+ * Labeled exactly what it is — never live-rendering proof.
+ */
+@Composable
+private fun TransitionDemoCanvas(transition: SceneTransition, scene: StreamScene) {
+    val p = LocalMgsPalette.current
+    val labelPaint = remember {
+        android.graphics.Paint().apply {
+            isAntiAlias = true
+            textAlign = android.graphics.Paint.Align.CENTER
+            color = android.graphics.Color.WHITE
+        }
+    }
+    var playToken by remember(transition, scene.id) { mutableStateOf(0) }
+    var demoElapsedMs by remember(transition, scene.id) { mutableStateOf<Long?>(null) }
+    if (demoElapsedMs != null) {
+        LaunchedEffect(playToken) {
+            val start = SystemClock.elapsedRealtime()
+            while (true) {
+                delay(50L)
+                val elapsed = SystemClock.elapsedRealtime() - start
+                if (elapsed > transition.durationMs + 400L) {
+                    demoElapsedMs = null
+                    break
+                }
+                demoElapsedMs = elapsed
+            }
+        }
+    }
+    val demoBoxes = remember(scene) {
+        val enabled = scene.layers
+            .filter { it.enabled }
+            .sortedWith(compareBy({ it.zOrder }, { it.id }))
+        val seenAnchors = mutableMapOf<SceneOverlayAnchor, Int>()
+        enabled.map { layer ->
+            val dupe = seenAnchors.getOrDefault(layer.anchor, 0)
+            seenAnchors[layer.anchor] = dupe + 1
+            val label = when (layer.kind) {
+                SceneLayerKind.TEXT -> layer.text.take(14).ifBlank { "TEXT" }
+                else -> layer.kind.name
+            }
+            demoBoxFor(layer.anchor, dupe, label)
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ClayButton(
+            label = if (demoElapsedMs == null) "PREVIEW TRANSITION" else "PLAYING…",
+            onClick = {
+                playToken += 1
+                demoElapsedMs = 0L
+            }
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(if (scene.orientation == SceneDesignOrientation.PORTRAIT) 9f / 16f else 16f / 9f)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color(0xFF101018))
+                .border(1.dp, p.clayEdge.copy(alpha = 0.6f), RoundedCornerShape(18.dp))
+        ) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.matchParentSize()) {
+                val elapsed = demoElapsedMs
+                // Same pure clock the live blend samples (idle = rest).
+                val e = if (elapsed == null) 1f else SceneTransitions.easedProgress(
+                    transition, elapsed.coerceAtMost(transition.durationMs.toLong())
+                )
+                var boxAlpha = 1f
+                val drawBoxes: DrawScope.() -> Unit = {
+                    for (box in demoBoxes) {
+                        val l = box.x * size.width
+                        val t = box.y * size.height
+                        val w = box.w * size.width
+                        val h = box.h * size.height
+                        drawRoundRect(
+                            color = Color.White.copy(alpha = 0.10f * boxAlpha),
+                            topLeft = androidx.compose.ui.geometry.Offset(l, t),
+                            size = androidx.compose.ui.geometry.Size(w, h),
+                            cornerRadius = CornerRadius(8f)
+                        )
+                        drawRoundRect(
+                            color = Color.White.copy(alpha = 0.85f * boxAlpha),
+                            topLeft = androidx.compose.ui.geometry.Offset(l, t),
+                            size = androidx.compose.ui.geometry.Size(w, h),
+                            cornerRadius = CornerRadius(8f),
+                            style = Stroke(width = 2f)
+                        )
+                        labelPaint.alpha = (255f * boxAlpha).roundToInt().coerceIn(0, 255)
+                        labelPaint.textSize = (size.width * 0.032f).coerceAtLeast(10f)
+                        drawContext.canvas.nativeCanvas.drawText(
+                            box.label, l + w / 2f,
+                            t + h / 2f - (labelPaint.descent() + labelPaint.ascent()) / 2f,
+                            labelPaint
+                        )
+                    }
+                }
+                when (transition.type) {
+                    SceneTransitionType.CROSSFADE,
+                    SceneTransitionType.FADE_THROUGH_BLACK -> {
+                        // Entrance mirror: the demo fades in over
+                        // black (live crossfades/fades the outgoing
+                        // out over the incoming) — same clock.
+                        boxAlpha = e
+                        drawBoxes()
+                    }
+                    SceneTransitionType.SLIDE_LEFT,
+                    SceneTransitionType.SLIDE_RIGHT,
+                    SceneTransitionType.SLIDE_UP,
+                    SceneTransitionType.SLIDE_DOWN -> {
+                        // Mirrored entrance: incoming travels the
+                        // reverse of the tested outgoing offsets.
+                        val st = SceneTransitions.slideTransform(
+                            transition.type, 1f - e, 1000, 1000
+                        )
+                        val dxPx = -(st?.dxPx ?: 0f) / 1000f * size.width
+                        val dyPx = -(st?.dyPx ?: 0f) / 1000f * size.height
+                        translate(dxPx, dyPx) { drawBoxes() }
+                    }
+                    SceneTransitionType.WIPE_LEFT,
+                    SceneTransitionType.WIPE_RIGHT,
+                    SceneTransitionType.WIPE_UP,
+                    SceneTransitionType.WIPE_DOWN -> {
+                        val r = SceneTransitions.wipeScissorTopDown(
+                            transition.type, e,
+                            size.width.roundToInt(), size.height.roundToInt()
+                        )
+                        if (r == null) {
+                            drawBoxes()
+                        } else {
+                            clipRect(
+                                r.x.toFloat(), r.y.toFloat(),
+                                (r.x + r.w).toFloat(), (r.y + r.h).toFloat()
+                            ) { drawBoxes() }
+                        }
+                    }
+                    SceneTransitionType.ZOOM_IN,
+                    SceneTransitionType.ZOOM_OUT -> {
+                        val z = SceneTransitions.zoomFor(transition.type, 1f - e)
+                        boxAlpha = e
+                        scale(
+                            z?.scale ?: 1f, z?.scale ?: 1f,
+                            androidx.compose.ui.geometry.Offset(
+                                size.width / 2f, size.height / 2f
+                            )
+                        ) { drawBoxes() }
+                    }
+                    SceneTransitionType.CUT -> drawBoxes()
+                }
+            }
+            Text(
+                text = "TRANSITION DEMO — NOT LIVE",
+                color = Color.White,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 1.4.sp,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 8.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            )
+        }
+        Text(
+            text = "Simplified layout over black. Live switches blend two live scenes — timing, direction and easing match.",
+            color = p.muted,
+            fontSize = 10.sp
+        )
+    }
 }
 
 private val animPresetLabels = mapOf(
