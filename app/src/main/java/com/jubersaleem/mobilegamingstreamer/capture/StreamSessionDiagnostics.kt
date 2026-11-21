@@ -25,6 +25,7 @@ object DiagnosticEventId {
     const val AUTH_FAILED = "auth_failed"
     const val STREAM_STOPPED = "stream_stopped"
     const val SERVICE_DESTROYED = "service_destroyed"
+    const val VIDEO_SOURCE_FALLBACK = "video_source_fallback"
 }
 
 private val RtmpUrlPattern = Regex("(?i)rtmps?://\\S+")

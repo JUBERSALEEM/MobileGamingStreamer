@@ -270,6 +270,36 @@ class SceneCompositorControllerTest {
     }
 
     @Test
+    fun teardownTextCleanupInsideEglStep() {
+        // H3 shell contract, pinned at the decision core: text GL objects
+        // die inside the EGL step, before OES/context destruction, and the
+        // EGL step (with text) runs before the GL thread quits. The nested
+        // markers below mirror SceneCompositorGL.releaseEglLocked's order,
+        // which is device-gated shell code verified by source inspection;
+        // this test pins the order the shell must implement.
+        val controller = SceneCompositorController()
+        controller.requestStart()
+        val log = mutableListOf<String>()
+        val steps = SceneTeardownSteps(
+            releaseVirtualDisplay = { log.add("vd") },
+            releaseOutputSurface = { log.add("output") },
+            releaseInputSurface = { log.add("input") },
+            releaseEgl = {
+                log.add("egl:text")
+                log.add("egl:gl")
+            },
+            releaseProjectionCallback = { log.add("callback") },
+            quitGlThread = { log.add("thread") }
+        )
+        controller.performTeardown(steps)
+        assertEquals(
+            listOf("vd", "output", "input", "egl:text", "egl:gl", "callback", "thread"),
+            log
+        )
+        assertTrue(controller.isFullyReleased)
+    }
+
+    @Test
     fun teardownExactlyOnce() {
         val controller = SceneCompositorController()
         controller.requestStart()

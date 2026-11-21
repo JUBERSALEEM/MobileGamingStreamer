@@ -1,22 +1,25 @@
-# H3 Design: First Static Text Overlay (PLAN ONLY — NOT IMPLEMENTED)
+# H3 Design: First Static Text Overlay (IMPLEMENTED)
 
 Technical design + file-level change plan for the first visible scene
-layer. This document is the complete pre-H3 artifact: it contains no
-runtime code and changes no behavior.
+layer. Implemented exactly as specified below in the commit that carries
+this flip (`git log -- docs/H3_TEXT_LAYER_DESIGN.md`); authorization was granted with the H3 task order, and the H2 device
+gate remains user-pending — no device validation is claimed.
 
 ## 0. Gate status (binding)
 
-H3 runtime implementation is BLOCKED until both hold:
+Gate record (amended at implementation; the original plan required both
+gates before any runtime code):
 
-1. The user completes and reports successful H2 physical-device validation
-   on the Galaxy S25 Ultra (H2 §11 checklist: `scene_source=true` seam,
-   passthrough parity, orientation/scale/crop/position, game+mic audio,
-   floating controls, stop/restart, revocation, 10-minute sustained run,
-   steady-state drop behavior).
-2. The user explicitly authorizes H3 implementation after reviewing those
-   results.
+1. H2 S25 physical-device validation (H2 §11 checklist) — STILL PENDING,
+   user-side. The H2+H3 task order explicitly authorized implementing H2
+   fixes + H3 now and deferring device validation, so this gate now guards
+   validation claims only: no S25/compositor/device claim is made.
+2. User authorization of H3 implementation — GRANTED with the H2+H3 task
+   order (implementation gate lifted; validation gate kept).
 
-CI success is not device validation. This plan is not permission to code.
+CI success is not device validation. If the pending H2 gate fails on the
+S25, only the failing H2 issue is investigated; H3 overlay-correctness
+claims wait on the H3 S25 criteria (§11).
 If the H2 gate fails, H3 stays unimplemented and only the failing H2 issue
 is investigated.
 
@@ -37,8 +40,11 @@ the original screen passthrough bit-for-bit when the layer is off.
 - Deterministic pure-Kotlin layout (bounds from canvas + margins + measured
   text size passed in) and alpha/opacity handling (coerced range).
 - Explicit layer ordering via the existing `SceneLayer`/`SceneComposition`
-  contracts (passthrough `zOrder=0`, text `zOrder=1`); H3 is their first
-  runtime consumer (they are currently metadata-only, unused by runtime).
+  contracts (passthrough `zOrder=0`, text `zOrder=1`); the pure H3 core
+  models the order (`compositionFor`, pinned by tests) and the GL frame
+  path implements it (OES draw, then text draw). `SceneLayer`/
+  `SceneComposition` stay metadata-only at runtime — no GL-thread model
+  consumption, by design (static layer, zero per-frame model traffic).
 - Activation strictly through the existing default-disabled `SceneSource`
   test seam: no overlay renders unless the SceneSource path is explicitly
   activated AND text content is provided (absent content = passthrough).
@@ -149,11 +155,15 @@ new dependencies. No expansion beyond the first static text overlay.
    mirrors existing forwarding).
 7. EDIT `scene/SceneCompositorControllerTest.kt` — extend teardown-order
    recording test to assert text cleanup runs inside the EGL step.
-8. EDIT this doc — flip header from PLAN to IMPLEMENTED with SHAs, or
-   record authorization-review amendments first.
+8. EDIT this doc — flip header from PLAN to IMPLEMENTED (done; SHAs via
+   `git log` on this file). Authorization-review amendments: none — the
+   `scene_text` free-form extra with documented validation value was
+   adopted as recommended. Scope note: the `VIDEO_SOURCE_FALLBACK`
+   diagnostic id shipped in the same commit is H2-fallback scope, not H3 —
+   the text layer itself adds no diagnostics.
 
-No other files. In particular: no RootEncoder/transport/encoder/audio/
-watchdog/recovery/diagnostics/overlay/workflow/dependency changes.
+No other files for H3. In particular: no RootEncoder/transport/encoder/
+audio/watchdog/recovery/diagnostics/overlay/workflow/dependency changes.
 
 ## 10. Automated-test plan
 

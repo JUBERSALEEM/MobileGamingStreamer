@@ -33,6 +33,7 @@ import com.pedro.encoder.utils.CodecUtil
 import com.pedro.encoder.input.sources.audio.AudioSource
 import com.pedro.encoder.input.sources.audio.InternalAudioSource
 import com.pedro.encoder.input.sources.audio.MicrophoneSource
+import com.jubersaleem.mobilegamingstreamer.capture.VideoSourceFallbackPolicy
 import com.jubersaleem.mobilegamingstreamer.scene.SceneSource
 import com.pedro.encoder.input.sources.video.ScreenSource
 import com.pedro.encoder.input.sources.video.VideoSource
@@ -230,6 +231,12 @@ class RtmpBroadcastService : Service() {
         healthMonitor.startSession(SystemClock.elapsedRealtime())
         diagnosticToken = sessionToken
         diagnostics.startSession(sessionToken, SystemClock.elapsedRealtime())
+        // A fallback retry explains its provenance in the NEW session (the
+        // failed attempt never publishes a terminal report, so recording
+        // there would lose the event). Absent on ordinary starts: no-op.
+        intent.getStringExtra(EXTRA_SCENE_FALLBACK_REASON)?.let { reason ->
+            recordDiagnostic(DiagnosticEventId.VIDEO_SOURCE_FALLBACK, reason)
+        }
         lastWatchdogDiagnosisId = null
         // Suppress callbacks from a previous stream while its resources are released.
         stopping = true
@@ -468,10 +475,16 @@ class RtmpBroadcastService : Service() {
             // byte-identical in behavior; SceneSource is device-tested via
             // `am start ... --ez scene_source true` before GO LIVE.
             val useSceneSource = intent.getBooleanExtra(EXTRA_SCENE_SOURCE, false)
-            Log.i(TAG, "Video source: " + if (useSceneSource) "SceneSource compositor passthrough"
-                else "ScreenSource direct passthrough")
+            val sceneFallbackDone = intent.getBooleanExtra(EXTRA_SCENE_FALLBACK_DONE, false)
+            // Sanitized: text length only, never content.
+            val sceneText = intent.getStringExtra(EXTRA_SCENE_TEXT)
+            Log.i(TAG, "Video source requested=" + if (useSceneSource) "SceneSource" else "ScreenSource" +
+                " selected=" + if (useSceneSource) "SceneSource compositor passthrough"
+                else "ScreenSource direct passthrough" +
+                if (sceneFallbackDone) " (scene fallback retry)" else "" +
+                if (useSceneSource && !sceneText.isNullOrBlank()) " text=${sceneText.length} chars" else "")
             val videoSource: VideoSource = if (useSceneSource) {
-                SceneSource(this, mediaProjection)
+                SceneSource(this, mediaProjection, sceneText)
             } else {
                 ScreenSource(this, mediaProjection)
             }
@@ -541,8 +554,28 @@ class RtmpBroadcastService : Service() {
             handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
             Log.i(TAG, "RTMP broadcast requested: $activeProfileLabel, orientation=${if (portrait) "PORTRAIT" else "LANDSCAPE"}, audio=$audioMode, dpi=$dpi")
         } catch (error: Exception) {
-            Log.e(TAG, "Unable to start RTMP broadcast", error)
-            stopBroadcast(BroadcastStatusMessages.UNABLE_TO_START_PREFIX + (error.message ?: "encoder error"))
+            val fallback = VideoSourceFallbackPolicy.shouldFallbackToScreenSource(
+                requestedSceneSource = intent.getBooleanExtra(EXTRA_SCENE_SOURCE, false),
+                fallbackAlreadyAttempted = intent.getBooleanExtra(EXTRA_SCENE_FALLBACK_DONE, false),
+                streamingConfirmed = streamingConfirmed
+            )
+            if (fallback) {
+                // Single loud retry with the default source: the retry intent
+                // carries scene_source=false, so this branch is unreachable on
+                // the second attempt (depth at most one). startBroadcast's own
+                // head tears down the partial scene attempt via the same
+                // release path as a duplicate GO LIVE — no new cleanup logic.
+                val reason = error.message ?: error.javaClass.simpleName
+                Log.e(TAG, "SceneSource start failed ($reason); falling back to ScreenSource", error)
+                publishState(false, BroadcastStatusMessages.sceneFallbackMessage(reason), 0L)
+                startBroadcast(Intent(intent)
+                    .putExtra(EXTRA_SCENE_SOURCE, false)
+                    .putExtra(EXTRA_SCENE_FALLBACK_DONE, true)
+                    .putExtra(EXTRA_SCENE_FALLBACK_REASON, reason))
+            } else {
+                Log.e(TAG, "Unable to start RTMP broadcast", error)
+                stopBroadcast(BroadcastStatusMessages.UNABLE_TO_START_PREFIX + (error.message ?: "encoder error"))
+            }
         }
     }
 
@@ -822,6 +855,9 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_ORIENTATION = "orientation"
         const val EXTRA_AUDIO_MODE = "audio_mode"
         const val EXTRA_SCENE_SOURCE = "scene_source"
+        const val EXTRA_SCENE_FALLBACK_DONE = "scene_fallback_done"
+        const val EXTRA_SCENE_FALLBACK_REASON = "scene_fallback_reason"
+        const val EXTRA_SCENE_TEXT = "scene_text"
         const val AUDIO_MODE_MIC = "MIC"
         const val AUDIO_MODE_GAME = "GAME"
         const val AUDIO_MODE_BOTH = "BOTH"

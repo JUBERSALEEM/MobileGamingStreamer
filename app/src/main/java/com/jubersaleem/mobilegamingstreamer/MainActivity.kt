@@ -157,6 +157,9 @@ class MainActivity : ComponentActivity() {
                 // it, keeping the ScreenSource production path identical.
                 putExtra(RtmpBroadcastService.EXTRA_SCENE_SOURCE,
                     getIntent().getBooleanExtra(RtmpBroadcastService.EXTRA_SCENE_SOURCE, false))
+                // H3 text layer: forwarded content (absent/null = no overlay).
+                putExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT,
+                    getIntent().getStringExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT))
             }
             try {
                 startForegroundService(liveIntent)

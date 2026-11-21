@@ -1,5 +1,10 @@
 package com.jubersaleem.mobilegamingstreamer.scene
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.opengl.EGL14
 import android.opengl.EGLConfig
@@ -9,6 +14,7 @@ import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
+import android.opengl.GLUtils
 import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
@@ -29,7 +35,8 @@ import java.util.concurrent.TimeUnit
  *
  * Frame path (all on [workerThread]): input SurfaceTexture arrival →
  * `updateTexImage` → capture timestamp → controller offer → fullscreen OES
- * passthrough draw → presentation timestamp → swap into the library ST.
+ * passthrough draw (+ optional H3 text quad) → presentation timestamp →
+ * swap into the library ST.
  *
  * Ownership (see the architecture doc for the full map):
  * - Owns: GL thread + handler, EGL display/context/surface/program, OES
@@ -51,7 +58,8 @@ internal const val GL_TEARDOWN_TIMEOUT_MS = 5_000L
 internal class SceneCompositorGL(
     private val controller: SceneCompositorController,
     private val outputSurface: Surface,
-    private val layout: SceneSourceLayout
+    private val layout: SceneSourceLayout,
+    private val textContent: String?
 ) : SurfaceTexture.OnFrameAvailableListener {
 
     private var workerThread: HandlerThread? = null
@@ -71,6 +79,16 @@ internal class SceneCompositorGL(
     private var aTextureHandle = -1
     private var uMvpHandle = -1
     private var uStMatrixHandle = -1
+    private var textProgram: Int = 0
+    private var textTextureId: Int = 0
+    private var textBitmap: Bitmap? = null
+    private var textQuadBuffer: FloatBuffer? = null
+    private var textPositionHandle = -1
+    private var textCoordHandle = -1
+    private var uSamplerHandle = -1
+    private var uAlphaHandle = -1
+    private var textAlpha = 1f
+    private var textVisible = false
     private val mvpMatrix = FloatArray(16)
     private val stMatrix = FloatArray(16)
     private var vertexBuffer: FloatBuffer? = null
@@ -193,6 +211,9 @@ internal class SceneCompositorGL(
         try {
             surfaceTexture.updateTexImage()
             metadata = SceneFrameMetadata(frameSequence++, surfaceTexture.timestamp)
+            if (metadata.sequence == 0L) {
+                Log.i(TAG, "first frame latched ts=${metadata.timestampNs}")
+            }
         } catch (error: RuntimeException) {
             failFrame("compositor input latch failed", error)
             return
@@ -201,6 +222,7 @@ internal class SceneCompositorGL(
         if (handle == null) return // Counted drop/reject: skip the draw.
         try {
             drawFrameLocked(surfaceTexture)
+            if (textVisible) drawTextLocked()
             // EGL_ANDROID_presentation_time: present-time is timestamp currency
             // for EGL producers (per the SurfaceTexture contract), so the
             // captured monotonic-nanoseconds timestamp keeps its clock domain
@@ -325,6 +347,7 @@ internal class SceneCompositorGL(
         inputSurfaceTexture = surfaceTexture
         val surface = Surface(surfaceTexture)
         inputSurface = surface
+        initTextLayerLocked()
         glReady = true
         Log.i(TAG, "compositor ready: input=${layout.displayWidth}x${layout.displayHeight} " +
             "output=${layout.outputWidth}x${layout.outputHeight}")
@@ -358,6 +381,26 @@ internal class SceneCompositorGL(
 
     private fun releaseEglLocked() {
         glReady = false
+        // Text objects die first (reverse of creation), inside the same EGL
+        // step that owns the OES program — see the teardown-order contract
+        // pinned in SceneCompositorControllerTest.
+        try {
+            if (textProgram != 0) GLES20.glDeleteProgram(textProgram)
+        } catch (_: Exception) {
+        }
+        textProgram = 0
+        try {
+            if (textTextureId != 0) GLES20.glDeleteTextures(1, intArrayOf(textTextureId), 0)
+        } catch (_: Exception) {
+        }
+        textTextureId = 0
+        try {
+            textBitmap?.recycle()
+        } catch (_: Exception) {
+        }
+        textBitmap = null
+        textQuadBuffer = null
+        textVisible = false
         try {
             if (program != 0) GLES20.glDeleteProgram(program)
         } catch (_: Exception) {
@@ -428,8 +471,107 @@ internal class SceneCompositorGL(
     private fun buildProgram(): Int {
         // trimIndent: keep every line (notably #extension) free of leading
         // whitespace for pedantic drivers, regardless of code formatting.
-        val vertex = loadShader(GLES20.GL_VERTEX_SHADER, VERTEX_SHADER.trimIndent())
-        val fragment = loadShader(GLES20.GL_FRAGMENT_SHADER, FRAGMENT_SHADER.trimIndent())
+        return buildProgramFor(VERTEX_SHADER.trimIndent(), FRAGMENT_SHADER.trimIndent())
+    }
+
+    /**
+     * H3 text layer setup (GL thread, inside init latch): measure, raster
+     * once, upload once, build the blend program. No-op when no text was
+     * requested (passthrough). Throws loudly on any failure — a half-built
+     * layer never reaches the frame path.
+     */
+    private fun initTextLayerLocked() {
+        val content = textContent
+        if (content.isNullOrBlank()) return
+        val outW = layout.outputWidth
+        val outH = layout.outputHeight
+        val spec = SceneTextLayerSpec.of(
+            text = content,
+            marginPx = SceneTextLayerLayout.marginPxFor(outH),
+            maxWidthPx = outW,
+            alpha = 1f
+        ) ?: throw RuntimeException("text layer spec invalid")
+        val paint = Paint().apply {
+            isAntiAlias = true
+            color = Color.WHITE
+            textSize = SceneTextLayerLayout.textSizePxFor(outH).toFloat()
+        }
+        if (paint.textSize <= 0f) throw RuntimeException("text size invalid for height=$outH")
+        val bounds = Rect()
+        paint.getTextBounds(content, 0, content.length, bounds)
+        val rect = SceneTextLayerLayout.layout(
+            SceneCanvas(outW, outH), SceneSizePx(bounds.width(), bounds.height()), spec
+        ) ?: throw RuntimeException("text layer does not fit ${outW}x${outH}")
+        val bitmap = Bitmap.createBitmap(rect.width, rect.height, Bitmap.Config.ARGB_8888)
+        Canvas(bitmap).drawText(content, -bounds.left.toFloat(), -bounds.top.toFloat(), paint)
+        textBitmap = bitmap
+        val textures = IntArray(1)
+        GLES20.glGenTextures(1, textures, 0)
+        checkGl("glGenTextures(text)")
+        textTextureId = textures[0]
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textTextureId)
+        GLES20.glTexParameteri(
+            GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR
+        )
+        GLES20.glTexParameteri(
+            GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR
+        )
+        GLES20.glTexParameteri(
+            GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE
+        )
+        GLES20.glTexParameteri(
+            GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE
+        )
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+        checkGl("text texture upload")
+        textProgram = buildProgramFor(TEXT_VERTEX_SHADER.trimIndent(), TEXT_FRAGMENT_SHADER.trimIndent())
+        textPositionHandle = GLES20.glGetAttribLocation(textProgram, "aPosition")
+        textCoordHandle = GLES20.glGetAttribLocation(textProgram, "aTextureCoord")
+        uSamplerHandle = GLES20.glGetUniformLocation(textProgram, "uSampler")
+        uAlphaHandle = GLES20.glGetUniformLocation(textProgram, "uAlpha")
+        val quad = SceneTextLayerLayout.ndcQuad(rect, outW, outH)
+            ?: throw RuntimeException("text NDC mapping failed")
+        textQuadBuffer = floatBufferOf(quad)
+        textAlpha = spec.alpha
+        textVisible = true
+        Log.i(TAG, "text layer ready: ${content.length} chars ${rect.width}x${rect.height}")
+    }
+
+    /**
+     * Draws the static text quad over the passthrough frame (GL thread).
+     * Blend is enabled for this draw only; per-frame state (buffers,
+     * texture unit) is fully re-specified, so passthrough draws before and
+     * after are unaffected.
+     */
+    private fun drawTextLocked() {
+        val quad = textQuadBuffer
+        val texCoords = texCoordBuffer
+        if (quad == null || texCoords == null || textProgram == 0 || textTextureId == 0) {
+            throw RuntimeException("text layer state missing")
+        }
+        GLES20.glUseProgram(textProgram)
+        quad.position(0)
+        GLES20.glVertexAttribPointer(textPositionHandle, 2, GLES20.GL_FLOAT, false, 0, quad)
+        GLES20.glEnableVertexAttribArray(textPositionHandle)
+        texCoords.position(0)
+        GLES20.glVertexAttribPointer(textCoordHandle, 2, GLES20.GL_FLOAT, false, 0, texCoords)
+        GLES20.glEnableVertexAttribArray(textCoordHandle)
+        GLES20.glUniform1f(uAlphaHandle, textAlpha)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textTextureId)
+        GLES20.glUniform1i(uSamplerHandle, 0)
+        GLES20.glEnable(GLES20.GL_BLEND)
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        GLES20.glDisable(GLES20.GL_BLEND)
+        GLES20.glDisableVertexAttribArray(textPositionHandle)
+        GLES20.glDisableVertexAttribArray(textCoordHandle)
+        checkGl("text draw")
+    }
+
+    private fun buildProgramFor(vertexSource: String, fragmentSource: String): Int {
+        val vertex = loadShader(GLES20.GL_VERTEX_SHADER, vertexSource)
+        val fragment = loadShader(GLES20.GL_FRAGMENT_SHADER, fragmentSource)
         val programId = GLES20.glCreateProgram()
         checkGl("glCreateProgram")
         if (programId == 0) throw RuntimeException("glCreateProgram failed")
@@ -517,6 +659,25 @@ internal class SceneCompositorGL(
             uniform samplerExternalOES uSampler;
             void main() {
               gl_FragColor = texture2D(uSampler, vTextureCoord);
+            }
+        """
+        private const val TEXT_VERTEX_SHADER = """
+            attribute vec4 aPosition;
+            attribute vec2 aTextureCoord;
+            varying vec2 vTextureCoord;
+            void main() {
+              gl_Position = aPosition;
+              vTextureCoord = aTextureCoord;
+            }
+        """
+        private const val TEXT_FRAGMENT_SHADER = """
+            precision mediump float;
+            varying vec2 vTextureCoord;
+            uniform sampler2D uSampler;
+            uniform float uAlpha;
+            void main() {
+              vec4 c = texture2D(uSampler, vTextureCoord);
+              gl_FragColor = vec4(c.rgb, c.a * uAlpha);
             }
         """
     }

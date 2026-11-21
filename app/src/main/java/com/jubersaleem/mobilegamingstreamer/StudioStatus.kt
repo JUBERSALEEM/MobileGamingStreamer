@@ -72,6 +72,10 @@ object BroadcastStatusMessages {
     /** Transitional encoder-ready line with the active profile label. */
     fun encoderReadyMessage(profileLabel: String): String =
         "Encoder ready • $profileLabel • Connecting…"
+
+    /** Loud single-shot notice when the scene path fails over to the default source. */
+    fun sceneFallbackMessage(reason: String): String =
+        "Scene source failed ($reason). Using ScreenSource fallback."
 }
 
 /**

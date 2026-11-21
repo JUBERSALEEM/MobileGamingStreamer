@@ -112,8 +112,16 @@ counted drop, skip draw) → fullscreen OES draw at output viewport →
 ## 7. Failure handling (no second recovery authority)
 
 - EGL/VD/surface init failure in `start()`: partial teardown, machine→FAILED,
-  rethrow — service `stopBroadcast(UNABLE_TO_START…)` via the existing path
-  (same as encoder-prepare failure today).
+  rethrow — then, if the scene source was requested and streaming was never
+  confirmed, the service retries ONCE with ScreenSource (loud
+  `VIDEO_SOURCE_FALLBACK` diagnostic — recorded in the retry session,
+  since the failed attempt publishes no terminal report — + status
+  message; pure
+  `VideoSourceFallbackPolicy`, unit-tested). The retry carries
+  `scene_source=false`, so fallback depth is at most one; a second failure
+  uses the existing `stopBroadcast(UNABLE_TO_START…)` terminal path. The
+  fallback never masks device validation: requested/selected/fallback lines
+  in Logcat show exactly which source served the session.
 - Per-frame exception (GL error, abandoned ST, swap failure): log, machine→
   FAILED (via `onRenderFailure`), slot completed, output freezes. A frozen
   source manifests as a video stall, which the EXISTING watchdog/stall path
@@ -163,9 +171,11 @@ service code.
 ## 10. Service seam (explicit opt-in, default unchanged)
 
 `RtmpBroadcastService` reads `EXTRA_SCENE_SOURCE` (default false) and
-selects `SceneSource(mediaProjection, dpi)` vs `ScreenSource(...)`, logging
-the active source. `MainActivity` forwards its own launch-intent extra (one
-line, default false). Production behavior (launcher tap, no extra) is
+selects `SceneSource(context, mediaProjection, sceneText?)` vs
+`ScreenSource(...)`,
+logging requested vs selected source (plus a `(scene fallback retry)` tag
+on the retry). `MainActivity` forwards its own launch-intent extra (one
+block, default false). Production behavior (launcher tap, no extra) is
 byte-identical; device validation runs via:
 
 ```

@@ -44,7 +44,8 @@ import com.pedro.encoder.input.sources.video.VideoSource
  */
 class SceneSource(
     context: Context,
-    private val mediaProjection: MediaProjection
+    private val mediaProjection: MediaProjection,
+    private val textContent: String? = null
 ) : VideoSource() {
 
     // Mirrors ScreenSource: dpi snapshot from context, context not retained.
@@ -79,7 +80,7 @@ class SceneSource(
         try {
             val output = Surface(librarySurfaceTexture)
             outputSurface = output
-            val gl = SceneCompositorGL(controller, output, activeLayout)
+            val gl = SceneCompositorGL(controller, output, activeLayout, textContent)
             compositor = gl
             val input = gl.start() // Latch-inits EGL + input endpoint; throws on failure.
             val callback = object : MediaProjection.Callback() {
@@ -99,8 +100,12 @@ class SceneSource(
                 input, null, gl.handlerForCallbacks
             ) ?: throw IllegalArgumentException("Failed to create scene virtual display")
             virtualDisplay = display
-            Log.i(TAG, "started: ${activeLayout.displayWidth}x${activeLayout.displayHeight} dpi=$densityDpi")
+            // Sanitized: text length only, never content.
+            Log.i(TAG, "started: ${activeLayout.displayWidth}x${activeLayout.displayHeight} dpi=$densityDpi" +
+                if (textContent.isNullOrBlank()) "" else " text=${textContent.length} chars")
         } catch (error: Throwable) {
+            // Sanitized: framework error text only, never URLs or keys.
+            Log.e(TAG, "SceneSource start failed (${error.message ?: error.javaClass.simpleName}); torn down", error)
             controller.onStartFailure()
             teardown()
             throw error
@@ -119,6 +124,7 @@ class SceneSource(
     override fun release() {
         controller.requestRelease() // Total from every state, idempotent.
         teardown() // No-op after stop(); cleans up after release-while-active.
+        Log.i(TAG, "released: fullyReleased=${controller.isFullyReleased}")
     }
 
     override fun isRunning(): Boolean = virtualDisplay != null
