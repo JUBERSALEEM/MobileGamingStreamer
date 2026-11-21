@@ -50,8 +50,10 @@ data class WatchdogDiagnosis(
  * - HEALTHY + NONE → `healthy_progress_continues` (AGREE)
  * - DEGRADED + NONE → `degraded_but_flowing` (AGREE: pressure, but flowing,
  *   explicitly not a failure)
- * - UNKNOWN + anything → `unknown_has_no_standing` (NO_EXPECTATION: UNKNOWN
- *   neither generates nor vetoes a stop)
+ * - UNKNOWN + anything except the timeout stop → `unknown_has_no_standing`
+ *   (NO_EXPECTATION: UNKNOWN neither generates nor vetoes a stop, and never
+ *   reads as episode vocabulary even inside an open reconnect episode; the
+ *   timeout stop keeps `deadline_expired`)
  * - STALLED + STOP_STALLED → `stall_corroborated` (AGREE, with the
  *   encoder/sender/transmission split in the details)
  * - STALLED + NONE while unconfirmed or reconnecting inside the deadline →
@@ -65,9 +67,10 @@ data class WatchdogDiagnosis(
  *   (NO_EXPECTATION: one-tick sampler lag after the episode ended)
  * - RECOVERING + STOP_STALLED → `recovering_but_stall_rule_fired`
  *   (DISAGREE: stale mirror, the stall rule fires on fresh inputs)
- * - Open unexpired episode + NONE + stale non-mirror health →
- *   `deadline_approaching` (NO_EXPECTATION: the episode clock is running;
- *   "approaching" reuses the existing episode bound, no new threshold)
+ * - Open unexpired episode + NONE + stale flowing health (HEALTHY or
+ *   DEGRADED) → `deadline_approaching` (NO_EXPECTATION: the episode clock is
+ *   running; "approaching" reuses the existing episode bound, no new
+ *   threshold; UNKNOWN keeps no-standing instead)
  * - STOP_RECONNECT_TIMEOUT + flowing health (HEALTHY/DEGRADED) →
  *   `deadline_authoritative_over_flowing` (DISAGREE: the deadline wins, a
  *   late healthy sample can never revive the episode)
@@ -142,6 +145,12 @@ fun diagnoseWatchdogTick(
         } else {
             details("recovering_mirror_stale", HealthAgreement.NO_EXPECTATION)
         }
+    }
+    // UNKNOWN has no standing anywhere: it must never read as episode
+    // vocabulary, even inside an open reconnect episode. Authoritative STOPs
+    // were already handled above and keep their own diagnoses.
+    if (health == StreamHealth.UNKNOWN) {
+        return details("unknown_has_no_standing", HealthAgreement.NO_EXPECTATION)
     }
     if (recoveryState.phase == StreamPhase.RECONNECTING) {
         // Open episode inside the deadline (an expired one would have stopped

@@ -80,6 +80,16 @@ class WatchdogHealthDiagnosisTest {
     }
 
     @Test
+    fun unknownReconnectingNoneHasNoStanding() {
+        // UNKNOWN inside an open episode must never read as episode
+        // vocabulary: no standing, and the NONE action echoes unchanged.
+        val d = diagnose(StreamHealth.UNKNOWN, episodeOpen, true, WatchdogAction.NONE)
+        assertEquals("unknown_has_no_standing", d.id)
+        assertEquals(HealthAgreement.NO_EXPECTATION, d.agreement)
+        assertEquals(WatchdogAction.NONE, d.action)
+    }
+
+    @Test
     fun stalledStopIsCorroborated() {
         val d = diagnose(
             StreamHealth.STALLED, live, true, WatchdogAction.STOP_STALLED,
