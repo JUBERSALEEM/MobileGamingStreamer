@@ -86,7 +86,10 @@ import com.jubersaleem.mobilegamingstreamer.scene.SceneTransitionType
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTransitions
 import com.jubersaleem.mobilegamingstreamer.scene.SceneSizePx
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTextLayerLayout
+import com.jubersaleem.mobilegamingstreamer.scene.ALL_SCENES_COLLECTION_ID
+import com.jubersaleem.mobilegamingstreamer.scene.SceneCollectionCodec
 import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
+import com.jubersaleem.mobilegamingstreamer.scene.StreamSceneCollection
 import com.jubersaleem.mobilegamingstreamer.scene.StreamSceneLayer
 import java.time.ZoneId
 import kotlinx.coroutines.delay
@@ -146,6 +149,14 @@ fun SceneEditorPage(
     onDuplicateScene: (String) -> Unit,
     onDeleteScene: (String) -> Unit,
     onRenameScene: (String, String) -> Unit,
+    sceneCollections: List<StreamSceneCollection>,
+    activeCollectionId: String,
+    onSelectCollection: (String) -> Unit,
+    onCreateCollection: () -> Unit,
+    onDeleteCollection: (String) -> Unit,
+    onRenameCollection: (String, String) -> Unit,
+    onAddSceneToActiveCollection: (String) -> Unit,
+    onRemoveSceneFromActiveCollection: (String) -> Unit,
     sceneTransition: SceneTransition,
     onSceneTransition: (SceneTransition) -> Unit,
     onSceneOrientation: (String, SceneDesignOrientation) -> Unit,
@@ -212,6 +223,19 @@ fun SceneEditorPage(
                 )
             }
         }
+        val viewingCustomCollection = activeCollectionId != ALL_SCENES_COLLECTION_ID
+        val visibleScenes = SceneCollectionCodec.scenesInCollection(
+            activeCollectionId, scenes, sceneCollections
+        )
+        CollectionCard(
+            scenes = scenes,
+            sceneCollections = sceneCollections,
+            activeCollectionId = activeCollectionId,
+            onSelectCollection = onSelectCollection,
+            onCreateCollection = onCreateCollection,
+            onDeleteCollection = onDeleteCollection,
+            onRenameCollection = onRenameCollection
+        )
         ClayButton(
             label = "CREATE NEW SCENE",
             onClick = onCreateScene,
@@ -223,7 +247,15 @@ fun SceneEditorPage(
             demoScene = scenes.firstOrNull { it.id == (editingSceneId ?: activeSceneId) },
             onChange = onSceneTransition
         )
-        scenes.forEach { scene ->
+        if (viewingCustomCollection && visibleScenes.isEmpty()) {
+            Text(
+                text = "This collection is empty. Add scenes below — they stay in All Scenes too.",
+                color = p.muted,
+                fontSize = 12.sp,
+                lineHeight = 18.sp
+            )
+        }
+        visibleScenes.forEach { scene ->
             SceneCard(
                 scene = scene,
                 isActive = scene.id == activeSceneId,
@@ -270,6 +302,16 @@ fun SceneEditorPage(
                 onLayerCornerRadius = onLayerCornerRadius,
                 onLayerShadowOffset = onLayerShadowOffset,
                 onLayerShadowColor = onLayerShadowColor,
+                showRemoveFromCollection = viewingCustomCollection,
+                onRemoveFromCollection = onRemoveSceneFromActiveCollection,
+            )
+        }
+        if (viewingCustomCollection) {
+            AddScenesCard(
+                scenes = scenes,
+                sceneCollections = sceneCollections,
+                activeCollectionId = activeCollectionId,
+                onAddScene = onAddSceneToActiveCollection
             )
         }
         Text(
@@ -278,6 +320,139 @@ fun SceneEditorPage(
             fontSize = 11.sp,
             lineHeight = 16.sp
         )
+    }
+}
+
+@Composable
+private fun CollectionCard(
+    scenes: List<StreamScene>,
+    sceneCollections: List<StreamSceneCollection>,
+    activeCollectionId: String,
+    onSelectCollection: (String) -> Unit,
+    onCreateCollection: () -> Unit,
+    onDeleteCollection: (String) -> Unit,
+    onRenameCollection: (String, String) -> Unit
+) {
+    val p = LocalMgsPalette.current
+    ClaySurface(shape = RoundedCornerShape(30.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            ClaySectionLabel("Collections")
+            Text(
+                text = "Collections are saved views over your scenes — switching never changes the live scene.",
+                color = p.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
+            CollectionRow(
+                name = "All Scenes",
+                count = scenes.size,
+                selected = activeCollectionId == ALL_SCENES_COLLECTION_ID,
+                onSelect = { onSelectCollection(ALL_SCENES_COLLECTION_ID) },
+                onDelete = null
+            )
+            sceneCollections.forEach { collection ->
+                val count = collection.sceneIds.count { id -> scenes.any { it.id == id } }
+                CollectionRow(
+                    name = collection.name,
+                    count = count,
+                    selected = collection.id == activeCollectionId,
+                    onSelect = { onSelectCollection(collection.id) },
+                    onDelete = { onDeleteCollection(collection.id) }
+                )
+                if (collection.id == activeCollectionId) {
+                    ClayTextField(
+                        value = collection.name,
+                        onValueChange = { onRenameCollection(collection.id, it) },
+                        label = "Collection name"
+                    )
+                }
+            }
+            ClayButton(
+                label = "NEW COLLECTION",
+                onClick = onCreateCollection,
+                modifier = Modifier.fillMaxWidth(),
+                icon = Icons.Rounded.Add
+            )
+        }
+    }
+}
+
+@Composable
+private fun CollectionRow(
+    name: String,
+    count: Int,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onDelete: (() -> Unit)?
+) {
+    ClayButtonRow {
+        ClayButton(
+            label = (if (selected) "✓ " else "") + name + " (" + count + ")",
+            onClick = onSelect,
+            modifier = Modifier.weight(1f),
+            style = if (selected) ClayButtonStyle.Filled else ClayButtonStyle.Raised
+        )
+        if (onDelete != null) {
+            ClayIconButton(
+                icon = Icons.Rounded.Delete,
+                contentDescription = "Delete " + name,
+                onClick = onDelete
+            )
+        }
+    }
+}
+
+@Composable
+private fun AddScenesCard(
+    scenes: List<StreamScene>,
+    sceneCollections: List<StreamSceneCollection>,
+    activeCollectionId: String,
+    onAddScene: (String) -> Unit
+) {
+    val collection = sceneCollections.firstOrNull { it.id == activeCollectionId } ?: return
+    val candidates = scenes.filterNot { collection.sceneIds.contains(it.id) }
+    if (candidates.isEmpty()) return
+    val p = LocalMgsPalette.current
+    ClaySurface(shape = RoundedCornerShape(30.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            ClaySectionLabel("Add to " + collection.name)
+            Text(
+                text = "Scenes stay in All Scenes too — collections only reference them.",
+                color = p.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
+            candidates.forEach { scene ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = scene.name,
+                        color = p.text,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    ClayButton(
+                        label = "ADD",
+                        onClick = { onAddScene(scene.id) },
+                        icon = Icons.Rounded.Add
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -294,6 +469,8 @@ private fun SceneCard(
     onDuplicateScene: (String) -> Unit,
     onDeleteScene: (String) -> Unit,
     onRenameScene: (String, String) -> Unit,
+    showRemoveFromCollection: Boolean,
+    onRemoveFromCollection: (String) -> Unit,
     onSceneOrientation: (String, SceneDesignOrientation) -> Unit,
     streamOrientation: String,
     broadcastActive: Boolean,
@@ -441,6 +618,17 @@ private fun SceneCard(
                     style = ClayButtonStyle.Raised,
                     icon = Icons.Rounded.Delete
                 )
+            }
+            if (showRemoveFromCollection) {
+                ClayButtonRow {
+                    ClayButton(
+                        label = "REMOVE FROM COLLECTION",
+                        onClick = { onRemoveFromCollection(scene.id) },
+                        modifier = Modifier.weight(1f),
+                        style = ClayButtonStyle.Raised,
+                        icon = Icons.Rounded.Close
+                    )
+                }
             }
         }
     }

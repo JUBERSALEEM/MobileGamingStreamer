@@ -22,19 +22,25 @@ import com.jubersaleem.mobilegamingstreamer.capture.MgsMicAccessibilityService
 import com.jubersaleem.mobilegamingstreamer.capture.RtmpBroadcastService
 import com.jubersaleem.mobilegamingstreamer.capture.ScreenCaptureService
 import com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService
+import com.jubersaleem.mobilegamingstreamer.scene.ALL_SCENES_COLLECTION_ID
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_COLLECTION_NAME_CHARS
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_SCENE_NAME_CHARS
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_STATIC_OVERLAY_LAYERS
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_STORED_COLLECTIONS
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_STORED_SCENES
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_STYLE_BORDER_PX
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_STYLE_RADIUS_PX
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_STYLE_SHADOW_PX
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_TEXT_LAYER_CHARS
+import com.jubersaleem.mobilegamingstreamer.scene.SceneCollectionCodec
+import com.jubersaleem.mobilegamingstreamer.scene.SceneCollectionStore
 import com.jubersaleem.mobilegamingstreamer.scene.SceneConfigCodec
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerKind
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
 import com.jubersaleem.mobilegamingstreamer.scene.SceneScaleMode
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTextLayerLayout
 import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
+import com.jubersaleem.mobilegamingstreamer.scene.StreamSceneCollection
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTransition
 import com.jubersaleem.mobilegamingstreamer.scene.StreamSceneLayer
 
@@ -72,6 +78,10 @@ class MainActivity : ComponentActivity() {
     private var editingSceneId by mutableStateOf<String?>(null)
     private var sceneDeleteTargetId by mutableStateOf<String?>(null)
     private var sceneError by mutableStateOf<String?>(null)
+    private var sceneCollections by mutableStateOf(listOf<StreamSceneCollection>())
+    private var activeCollectionId by mutableStateOf(ALL_SCENES_COLLECTION_ID)
+    private var defaultCollectionId by mutableStateOf(ALL_SCENES_COLLECTION_ID)
+    private var collectionDeleteTargetId by mutableStateOf<String?>(null)
     private var videoPaused by mutableStateOf(false)
     private var pendingImageSceneId: String? = null
     private var pendingVideoSceneId: String? = null
@@ -250,6 +260,14 @@ class MainActivity : ComponentActivity() {
         scenes = stored.scenes
         activeSceneId = stored.activeSceneId
         sceneTransition = ScenePrefsStore.loadTransition(this)
+        // K1: scenes load first (live scene untouched); collections
+        // resolve against the stored scene ids (absent keys → All).
+        val storedCollections = SceneCollectionStore(
+            getSharedPreferences(ScenePrefsStore.PREFS, MODE_PRIVATE)
+        ).load(scenes.map { it.id }.toSet())
+        sceneCollections = storedCollections.collections
+        activeCollectionId = storedCollections.activeCollectionId
+        defaultCollectionId = storedCollections.defaultCollectionId
         notificationsAllowed = Build.VERSION.SDK_INT < 33 ||
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         if (Build.VERSION.SDK_INT >= 33 && !notificationsAllowed) {
@@ -299,7 +317,10 @@ class MainActivity : ComponentActivity() {
                         editingSceneId = editingSceneId,
                         sceneDeleteTargetName = scenes.firstOrNull { it.id == sceneDeleteTargetId }?.name,
                         sceneError = sceneError,
-                        sceneTransition = sceneTransition
+                        sceneTransition = sceneTransition,
+                        sceneCollections = sceneCollections,
+                        activeCollectionId = activeCollectionId,
+                        collectionDeleteTargetName = sceneCollections.firstOrNull { it.id == collectionDeleteTargetId }?.name
                     ),
                     actions = StudioActions(
                         onPageChange = { target -> page = target },
@@ -374,6 +395,14 @@ class MainActivity : ComponentActivity() {
                         onConfirmDeleteScene = { confirmDeleteScene() },
                         onDismissDeleteScene = { sceneDeleteTargetId = null },
                         onRenameScene = { id, name -> renameScene(id, name) },
+                        onSelectCollection = { id -> selectCollection(id) },
+                        onCreateCollection = { createCollection() },
+                        onDeleteCollection = { id -> collectionDeleteTargetId = id },
+                        onConfirmDeleteCollection = { confirmDeleteCollection() },
+                        onDismissDeleteCollection = { collectionDeleteTargetId = null },
+                        onRenameCollection = { id, name -> renameCollection(id, name) },
+                        onAddSceneToActiveCollection = { id -> addSceneToActiveCollection(id) },
+                        onRemoveSceneFromActiveCollection = { id -> removeSceneFromActiveCollection(id) },
                         onSceneTransition = {
                             sceneTransition = it
                             ScenePrefsStore.saveTransition(this@MainActivity, it)
@@ -495,6 +524,21 @@ class MainActivity : ComponentActivity() {
         ScenePrefsStore.save(this, scenes, activeSceneId ?: "")
     }
 
+    private fun persistCollections() {
+        // Re-resolve through the pure save core so activity state
+        // stays canonical (unknown selections fall back, never linger).
+        val resolved = SceneCollectionCodec.resolveCollectionSave(
+            sceneCollections, activeCollectionId, defaultCollectionId,
+            scenes.map { it.id }.toSet()
+        )
+        sceneCollections = resolved.collections
+        activeCollectionId = resolved.activeCollectionId
+        defaultCollectionId = resolved.defaultCollectionId
+        SceneCollectionStore(
+            getSharedPreferences(ScenePrefsStore.PREFS, MODE_PRIVATE)
+        ).save(sceneCollections, activeCollectionId, defaultCollectionId, scenes.map { it.id }.toSet())
+    }
+
     private fun updateScene(id: String, transform: (StreamScene) -> StreamScene) {
         scenes = scenes.map { if (it.id == id) transform(it).normalizedZ() else it }
         persistScenes()
@@ -562,7 +606,11 @@ class MainActivity : ComponentActivity() {
         scenes = remaining
         if (remaining.none { it.id == activeSceneId }) activeSceneId = remaining.first().id
         if (editingSceneId == id) editingSceneId = null
+        // K1: the deleted scene's id leaves every collection (no
+        // dangling refs); other scenes and collections are untouched.
+        sceneCollections = SceneCollectionCodec.pruneScene(sceneCollections, id)
         persistScenes()
+        persistCollections()
     }
 
     private fun renameScene(id: String, name: String) {
@@ -572,6 +620,66 @@ class MainActivity : ComponentActivity() {
             if (it.id == id) it.copy(name = name.take(MAX_SCENE_NAME_CHARS)) else it
         }
         persistScenes()
+    }
+
+    // ---- K1 scene collections (views over global scenes) ----
+
+    private fun selectCollection(id: String) {
+        // View switch only: the live scene is never touched here (no
+        // scene update is pushed, the service is never contacted).
+        activeCollectionId = SceneCollectionCodec.resolveActiveCollection(
+            id, defaultCollectionId, sceneCollections
+        )
+        persistCollections()
+    }
+
+    private fun createCollection() {
+        val created = SceneCollectionCodec.createCollection(
+            sceneCollections,
+            SceneCollectionCodec.freshCollectionName(sceneCollections)
+        )
+        if (created == null) {
+            sceneError = "Collection limit reached ($MAX_STORED_COLLECTIONS). Delete a collection to add another."
+            return
+        }
+        sceneCollections = created
+        sceneError = null
+        persistCollections()
+    }
+
+    private fun renameCollection(id: String, name: String) {
+        // Raw transient text (blank allowed while typing); the codec
+        // repairs names on persist, so stored form is valid.
+        sceneCollections = sceneCollections.map {
+            if (it.id == id) it.copy(name = name.take(MAX_COLLECTION_NAME_CHARS)) else it
+        }
+        persistCollections()
+    }
+
+    private fun confirmDeleteCollection() {
+        // Reference lists only: deleting a collection NEVER deletes
+        // scenes — the scene store is untouched here.
+        val id = collectionDeleteTargetId ?: return
+        collectionDeleteTargetId = null
+        if (id == ALL_SCENES_COLLECTION_ID) return
+        sceneCollections = sceneCollections.filterNot { it.id == id }
+        persistCollections()
+    }
+
+    private fun addSceneToActiveCollection(sceneId: String) {
+        if (activeCollectionId == ALL_SCENES_COLLECTION_ID) return
+        sceneCollections = SceneCollectionCodec.addSceneToCollection(
+            sceneCollections, activeCollectionId, sceneId, scenes.map { it.id }.toSet()
+        )
+        persistCollections()
+    }
+
+    private fun removeSceneFromActiveCollection(sceneId: String) {
+        if (activeCollectionId == ALL_SCENES_COLLECTION_ID) return
+        sceneCollections = SceneCollectionCodec.removeSceneFromCollection(
+            sceneCollections, activeCollectionId, sceneId
+        )
+        persistCollections()
     }
 
     private fun addLayer(sceneId: String) {

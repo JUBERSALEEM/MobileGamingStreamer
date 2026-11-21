@@ -90,8 +90,8 @@ its acceptance criteria; shipping more fixed controls NEVER satisfies
 Phase K. No Phase K implementation has begun.
 
 ### K1 — Scene and collection management
-- [ ] Collections CRUD + scene membership; default/active scene semantics
-- [ ] Flat-store migration opens existing data unchanged (tested)
+- [x] Collections CRUD + scene membership; default/active scene semantics (COMPLETE — doc: docs/K1_SCENE_COLLECTIONS.md)
+- [x] Flat-store migration opens existing data unchanged (tested)
 
 ### K2 — Source and layer management
 - [ ] Reusable sources: one asset placed in N scenes, single identity

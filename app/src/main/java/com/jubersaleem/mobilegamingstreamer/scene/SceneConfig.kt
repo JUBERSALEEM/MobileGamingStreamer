@@ -495,7 +495,7 @@ internal object SceneConfigCodec {
         return name.take(MAX_SCENE_NAME_CHARS)
     }
 
-    private fun escape(raw: String): String {
+    internal fun escape(raw: String): String {
         val out = StringBuilder(raw.length)
         for (ch in raw) {
             when (ch) {
@@ -508,7 +508,7 @@ internal object SceneConfigCodec {
         return out.toString()
     }
 
-    private fun unescape(escaped: String): String? {
+    internal fun unescape(escaped: String): String? {
         val out = StringBuilder(escaped.length)
         var i = 0
         while (i < escaped.length) {

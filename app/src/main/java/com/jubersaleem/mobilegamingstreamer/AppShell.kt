@@ -37,7 +37,9 @@ import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerAnimation
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTransition
 import com.jubersaleem.mobilegamingstreamer.scene.SceneScaleMode
+import com.jubersaleem.mobilegamingstreamer.scene.ALL_SCENES_COLLECTION_ID
 import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
+import com.jubersaleem.mobilegamingstreamer.scene.StreamSceneCollection
 
 /** The clay navigation dock entries. */
 private val clayNavItems = listOf(
@@ -82,7 +84,10 @@ data class StudioUiState(
     val editingSceneId: String? = null,
     val sceneDeleteTargetName: String? = null,
     val sceneError: String? = null,
-    val sceneTransition: SceneTransition = SceneTransition.DEFAULT
+    val sceneTransition: SceneTransition = SceneTransition.DEFAULT,
+    val sceneCollections: List<StreamSceneCollection> = emptyList(),
+    val activeCollectionId: String = ALL_SCENES_COLLECTION_ID,
+    val collectionDeleteTargetName: String? = null
 )
 
 /** Callbacks the shell triggers, implemented by the activity. */
@@ -114,6 +119,14 @@ data class StudioActions(
     val onConfirmDeleteScene: () -> Unit = {},
     val onDismissDeleteScene: () -> Unit = {},
     val onRenameScene: (String, String) -> Unit = { _, _ -> },
+    val onSelectCollection: (String) -> Unit = { _ -> },
+    val onCreateCollection: () -> Unit = {},
+    val onDeleteCollection: (String) -> Unit = {},
+    val onConfirmDeleteCollection: () -> Unit = {},
+    val onDismissDeleteCollection: () -> Unit = {},
+    val onRenameCollection: (String, String) -> Unit = { _, _ -> },
+    val onAddSceneToActiveCollection: (String) -> Unit = {},
+    val onRemoveSceneFromActiveCollection: (String) -> Unit = {},
     val onSceneTransition: (SceneTransition) -> Unit = { _ -> },
     val onSceneOrientation: (String, com.jubersaleem.mobilegamingstreamer.scene.SceneDesignOrientation) -> Unit = { _, _ -> },
     val onAddLayer: (String) -> Unit = {},
@@ -175,6 +188,21 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
         ) {
             Text(
                 text = "Delete \"" + state.sceneDeleteTargetName + "\" and all its layers? This cannot be undone.",
+                color = palette.muted,
+                fontSize = 12.sp,
+                lineHeight = 18.sp
+            )
+        }
+    }
+    if (state.collectionDeleteTargetName != null) {
+        ClayDialog(
+            title = "Delete collection",
+            onDismiss = actions.onDismissDeleteCollection,
+            confirmLabel = "DELETE COLLECTION",
+            onConfirm = actions.onConfirmDeleteCollection
+        ) {
+            Text(
+                text = "Delete \"" + state.collectionDeleteTargetName + "\"? The scenes inside it stay in All Scenes — only the collection is removed.",
                 color = palette.muted,
                 fontSize = 12.sp,
                 lineHeight = 18.sp
@@ -291,6 +319,14 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
                         onDuplicateScene = actions.onDuplicateScene,
                         onDeleteScene = actions.onDeleteScene,
                         onRenameScene = actions.onRenameScene,
+                        sceneCollections = state.sceneCollections,
+                        activeCollectionId = state.activeCollectionId,
+                        onSelectCollection = actions.onSelectCollection,
+                        onCreateCollection = actions.onCreateCollection,
+                        onDeleteCollection = actions.onDeleteCollection,
+                        onRenameCollection = actions.onRenameCollection,
+                        onAddSceneToActiveCollection = actions.onAddSceneToActiveCollection,
+                        onRemoveSceneFromActiveCollection = actions.onRemoveSceneFromActiveCollection,
                         sceneTransition = state.sceneTransition,
                         onSceneTransition = actions.onSceneTransition,
                         onSceneOrientation = actions.onSceneOrientation,
