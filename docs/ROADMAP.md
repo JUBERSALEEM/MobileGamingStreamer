@@ -81,25 +81,54 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 - [x] Preserve the floating bubble, drag-to-dismiss, stream stop, bitrate presets, local speaker mute, stream-audio mute, and YouTube chat.
 - [ ] Validate layout, touch targets, overlay behaviour, and the clay-only surfaces on the Galaxy S25 Ultra.
 
-## Phase K — Direct-manipulation scene canvas (PLANNED — NOT STARTED)
+## Phase K — Custom Scene Studio (PLANNED — NOT STARTED)
 
-Recorded during J3 (fixed preset/timing controls are NOT this phase).
-Phase K replaces fixed sliders/buttons with a direct-manipulation
-canvas editor. It is complete ONLY when every item below works on the
-canvas itself; shipping more fixed controls NEVER satisfies Phase K.
+Recorded during J3, expanded in K0 (audit: docs/K0_ARCHITECTURE_AUDIT.md).
+Phase K builds a direct-manipulation canvas editor on the Phase J
+rendering engine. It is complete ONLY when every subphase below meets
+its acceptance criteria; shipping more fixed controls NEVER satisfies
+Phase K. No Phase K implementation has begun.
 
-- [ ] Tap-to-select layers directly on the canvas (selection chrome visible in editor only)
-- [ ] Drag-to-reposition the selected layer
-- [ ] Resize handles (corner/edge) with aspect behavior per layer kind
-- [ ] Rotation gesture/control about the layer center
-- [ ] Tap-to-edit text in place
-- [ ] On-canvas styling affordances (colors, border, shadow, opacity — same model as today)
-- [ ] Layer order / duplicate / delete / lock / visibility from the canvas
-- [ ] Canvas zoom + pan for precise placement on small screens
-- [ ] Editor-canvas to live-output coordinate mapping (what you place is what streams)
-- [ ] Portrait + landscape canvases (both Phase I canvas profiles)
-- [ ] Selection handles/badges NEVER appear in the streamed output
-- [ ] Geometry consistency: canvas placement matches GL renderer placement within rounding
+### K1 — Scene and collection management
+- [ ] Collections CRUD + scene membership; default/active scene semantics
+- [ ] Flat-store migration opens existing data unchanged (tested)
+
+### K2 — Source and layer management
+- [ ] Reusable sources: one asset placed in N scenes, single identity
+- [ ] Scene-local overrides; no accidental cross-scene mutation (tested)
+
+### K3 — Direct-manipulation canvas (incl. free-transform model)
+- [ ] Free transform (position/size/rotation) in layer/spec/resolve/codec v7
+- [ ] Tap-to-select (topmost), drag-to-move, canvas zoom + pan
+- [ ] Editor navigation unaffected; preview↔GL rect parity ≤ 1 px
+
+### K4 — Transform and property inspector
+- [ ] Corner/edge handles, rotation, numeric inspector, aspect per kind
+- [ ] Rotation renders identically in preview and GL; immediate updates
+
+### K5 — Layer organization
+- [ ] Order / duplicate / delete / lock / visibility, persisted
+- [ ] Locked layers reject canvas edits; groups only if model-clean
+
+### K6 — Independent portrait and landscape layouts
+- [ ] Per-orientation placements survive switches; sources shared
+- [ ] Both Phase I canvas profiles correct in preview and output
+
+### K7 — Themes, templates and presets
+- [ ] Templates instantiate real-model scenes (no hardcoded art)
+- [ ] User themes persist; template duplication and editing
+
+### K8 — Safe live editing and scene switching
+- [ ] Explicit push-live policy; invalid edits keep last-good stream
+- [ ] J5 isolation pins green; controls never in output
+
+### K9 — Widgets and stream interactions
+- [ ] Clock/timer (existing) in the source model; no per-tick allocs
+- [ ] Chat stays FUTURE (no chat data source exists); budgets unchanged
+
+### K10 — Persistence, import/export and regression
+- [ ] Import/export round-trips; corrupt-data recovery
+- [ ] Parity on all encoder profiles; full suite + perf pins green
 
 ## Phase 4 — Release-readiness engineering (0.5.17-dev)
 - [x] Add JVM tests for RTMP/RTMPS URL validation and malformed/unsupported destination rejection.
