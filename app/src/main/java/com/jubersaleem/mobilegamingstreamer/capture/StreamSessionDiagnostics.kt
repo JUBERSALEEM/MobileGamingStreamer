@@ -27,20 +27,38 @@ object DiagnosticEventId {
     const val SERVICE_DESTROYED = "service_destroyed"
 }
 
-private val RtmpUrlPattern = Regex("rtmps?://\\S+")
+private val RtmpUrlPattern = Regex("(?i)rtmps?://\\S+")
 private val SecretAssignmentPattern =
-    Regex("(?i)\\b(key|password|passwd|secret|token)\\b\\s*[:=]\\s*\\S+")
+    Regex("(?i)\\b([\\w-]*key|password|passwd|secret|token)\\s*[\"']?\\s*[:=]\\s*(\"[^\"]*\"|'[^']*'|\\S+)")
 
 /**
  * Redact credentials and connection secrets from diagnostic text. RTMP(S)
  * URLs (whose path carries the stream key) collapse to a placeholder, as do
- * `key=`/`password=`-style assignments. Applied to every recorded detail at
- * the [StreamSessionDiagnostics.record] boundary, so no call site can leak by
+ * `key=`/`password=`/`token=`-style assignments, including `stream_key` /
+ * `streamKey` spellings and quoted JSON-style values (which may contain
+ * spaces). Applied to every recorded detail at the
+ * [StreamSessionDiagnostics.record] boundary, so no call site can leak by
  * omission. Pure function with no Android dependencies.
  */
 fun sanitizeDiagnosticText(text: String): String =
     RtmpUrlPattern.replace(text, "<url-redacted>")
         .let { SecretAssignmentPattern.replace(it, "$1=<redacted>") }
+
+/**
+ * Run one diagnostic action (recording, report building) so an ordinary
+ * failure can never propagate into streaming control flow. Only
+ * [Exception] is contained; fatal [Error]s are never caught. The service
+ * routes every diagnostic call through this guard; recording sites that must
+ * precede a terminal report keep their order and rely on this isolation
+ * instead of reordering. Pure inline helper with no Android dependencies.
+ */
+inline fun guardDiagnosticAction(block: () -> Unit) {
+    try {
+        block()
+    } catch (_: Exception) {
+        // Diagnostics must never break streaming.
+    }
+}
 
 /**
  * Session-aware diagnostic event log with a terminal report builder
@@ -72,6 +90,13 @@ class StreamSessionDiagnostics {
          * transitions while bounding memory.
          */
         const val MAX_EVENTS = 64
+
+        /**
+         * Longest stored detail, in characters. Ordinary error messages are
+         * far shorter; anything longer truncates with a marker so one
+         * pathological callback cannot bloat the log or the terminal report.
+         */
+        const val MAX_DETAIL_LENGTH = 512
     }
 
     /** True once a session opened; recording before that is dropped. */
@@ -92,11 +117,12 @@ class StreamSessionDiagnostics {
     /**
      * Record one incident when [token] matches the current session.
      * Returns false (recording nothing) before any session opened or for a
-     * stale token. [detail] is always sanitized before storage.
+     * stale token. [detail] is always sanitized and length-bounded before
+     * storage.
      */
     fun record(token: Long, id: String, detail: String, nowMs: Long): Boolean {
         if (!hasSession || token != sessionToken) return false
-        events.addLast(DiagnosticEvent(id, sanitizeDiagnosticText(detail), nowMs))
+        events.addLast(DiagnosticEvent(id, boundDetailLength(sanitizeDiagnosticText(detail)), nowMs))
         while (events.size > MAX_EVENTS) events.removeFirst()
         return true
     }
@@ -125,7 +151,7 @@ class StreamSessionDiagnostics {
             .ifEmpty { "none observed" }
         val lines = StringBuilder()
         lines.appendLine("Session $sessionToken • ${durationSec}s • $phase/$health")
-        lines.appendLine("Reason: ${sanitizeDiagnosticText(reason)}")
+        lines.appendLine("Reason: ${boundDetailLength(sanitizeDiagnosticText(reason))}")
         lines.appendLine("Attempts used: $attemptsUsed • stale posts rejected: $staleDropped")
         lines.appendLine("Health: $transitions")
         if (events.isEmpty()) {
@@ -140,4 +166,11 @@ class StreamSessionDiagnostics {
         }
         return lines.toString()
     }
+
+    private fun boundDetailLength(detail: String): String =
+        if (detail.length > MAX_DETAIL_LENGTH) {
+            detail.take(MAX_DETAIL_LENGTH) + "…[truncated]"
+        } else {
+            detail
+        }
 }
