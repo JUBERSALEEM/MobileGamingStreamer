@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Base64
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import java.nio.ByteBuffer
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -17,17 +16,13 @@ internal object StreamKeyVault {
     private const val PREFS_NAME = "mgs_secure_storage"
     private const val PREF_STREAM_KEY = "encrypted_stream_key"
     private const val GCM_TAG_BITS = 128
-    private const val GCM_IV_BYTES = 12
 
     fun save(context: Context, value: String) {
         require(value.isNotBlank()) { "Stream key cannot be blank" }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
         val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-        val payload = ByteBuffer.allocate(cipher.iv.size + encrypted.size)
-            .put(cipher.iv)
-            .put(encrypted)
-            .array()
+        val payload = packVaultPayload(cipher.iv, encrypted)
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(PREF_STREAM_KEY, Base64.encodeToString(payload, Base64.NO_WRAP))
@@ -39,10 +34,9 @@ internal object StreamKeyVault {
             .getString(PREF_STREAM_KEY, null) ?: return null
         return try {
             val payload = Base64.decode(encoded, Base64.NO_WRAP)
-            require(payload.size > GCM_IV_BYTES) { "Stored stream key payload is invalid" }
-            val buffer = ByteBuffer.wrap(payload)
-            val iv = ByteArray(GCM_IV_BYTES).also(buffer::get)
-            val encrypted = ByteArray(buffer.remaining()).also(buffer::get)
+            val (iv, encrypted) = requireNotNull(unpackVaultPayload(payload)) {
+                "Stored stream key payload is invalid"
+            }
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
             cipher.doFinal(encrypted).toString(Charsets.UTF_8).takeIf { it.isNotBlank() }
