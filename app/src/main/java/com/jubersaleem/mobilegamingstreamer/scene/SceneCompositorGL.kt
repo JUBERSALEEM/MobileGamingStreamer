@@ -1378,6 +1378,7 @@ internal class SceneCompositorGL(
             return true
         } catch (t: Exception) {
             Log.w(TAG, "overlay video build failed: ${spec.id}", t)
+            return false
         } finally {
             if (!success) abandonVideoSlotLocked(slot)
         }
@@ -1529,7 +1530,7 @@ internal class SceneCompositorGL(
             slot.videoPendingFrame = false
             try {
                 surfaceTexture.updateTexImage()
-                surfaceTexture.getTransformMatrix(slot.videoStMatrix, 0)
+                surfaceTexture.getTransformMatrix(slot.videoStMatrix)
                 slot.videoHasFrame = true
             } catch (e: RuntimeException) {
                 Log.e(TAG, "video latch failed: ${slot.spec?.id}", e)
