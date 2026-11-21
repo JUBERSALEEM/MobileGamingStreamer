@@ -19,18 +19,22 @@ class StudioStatusTest {
     fun startingPhaseWinsOverStaleText() {
         assertEquals(
             BroadcastStatusKind.STARTING,
-            classifyBroadcastStatus("Encoder ready • 1080p @ 30fps • Connecting…", active = false, starting = true)
+            classifyBroadcastStatus(
+                BroadcastStatusMessages.encoderReadyMessage("1080p @ 30fps"),
+                active = false,
+                starting = true
+            )
         )
     }
 
     @Test
     fun failureMessagesSurfaceAsError() {
         listOf(
-            "Connection failed: auth error. Open the app and tap GO LIVE to grant a fresh screen-capture session and retry.",
-            "Stream authentication failed. Check the stream key.",
-            "Invalid stream setup",
-            "Unable to start: encoder error",
-            "Stream output stalled for 20 seconds. Check your network, then tap GO LIVE and approve a fresh screen-capture session."
+            com.jubersaleem.mobilegamingstreamer.capture.StreamConnectionPolicy.terminalFailureMessage("auth error"),
+            BroadcastStatusMessages.AUTH_FAILED,
+            BroadcastStatusMessages.INVALID_SETUP,
+            BroadcastStatusMessages.UNABLE_TO_START_PREFIX + "encoder error",
+            BroadcastStatusMessages.STALL_STOP
         ).forEach { message ->
             assertEquals(message, BroadcastStatusKind.ERROR, classifyBroadcastStatus(message, active = false, starting = false))
         }
@@ -38,9 +42,12 @@ class StudioStatusTest {
 
     @Test
     fun idleMessagesStayStandby() {
+        // BroadcastStatusMessages.STOPPED is the service line; the rest are
+        // UI-owned initial texts that the generic classifier must also keep
+        // on standby.
         listOf(
             "Ready to stream",
-            "Broadcast stopped",
+            BroadcastStatusMessages.STOPPED,
             "Capture stopped",
             "Broadcast setup ready",
             "Previous broadcast ended unexpectedly"
@@ -52,12 +59,12 @@ class StudioStatusTest {
     @Test
     fun startingKeywordsAreDetected() {
         listOf(
-            "Preparing video encoder…",
-            "Encoder ready • 1080p @ 30fps • Connecting…",
-            "Connecting to streaming server…",
-            "RTMP connected • Waiting for video frames",
-            "Connected • Waiting for outgoing video",
-            "Stream key accepted",
+            BroadcastStatusMessages.PREPARING_ENCODER,
+            BroadcastStatusMessages.encoderReadyMessage("1080p @ 30fps"),
+            BroadcastStatusMessages.CONNECTING,
+            BroadcastStatusMessages.RTMP_CONNECTED_WAITING,
+            BroadcastStatusMessages.CONNECTED_WAITING,
+            BroadcastStatusMessages.KEY_ACCEPTED,
             "60 FPS unavailable — continuing at 30"
         ).forEach { message ->
             assertTrue(message, isStartingBroadcastMessage(message))
@@ -66,7 +73,7 @@ class StudioStatusTest {
 
     @Test
     fun steadyMessagesAreNotStarting() {
-        listOf("Ready to stream", "LIVE • 8123 kbps", "Broadcast stopped").forEach { message ->
+        listOf("Ready to stream", "LIVE • 8123 kbps", BroadcastStatusMessages.STOPPED).forEach { message ->
             assertFalse(message, isStartingBroadcastMessage(message))
         }
     }
@@ -76,7 +83,7 @@ class StudioStatusTest {
         listOf(
             com.jubersaleem.mobilegamingstreamer.capture.StreamConnectionPolicy.reconnectMessage(1),
             com.jubersaleem.mobilegamingstreamer.capture.StreamConnectionPolicy.reconnectMessage(5),
-            "Reconnected • Waiting for video frames"
+            BroadcastStatusMessages.RECONNECTED_WAITING
         ).forEach { message ->
             assertTrue(message, isStartingBroadcastMessage(message))
             assertEquals(
@@ -106,6 +113,60 @@ class StudioStatusTest {
             BroadcastStatusKind.ERROR,
             classifyBroadcastStatus(terminal, active = false, starting = false)
         )
+    }
+
+    /**
+     * Pins the complete intended terminal-status set against the actual
+     * production lines: every message the service or policy can publish as
+     * a session's final status, with its expected classification. Disconnect,
+     * projection loss and the plain/destroy stops intentionally read as
+     * standby (preserved behavior); failures read as error.
+     */
+    @Test
+    fun terminalStatusSetIsPinned() {
+        val policy = com.jubersaleem.mobilegamingstreamer.capture.StreamConnectionPolicy
+        val expected = mapOf(
+            BroadcastStatusMessages.STARTUP_TIMEOUT_STOP to BroadcastStatusKind.ERROR,
+            BroadcastStatusMessages.STALL_STOP to BroadcastStatusKind.ERROR,
+            BroadcastStatusMessages.DISCONNECTED to BroadcastStatusKind.STANDBY,
+            BroadcastStatusMessages.AUTH_FAILED to BroadcastStatusKind.ERROR,
+            policy.PROJECTION_ENDED_MESSAGE to BroadcastStatusKind.STANDBY,
+            policy.exhaustedMessage() to BroadcastStatusKind.ERROR,
+            policy.terminalFailureMessage("No response from server") to BroadcastStatusKind.ERROR,
+            BroadcastStatusMessages.UNABLE_TO_START_PREFIX + "encoder error" to BroadcastStatusKind.ERROR,
+            BroadcastStatusMessages.INVALID_SETUP to BroadcastStatusKind.ERROR,
+            BroadcastStatusMessages.STOPPED to BroadcastStatusKind.STANDBY,
+            BroadcastStatusMessages.SERVICE_STOPPED to BroadcastStatusKind.STANDBY
+        )
+        assertEquals(11, expected.size)
+        expected.forEach { (message, kind) ->
+            assertEquals(message, kind, classifyBroadcastStatus(message, active = false, starting = false))
+        }
+    }
+
+    /** Legitimate non-terminal lines keep their starting/standby behavior. */
+    @Test
+    fun nonTerminalStatusesBehave() {
+        listOf(
+            BroadcastStatusMessages.PREPARING_ENCODER,
+            BroadcastStatusMessages.encoderReadyMessage("720p @ 30fps"),
+            BroadcastStatusMessages.CONNECTING,
+            BroadcastStatusMessages.RTMP_CONNECTED_WAITING,
+            BroadcastStatusMessages.RECONNECTED_WAITING,
+            BroadcastStatusMessages.CONNECTED_WAITING,
+            BroadcastStatusMessages.KEY_ACCEPTED
+        ).forEach { message ->
+            assertTrue(message, isStartingBroadcastMessage(message))
+            assertEquals(
+                message, BroadcastStatusKind.STARTING,
+                classifyBroadcastStatus(message, active = false, starting = true)
+            )
+        }
+        assertEquals(
+            BroadcastStatusKind.STANDBY,
+            classifyBroadcastStatus(BroadcastStatusMessages.NO_ACTIVE_STREAM, active = false, starting = false)
+        )
+        assertFalse(BroadcastStatusMessages.NO_ACTIVE_STREAM, isStartingBroadcastMessage(BroadcastStatusMessages.NO_ACTIVE_STREAM))
     }
 
     @Test

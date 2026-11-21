@@ -25,6 +25,7 @@ import android.media.AudioDeviceInfo
 import android.util.Log
 import android.view.WindowManager
 import com.jubersaleem.mobilegamingstreamer.AudioRouteLabels
+import com.jubersaleem.mobilegamingstreamer.BroadcastStatusMessages
 import com.jubersaleem.mobilegamingstreamer.MainActivity
 import com.jubersaleem.mobilegamingstreamer.StreamUrlValidator
 import com.pedro.common.ConnectChecker
@@ -53,7 +54,7 @@ class RtmpBroadcastService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val startupTimeout = Runnable {
         if (display != null && recoveryDriver.isStartupBoundActive(streamingConfirmed)) {
-            stopBroadcast("No outgoing video bitrate after 25 seconds. Encoder or RTMP startup failed.")
+            stopBroadcast(BroadcastStatusMessages.STARTUP_TIMEOUT_STOP)
         }
     }
     // Socket-only recovery: re-establishes the RTMP connection through
@@ -154,7 +155,7 @@ class RtmpBroadcastService : Service() {
                 action
             }) {
                 WatchdogAction.STOP_STALLED -> {
-                    stopBroadcast("Stream output stalled for 20 seconds. Check your network, then tap GO LIVE and approve a fresh screen-capture session.")
+                    stopBroadcast(BroadcastStatusMessages.STALL_STOP)
                     return
                 }
                 WatchdogAction.STOP_RECONNECT_TIMEOUT -> {
@@ -211,7 +212,7 @@ class RtmpBroadcastService : Service() {
             active.setVideoBitrateOnFly(requested)
             update("LIVE • Target bitrate " + (requested / 1000) + " kbps")
         } else {
-            publishState(false, "No active stream to adjust", 0L)
+            publishState(false, BroadcastStatusMessages.NO_ACTIVE_STREAM, 0L)
         }
     }
 
@@ -244,13 +245,13 @@ class RtmpBroadcastService : Service() {
         val resultData = parcelableIntent(intent, EXTRA_RESULT_DATA)
         val streamUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
         if (resultData == null || !StreamUrlValidator.isValidRtmpServerUrl(streamUrl)) {
-            publishState(false, "Invalid stream setup", 0L)
+            publishState(false, BroadcastStatusMessages.INVALID_SETUP, 0L)
             stopSelf()
             return
         }
         val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE) ?: AUDIO_MODE_BALANCED
         val usesMicrophone = audioMode != AUDIO_MODE_GAME
-        publishState(false, "Preparing video encoder…", 0L)
+        publishState(false, BroadcastStatusMessages.PREPARING_ENCODER, 0L)
         try {
             startForeground(
                 NOTIFICATION_ID,
@@ -266,7 +267,7 @@ class RtmpBroadcastService : Service() {
         val checker = object : ConnectChecker {
                 override fun onConnectionStarted(url: String) {
                     if (!callbackRouter.onConnectionStarted(sessionToken, stopping)) return
-                    update("Connecting to streaming server…")
+                    update(BroadcastStatusMessages.CONNECTING)
                 }
                 override fun onConnectionSuccess() {
                     when (callbackRouter.onConnectionSuccess(sessionToken, stopping, SystemClock.elapsedRealtime())) {
@@ -286,11 +287,11 @@ class RtmpBroadcastService : Service() {
                                 handler.removeCallbacks(startupTimeout)
                                 handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
                             }
-                            update("Reconnected • Waiting for video frames")
+                            update(BroadcastStatusMessages.RECONNECTED_WAITING)
                             recordDiagnostic(DiagnosticEventId.RECOVERY_SUCCEEDED,
                                 "socket re-established within the deadline")
                         }
-                        SuccessOutcome.CONNECTED -> update("RTMP connected • Waiting for video frames")
+                        SuccessOutcome.CONNECTED -> update(BroadcastStatusMessages.RTMP_CONNECTED_WAITING)
                         // Strict deadline: a late success revives nothing. The
                         // stop path below tears down even the late-connected
                         // socket; no LIVE is published and no budget is reset.
@@ -347,7 +348,7 @@ class RtmpBroadcastService : Service() {
                         Log.w(TAG, "Error releasing disconnected stream", error)
                     }
                     releaseProjection()
-                    val terminalMessage = "Broadcast disconnected. Tap GO LIVE to start a fresh capture session."
+                    val terminalMessage = BroadcastStatusMessages.DISCONNECTED
                     recordDiagnostic(DiagnosticEventId.STREAM_STOPPED, terminalMessage)
                     logTerminalReport(terminalMessage)
                     publishState(false, terminalMessage, 0L)
@@ -360,11 +361,11 @@ class RtmpBroadcastService : Service() {
                 override fun onAuthError() {
                     if (!callbackRouter.onAuthError(sessionToken)) return
                     recordDiagnostic(DiagnosticEventId.AUTH_FAILED, "server rejected the stream key")
-                    stopBroadcast("Stream authentication failed. Check the stream key.")
+                    stopBroadcast(BroadcastStatusMessages.AUTH_FAILED)
                 }
                 override fun onAuthSuccess() {
                     if (!callbackRouter.onAuthSuccess(sessionToken, stopping)) return
-                    update("Stream key accepted")
+                    update(BroadcastStatusMessages.KEY_ACCEPTED)
                 }
                 override fun onNewBitrate(bitrate: Long) {
                     // Bitrate ticks during a reconnect episode carry no signal:
@@ -376,7 +377,7 @@ class RtmpBroadcastService : Service() {
                         BitrateRouting.None -> { }
                         BitrateRouting.Zero -> {
                             lastBitrate = 0L
-                            update("Connected • Waiting for outgoing video", 0L)
+                            update(BroadcastStatusMessages.CONNECTED_WAITING, 0L)
                         }
                         is BitrateRouting.Positive -> {
                             val firstConfirmation = routing.firstConfirmation
@@ -426,7 +427,7 @@ class RtmpBroadcastService : Service() {
                 override fun onStop() {
                     handler.post {
                         if (callbackRouter.onProjectionStop(sessionToken, display != null)) {
-                            stopBroadcast("Screen capture permission ended")
+                            stopBroadcast(StreamConnectionPolicy.PROJECTION_ENDED_MESSAGE)
                         }
                     }
                 }
@@ -514,8 +515,8 @@ class RtmpBroadcastService : Service() {
             }
             handler.removeCallbacks(sessionHeartbeat)
             handler.post(sessionHeartbeat)
-            publishState(false, "Encoder ready • $activeProfileLabel • Connecting…", 0L)
-            update("Encoder ready • $activeProfileLabel • Connecting…")
+            publishState(false, BroadcastStatusMessages.encoderReadyMessage(activeProfileLabel), 0L)
+            update(BroadcastStatusMessages.encoderReadyMessage(activeProfileLabel))
             // Library-level backstop for the policy above: RootEncoder refuses
             // further reTry calls once this counter is consumed, so the two
             // bounds always agree even if a callback arrives unexpectedly.
@@ -527,7 +528,7 @@ class RtmpBroadcastService : Service() {
             Log.i(TAG, "RTMP broadcast requested: $activeProfileLabel, orientation=${if (portrait) "PORTRAIT" else "LANDSCAPE"}, audio=$audioMode, dpi=$dpi")
         } catch (error: Exception) {
             Log.e(TAG, "Unable to start RTMP broadcast", error)
-            stopBroadcast("Unable to start: ${error.message ?: "encoder error"}")
+            stopBroadcast(BroadcastStatusMessages.UNABLE_TO_START_PREFIX + (error.message ?: "encoder error"))
         }
     }
 
@@ -568,7 +569,7 @@ class RtmpBroadcastService : Service() {
         }
     }
 
-    private fun stopBroadcast(message: String = "Broadcast stopped") {
+    private fun stopBroadcast(message: String = BroadcastStatusMessages.STOPPED) {
         if (stopping) return
         stopping = true
         handler.removeCallbacks(startupTimeout)
@@ -741,7 +742,7 @@ class RtmpBroadcastService : Service() {
         // (or the last live state when the system kills an active session)
         // instead of UNKNOWN. Same message scope as before; only the health
         // extra keeps its terminal value.
-        val destroyMessage = "Broadcast service stopped"
+        val destroyMessage = BroadcastStatusMessages.SERVICE_STOPPED
         recordDiagnostic(DiagnosticEventId.SERVICE_DESTROYED, destroyMessage)
         logTerminalReport(destroyMessage)
         publishState(false, destroyMessage, 0L)

@@ -39,6 +39,42 @@ fun isStartingBroadcastMessage(message: String): Boolean =
     STARTING_KEYWORDS.any { message.contains(it, ignoreCase = true) }
 
 /**
+ * Authoritative service status lines (Phase G1). The broadcast service
+ * publishes exactly these strings — never a copied literal — so the
+ * classifier above and its tests always judge the real user-facing wording.
+ * Dynamic per-tick lines (LIVE bitrate/fps, target bitrate) are not part of
+ * this contract: they classify through the live flag, not their text. The
+ * capture-permission line stays owned by
+ * [com.jubersaleem.mobilegamingstreamer.capture.StreamConnectionPolicy.PROJECTION_ENDED_MESSAGE],
+ * which the service references directly instead of duplicating.
+ *
+ * Pure Kotlin with no Android dependencies.
+ */
+object BroadcastStatusMessages {
+    const val STARTUP_TIMEOUT_STOP =
+        "No outgoing video bitrate after 25 seconds. Encoder or RTMP startup failed."
+    const val STALL_STOP =
+        "Stream output stalled for 20 seconds. Check your network, then tap GO LIVE and approve a fresh screen-capture session."
+    const val NO_ACTIVE_STREAM = "No active stream to adjust"
+    const val INVALID_SETUP = "Invalid stream setup"
+    const val PREPARING_ENCODER = "Preparing video encoder…"
+    const val CONNECTING = "Connecting to streaming server…"
+    const val RECONNECTED_WAITING = "Reconnected • Waiting for video frames"
+    const val RTMP_CONNECTED_WAITING = "RTMP connected • Waiting for video frames"
+    const val DISCONNECTED = "Broadcast disconnected. Tap GO LIVE to start a fresh capture session."
+    const val AUTH_FAILED = "Stream authentication failed. Check the stream key."
+    const val KEY_ACCEPTED = "Stream key accepted"
+    const val CONNECTED_WAITING = "Connected • Waiting for outgoing video"
+    const val STOPPED = "Broadcast stopped"
+    const val SERVICE_STOPPED = "Broadcast service stopped"
+    const val UNABLE_TO_START_PREFIX = "Unable to start: "
+
+    /** Transitional encoder-ready line with the active profile label. */
+    fun encoderReadyMessage(profileLabel: String): String =
+        "Encoder ready • $profileLabel • Connecting…"
+}
+
+/**
  * Displayed product version. This must match `versionName` in
  * `app/build.gradle.kts`; `scripts/verify_release_readiness.py` enforces it
  * so the in-app build badge and legal pages can never drift from the release.
