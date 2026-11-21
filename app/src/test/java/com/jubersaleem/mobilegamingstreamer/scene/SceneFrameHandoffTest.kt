@@ -7,6 +7,15 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import java.lang.reflect.Modifier
+
+/**
+ * Same-package forged handle: permitted by the sealed-subclass rule, but must
+ * be inert — complete() only accepts the window's private implementation.
+ * If this declaration ever stops compiling, the sealed boundary got
+ * stronger, not weaker; see forgedSamePackageCompletionRejected.
+ */
+private class ForgedCompletion : SceneFrameWindow.Completion
 
 /**
  * Deterministic tests for the H1 frame-handoff primitives. Every test drives
@@ -193,7 +202,7 @@ class SceneFrameHandoffTest {
         // Interleaved offers, completions, and rejections: bound holds.
         val other = SceneFrameWindow(1)
         val foreign = other.offer(SceneFrameMetadata(100L, 1L))!!
-        val live = mutableListOf<SceneFrameCompletion>()
+        val live = mutableListOf<SceneFrameWindow.Completion>()
         repeat(20) { step ->
             val offered = window.offer(SceneFrameMetadata(1000L + step, step.toLong()))
             if (offered != null) {
@@ -245,7 +254,7 @@ class SceneFrameHandoffTest {
     fun windowDeterministic() {
         fun runScript(): SceneFrameWindow {
             val window = SceneFrameWindow(3)
-            val live = mutableListOf<SceneFrameCompletion>()
+            val live = mutableListOf<SceneFrameWindow.Completion>()
             for (seq in 1L..10L) {
                 val handle = window.offer(SceneFrameMetadata(seq, seq * 10L))
                 if (handle != null) live.add(handle)
@@ -275,6 +284,45 @@ class SceneFrameHandoffTest {
         assertEquals(0, window.inFlight)
         assertEquals(0L, window.acceptedCount)
         assertEquals(5L, window.droppedCount)
+    }
+
+    // ---- Mint boundary (compile-time encapsulation, pinned at runtime) ----
+
+    @Test
+    fun completionImplIsSingleAndPrivate() {
+        val completionType = SceneFrameWindow.Completion::class.java
+        // The interface itself exposes no callable surface.
+        assertTrue(completionType.declaredMethods.isEmpty())
+        // Exactly one implementation exists in the window, and it is private:
+        // no other caller can name the type to construct or consume it.
+        val impls = SceneFrameWindow::class.java.declaredClasses
+            .filter { !it.isSynthetic && !it.isInterface && completionType.isAssignableFrom(it) }
+        assertEquals(1, impls.size)
+        assertTrue(Modifier.isPrivate(impls[0].modifiers))
+    }
+
+    @Test
+    fun offerIsOnlyMinterOfCompletion() {
+        val completionType = SceneFrameWindow.Completion::class.java
+        val minters = SceneFrameWindow::class.java.declaredMethods
+            .filter { it.returnType == completionType }
+        assertEquals(1, minters.size)
+        assertEquals("offer", minters[0].name)
+    }
+
+    @Test
+    fun forgedSamePackageCompletionRejected() {
+        // Even a same-package forged implementation (permitted by the sealed
+        // rule) is inert: complete() only accepts the window's own private
+        // implementation minted by offer().
+        val window = SceneFrameWindow(1)
+        val handle = window.offer(SceneFrameMetadata(1L, 10L))!!
+        assertFalse(window.complete(ForgedCompletion()))
+        assertEquals(1, window.inFlight)
+        assertEquals(1L, window.acceptedCount)
+        assertEquals(0L, window.droppedCount)
+        assertTrue(window.complete(handle))
+        assertEquals(0, window.inFlight)
     }
 
     // ---- Release guard ----

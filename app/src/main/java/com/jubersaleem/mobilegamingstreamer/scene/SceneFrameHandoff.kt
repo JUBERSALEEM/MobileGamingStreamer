@@ -12,7 +12,8 @@ package com.jubersaleem.mobilegamingstreamer.scene
  * - [SceneFrameMetadata]: frame identity (sequence + capture timestamp).
  * - [SceneFrameWindow]: bounded in-flight slots with drop-newest backpressure,
  *   exact accepted/dropped accounting, and single-use completion handles.
- * - [SceneFrameCompletion]: unforgeable, owner-bound, single-use slot token.
+ * - [SceneFrameWindow.Completion]: sealed completion-handle type whose only
+ *   implementation is private to the window — unforgeable by any caller.
  * - [SceneReleaseGuard]: exactly-once teardown execution.
  *
  * Deliberately NOT here: frame payloads (pixels/textures/buffers need Android
@@ -34,58 +35,21 @@ internal data class SceneFrameMetadata(val sequence: Long, val timestampNs: Long
 }
 
 /**
- * Single-use completion handle for one accepted frame. Each accepted offer
- * mints exactly one handle; each handle releases its slot at most once.
- *
- * Accidental reuse is prevented structurally, not by convention:
- * - Unforgeable: the constructor is private; only [SceneFrameWindow.offer]
- *   mints handles, and dropped offers receive null instead of a handle.
- * - Owner-bound: a handle releases a slot only when presented to the window
- *   that minted it (referential check — a foreign handle is inert).
- * - Single-use: a consumed flag makes double completion return false without
- *   touching capacity, so completing one frame can never release another's.
- * - No integer ids: there is no id space to wrap, collide, or ABA-reuse, and
- *   no window-side per-frame registry — a handle's one Boolean lives exactly
- *   as long as the caller-held handle itself, so no state lingers after
- *   completion and nothing is retained per frame by the window.
- */
-internal class SceneFrameCompletion private constructor(
-    private val owner: SceneFrameWindow
-) {
-    private var consumed = false
-
-    /**
-     * Releases this handle's slot iff [window] is the minting owner and this
-     * handle is unconsumed. Marks consumed on success. Never throws.
-     */
-    internal fun consumeBy(window: SceneFrameWindow): Boolean {
-        if (window !== owner || consumed) return false
-        consumed = true
-        return true
-    }
-
-    companion object {
-        internal fun mint(owner: SceneFrameWindow): SceneFrameCompletion =
-            SceneFrameCompletion(owner)
-    }
-}
-
-/**
  * Bounded in-flight frame slots with deterministic drop-newest backpressure.
  *
  * Policy, pinned by tests:
- * - [offer] returns a [SceneFrameCompletion] for an accepted frame, null for
- *   a dropped one. Dropped offers never receive handles.
+ * - [offer] returns a [Completion] for an accepted frame, null for a dropped
+ *   one. Dropped offers never receive handles.
  * - An invalid frame is dropped and counted without consuming a slot:
  *   corrupt or undated frames never occupy handoff capacity.
  * - A valid frame with a free slot is accepted (slot consumed, handle minted).
  * - A valid frame with no free slot is dropped and counted (drop-newest:
  *   the in-flight frames the consumer may be reading are never evicted).
  * - [complete] releases exactly one slot and returns true only for a live
- *   (unconsumed, owner-minted) handle. Null, foreign, or already-consumed
- *   handles return false with no state change — duplicate, unknown, or
- *   invalid completions can never release another frame's slot, and
- *   rejections never pollute the accepted/dropped counts.
+ *   (unconsumed, owner-minted) handle. Null, foreign, forged, or
+ *   already-consumed handles return false with no state change — duplicate,
+ *   unknown, or invalid completions can never release another frame's slot,
+ *   and rejections never pollute the accepted/dropped counts.
  *
  * Structural invariant: each live handle owns exactly one in-flight slot
  * (mint and slot-consumption are paired in [offer]; consumption and
@@ -108,6 +72,62 @@ internal class SceneFrameWindow(capacity: Int) {
         this.capacity = capacity
     }
 
+    /**
+     * Single-use completion handle for one accepted frame. Each accepted offer
+     * mints exactly one handle; each handle releases its slot at most once.
+     *
+     * Compile-time mint boundary (no weaker claim is made): this sealed
+     * interface has exactly one implementation, [CompletionImpl], which is
+     * private to the window — so only [SceneFrameWindow.offer] can name the
+     * type and call its constructor. Ordinary same-module callers can hold
+     * and pass handles, and can even declare their own (useless) [Completion]
+     * subtype under the same-package sealed rule, but [complete] only accepts
+     * the private implementation minted by the owning window with an
+     * unconsumed flag — the forged-subclass rejection test proves a
+     * same-package forgery is inert. The boundary is further pinned by
+     * reflection tests (empty interface surface, single private
+     * implementation, [offer] the sole minter), so a future refactor that
+     * weakens it fails the suite instead of silently opening it.
+     * Reflection-based attacks are out of scope, as with all JVM
+     * encapsulation.
+     *
+     * Accidental reuse is prevented structurally, not by convention:
+     * - Unforgeable: see the mint boundary above; dropped offers receive null.
+     * - Owner-bound: the implementation is inner, so the outer reference IS
+     *   the owner (referential check — a foreign handle is inert, and the
+     *   binding cannot be wrong).
+     * - Single-use: a consumed flag makes double completion return false
+     *   without touching capacity, so completing one frame can never release
+     *   another's.
+     * - No integer ids: there is no id space to wrap, collide, or ABA-reuse,
+     *   and no window-side per-frame registry — a handle's one Boolean lives
+     *   exactly as long as the caller-held handle itself, so no state lingers
+     *   after completion and nothing is retained per frame by the window.
+     */
+    sealed interface Completion
+
+    /**
+     * The sole [Completion] implementation. Private to the window: no other
+     * caller can name this type, so the internal constructor and [tryConsume]
+     * are callable from [SceneFrameWindow] only. (Kotlin private members of a
+     * nested class are NOT visible to the outer class, so true `private`
+     * here would lock the window out too — privacy of the TYPE is what seals
+     * the boundary, and the reflection tests pin exactly that.)
+     */
+    private inner class CompletionImpl internal constructor() : Completion {
+        private var consumed = false
+
+        /**
+         * Releases this handle's slot iff [window] is the minting owner and
+         * this handle is unconsumed. Marks consumed on success. Never throws.
+         */
+        internal fun tryConsume(window: SceneFrameWindow): Boolean {
+            if (window !== this@SceneFrameWindow || consumed) return false
+            consumed = true
+            return true
+        }
+    }
+
     var inFlight: Int = 0
         private set
 
@@ -119,9 +139,10 @@ internal class SceneFrameWindow(capacity: Int) {
 
     /**
      * Offers one frame. Returns a completion handle when accepted, null when
-     * dropped (invalid frame or window full); every drop is counted.
+     * dropped (invalid frame or window full); every drop is counted. This is
+     * the sole minter of [Completion] (pinned by test).
      */
-    fun offer(frame: SceneFrameMetadata): SceneFrameCompletion? {
+    fun offer(frame: SceneFrameMetadata): Completion? {
         if (!frame.isValid) {
             droppedCount += 1
             return null
@@ -132,17 +153,18 @@ internal class SceneFrameWindow(capacity: Int) {
         }
         inFlight += 1
         acceptedCount += 1
-        return SceneFrameCompletion.mint(this)
+        return CompletionImpl()
     }
 
     /**
      * Releases the slot owned by [handle]. True on release; false (no state
-     * change, counts untouched) for null, foreign, or already-consumed
-     * handles.
+     * change, counts untouched) for null, foreign, forged, or
+     * already-consumed handles.
      */
-    fun complete(handle: SceneFrameCompletion?): Boolean {
+    fun complete(handle: Completion?): Boolean {
         if (handle == null) return false
-        if (!handle.consumeBy(this)) return false
+        val impl = handle as? CompletionImpl ?: return false
+        if (!impl.tryConsume(this)) return false
         inFlight -= 1
         return true
     }
