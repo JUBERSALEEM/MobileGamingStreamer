@@ -19,30 +19,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  detect-pr:
+  detect_pr:
     runs-on: ubuntu-latest
     outputs:
       has_pr: ${{ steps.check.outputs.has_pr }}
+      pr_count: ${{ steps.check.outputs.pr_count }}
     steps:
       - name: Check for open PR targeting main
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          # No checkout in this job, so the repo must be explicit: gh cannot
+          # infer it from git remotes here.
+          GH_REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
         run: |
           set +e
-          COUNT="$(gh pr list --head "$BRANCH" --base main --state open --json number --jq 'length' 2>/dev/null)"
+          COUNT="$(gh pr list --head "$BRANCH" --base main --state open --json number --jq 'length' 2>gh_err.txt)"
           if [ $? -ne 0 ] || [ -z "$COUNT" ]; then
             echo "PR check failed; failing open toward validation."
+            cat gh_err.txt
             COUNT=0
           fi
           if [ "$COUNT" -gt 0 ]; then HAS_PR=true; else HAS_PR=false; fi
           echo "has_pr=$HAS_PR" >> "$GITHUB_OUTPUT"
+          echo "pr_count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "Branch $BRANCH has $COUNT open PR(s) targeting main -> has_pr=$HAS_PR"
 
   validate:
-    needs: detect-pr
-    if: needs.detect-pr.outputs.has_pr != 'true'
+    needs: detect_pr
+    if: needs.detect_pr.outputs.has_pr != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
