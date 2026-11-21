@@ -10,6 +10,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -56,11 +57,16 @@ import com.jubersaleem.mobilegamingstreamer.scene.MAX_TEXT_LAYER_CHARS
 import com.jubersaleem.mobilegamingstreamer.scene.BORDER_COLOR_DEFAULT
 import com.jubersaleem.mobilegamingstreamer.scene.SHADOW_COLOR_DEFAULT
 import com.jubersaleem.mobilegamingstreamer.scene.TEXT_COLOR_DEFAULT
+import com.jubersaleem.mobilegamingstreamer.scene.SceneAnimEasing
+import com.jubersaleem.mobilegamingstreamer.scene.SceneAnimation
+import com.jubersaleem.mobilegamingstreamer.scene.SceneAnimPreset
+import com.jubersaleem.mobilegamingstreamer.scene.SceneAnimRepeat
 import com.jubersaleem.mobilegamingstreamer.scene.SceneImageLayer
 import com.jubersaleem.mobilegamingstreamer.scene.SceneCanvasProfile
 import com.jubersaleem.mobilegamingstreamer.scene.SceneClockWidgets
 import com.jubersaleem.mobilegamingstreamer.scene.SceneDesignOrientation
 import com.jubersaleem.mobilegamingstreamer.scene.SceneImageLoader
+import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerAnimation
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerKind
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerStyle
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
@@ -68,6 +74,7 @@ import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayLayerInput
 import com.jubersaleem.mobilegamingstreamer.scene.SceneScaleMode
 import com.jubersaleem.mobilegamingstreamer.scene.SceneVideoProbe
 import com.jubersaleem.mobilegamingstreamer.scene.ScenePreviewBoxes
+import com.jubersaleem.mobilegamingstreamer.scene.SceneRectPx
 import com.jubersaleem.mobilegamingstreamer.scene.SceneSizePx
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTextLayerLayout
 import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
@@ -150,6 +157,7 @@ fun SceneEditorPage(
     onLayerMaxWidth: (String, String, Int) -> Unit,
     onLayerAlpha: (String, String, Float) -> Unit,
     onLayerScaleMode: (String, String, SceneScaleMode) -> Unit,
+    onLayerAnimation: (String, String, SceneLayerAnimation?) -> Unit,
     onLayerTextColor: (String, String, Int) -> Unit,
     onLayerBackground: (String, String, Int?) -> Unit,
     onLayerBorderWidth: (String, String, Int) -> Unit,
@@ -238,6 +246,7 @@ fun SceneEditorPage(
                 onLayerMaxWidth = onLayerMaxWidth,
                 onLayerAlpha = onLayerAlpha,
                 onLayerScaleMode = onLayerScaleMode,
+                onLayerAnimation = onLayerAnimation,
                 onLayerTextColor = onLayerTextColor,
                 onLayerBackground = onLayerBackground,
                 onLayerBorderWidth = onLayerBorderWidth,
@@ -289,6 +298,7 @@ private fun SceneCard(
     onLayerMaxWidth: (String, String, Int) -> Unit,
     onLayerAlpha: (String, String, Float) -> Unit,
     onLayerScaleMode: (String, String, SceneScaleMode) -> Unit,
+    onLayerAnimation: (String, String, SceneLayerAnimation?) -> Unit,
     onLayerTextColor: (String, String, Int) -> Unit,
     onLayerBackground: (String, String, Int?) -> Unit,
     onLayerBorderWidth: (String, String, Int) -> Unit,
@@ -374,6 +384,7 @@ private fun SceneCard(
                     onLayerMaxWidth = onLayerMaxWidth,
                     onLayerAlpha = onLayerAlpha,
                     onLayerScaleMode = onLayerScaleMode,
+                    onLayerAnimation = onLayerAnimation,
                     onLayerTextColor = onLayerTextColor,
                     onLayerBackground = onLayerBackground,
                     onLayerBorderWidth = onLayerBorderWidth,
@@ -443,6 +454,7 @@ private fun LayerListEditor(
     onLayerMaxWidth: (String, String, Int) -> Unit,
     onLayerAlpha: (String, String, Float) -> Unit,
     onLayerScaleMode: (String, String, SceneScaleMode) -> Unit,
+    onLayerAnimation: (String, String, SceneLayerAnimation?) -> Unit,
     onLayerTextColor: (String, String, Int) -> Unit,
     onLayerBackground: (String, String, Int?) -> Unit,
     onLayerBorderWidth: (String, String, Int) -> Unit,
@@ -541,6 +553,7 @@ private fun LayerListEditor(
                 onLayerMaxWidth = onLayerMaxWidth,
                 onLayerAlpha = onLayerAlpha,
                 onLayerScaleMode = onLayerScaleMode,
+                onLayerAnimation = onLayerAnimation,
                 onLayerTextColor = onLayerTextColor,
                 onLayerBackground = onLayerBackground,
                 onLayerBorderWidth = onLayerBorderWidth,
@@ -574,6 +587,7 @@ private fun LayerRow(
     onLayerMaxWidth: (String, String, Int) -> Unit,
     onLayerAlpha: (String, String, Float) -> Unit,
     onLayerScaleMode: (String, String, SceneScaleMode) -> Unit,
+    onLayerAnimation: (String, String, SceneLayerAnimation?) -> Unit,
     onLayerTextColor: (String, String, Int) -> Unit,
     onLayerBackground: (String, String, Int?) -> Unit,
     onLayerBorderWidth: (String, String, Int) -> Unit,
@@ -677,6 +691,10 @@ private fun LayerRow(
                     label = "Overlay text (max $MAX_TEXT_LAYER_CHARS chars)"
                 )
             }
+            AnimationSection(
+                animation = layer.animation,
+                onChange = { onLayerAnimation(sceneId, layer.id, it) }
+            )
             ClayOptionGroup(
                 title = "Position",
                 options = anchorLabels.values.toList(),
@@ -890,6 +908,121 @@ private fun formatDuration(durationMs: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return if (seconds < 10) "$minutes:0$seconds" else "$minutes:$seconds"
+}
+
+private val animPresetLabels = mapOf(
+    SceneAnimPreset.NONE to "None",
+    SceneAnimPreset.FADE_IN to "Fade in",
+    SceneAnimPreset.FADE_OUT to "Fade out",
+    SceneAnimPreset.SLIDE_IN_LEFT to "Slide in left",
+    SceneAnimPreset.SLIDE_IN_RIGHT to "Slide in right",
+    SceneAnimPreset.SLIDE_IN_TOP to "Slide in top",
+    SceneAnimPreset.SLIDE_IN_BOTTOM to "Slide in bottom",
+    SceneAnimPreset.SLIDE_OUT_LEFT to "Slide out left",
+    SceneAnimPreset.SLIDE_OUT_RIGHT to "Slide out right",
+    SceneAnimPreset.SLIDE_OUT_TOP to "Slide out top",
+    SceneAnimPreset.SLIDE_OUT_BOTTOM to "Slide out bottom",
+    SceneAnimPreset.SCALE_IN to "Scale in",
+    SceneAnimPreset.SCALE_OUT to "Scale out",
+    SceneAnimPreset.PULSE to "Pulse",
+    SceneAnimPreset.ZOOM to "Gentle zoom",
+    SceneAnimPreset.DRIFT_LEFT to "Drift left",
+    SceneAnimPreset.DRIFT_RIGHT to "Drift right",
+    SceneAnimPreset.DRIFT_UP to "Drift up",
+    SceneAnimPreset.DRIFT_DOWN to "Drift down",
+    SceneAnimPreset.SPIN to "Spin"
+)
+
+private val animEasingLabels = mapOf(
+    SceneAnimEasing.LINEAR to "Linear",
+    SceneAnimEasing.EASE_IN to "Ease in",
+    SceneAnimEasing.EASE_OUT to "Ease out",
+    SceneAnimEasing.EASE_IN_OUT to "Ease in-out"
+)
+
+/**
+ * J3 animation controls (every layer kind). Preset + duration +
+ * delay + repeat + easing, persisted with the scene (codec v6) and
+ * rendered by the GL compositor on the live stream. NONE stores
+ * null (static). Every control maps 1:1 to a validated
+ * SceneLayerAnimation — no unsupported options are shown.
+ */
+@Composable
+private fun AnimationSection(
+    animation: SceneLayerAnimation?,
+    onChange: (SceneLayerAnimation?) -> Unit
+) {
+    val p = LocalMgsPalette.current
+    val current = animation
+    fun update(
+        preset: SceneAnimPreset = current?.preset ?: SceneAnimPreset.FADE_IN,
+        durationMs: Int = current?.durationMs ?: 1000,
+        delayMs: Int = current?.delayMs ?: 0,
+        repeat: SceneAnimRepeat = current?.repeat ?: SceneAnimRepeat.ONCE,
+        easing: SceneAnimEasing = current?.easing ?: SceneAnimEasing.EASE_OUT
+    ) {
+        onChange(if (preset == SceneAnimPreset.NONE) null
+            else SceneLayerAnimation.of(preset, durationMs, delayMs, repeat, easing))
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // 20 presets never fit the single-row ClayOptionGroup: a
+        // wrapping row of clay buttons instead (selected = Filled).
+        Text(
+            text = "ANIMATION",
+            color = p.muted,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = 1.1.sp
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            val selectedPreset = current?.preset ?: SceneAnimPreset.NONE
+            animPresetLabels.forEach { (preset, label) ->
+                ClayButton(
+                    label = label,
+                    onClick = { update(preset = preset) },
+                    style = if (preset == selectedPreset) ClayButtonStyle.Filled
+                        else ClayButtonStyle.Raised
+                )
+            }
+        }
+        if (current != null) {
+            LayerSlider(
+                label = "Duration",
+                valueLabel = "%.1f s".format(java.util.Locale.US, current.durationMs / 1000f),
+                value = (current.durationMs / 1000f).coerceIn(0.1f, 10f),
+                range = 0.1f..10f,
+                steps = 98,
+                onChange = { update(durationMs = (it * 1000f).roundToInt().coerceIn(100, 10000)) }
+            )
+            LayerSlider(
+                label = "Delay",
+                valueLabel = "%.1f s".format(java.util.Locale.US, current.delayMs / 1000f),
+                value = (current.delayMs / 1000f).coerceIn(0f, 10f),
+                range = 0f..10f,
+                steps = 99,
+                onChange = { update(delayMs = (it * 1000f).roundToInt().coerceIn(0, 10000)) }
+            )
+            ClayOptionGroup(
+                title = "Repeat",
+                options = listOf("Once", "Loop"),
+                selected = if (current.repeat == SceneAnimRepeat.ONCE) "Once" else "Loop",
+                onSelect = { label ->
+                    update(repeat = if (label == "Loop") SceneAnimRepeat.LOOP else SceneAnimRepeat.ONCE)
+                }
+            )
+            ClayOptionGroup(
+                title = "Easing",
+                options = animEasingLabels.values.toList(),
+                selected = animEasingLabels.getValue(current.easing),
+                onSelect = { label ->
+                    update(easing = animEasingLabels.entries.first { it.value == label }.key)
+                }
+            )
+        }
+    }
 }
 
 /**
@@ -1178,6 +1311,26 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
             }
         }
     }
+    // J3 animated preview — recomposes at 20 fps only while an
+    // enabled animated layer exists (same elapsed clock the live
+    // GL renderer ticks on; static scenes recompose nothing
+    // extra). Any scene edit replays every layer animation from
+    // the same start instant, so timing edits are visible at once.
+    val hasAnimatedLayers = remember(measured) {
+        measured.any { it.first.enabled && it.first.animation != null }
+    }
+    var tickAnimElapsedMs by remember(hasAnimatedLayers) {
+        mutableStateOf(SystemClock.elapsedRealtime())
+    }
+    val animStartElapsedMs = remember(measured) { SystemClock.elapsedRealtime() }
+    if (hasAnimatedLayers) {
+        LaunchedEffect(Unit) {
+            while (true) {
+                delay(50L)
+                tickAnimElapsedMs = SystemClock.elapsedRealtime()
+            }
+        }
+    }
     val enabledCount = scene.layers.count { it.enabled }
     val droppedCount = enabledCount - measured.count { it.first.enabled }
     val boxes = remember(measured) {
@@ -1256,11 +1409,53 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
                 Canvas(modifier = Modifier.matchParentSize()) {
                     val scale = size.width / refWidthPx.toFloat()
                     for (box in boxes) {
-                        val left = box.left * size.width
-                        val top = box.top * size.height
-                        val right = box.right * size.width
-                        val bottom = box.bottom * size.height
+                        var left = box.left * size.width
+                        var top = box.top * size.height
+                        var right = box.right * size.width
+                        var bottom = box.bottom * size.height
                         val glyphs = textById[box.id].orEmpty()
+                        // J3: same pure SceneAnimation math the live
+                        // renderer samples (same preset/easing/clock
+                        // semantics, applied to the preview rect), so
+                        // the motion seen here is the motion streamed.
+                        // Resting/finished animations draw the base box.
+                        var drawAlpha = box.alpha
+                        var animRotDeg = 0f
+                        val animSpec = if (box.enabled) specById[box.id]?.animation else null
+                        if (animSpec != null) {
+                            val phase = SceneAnimation.phaseAt(
+                                animSpec, tickAnimElapsedMs - animStartElapsedMs
+                            )
+                            if (phase != null) {
+                                val t = SceneAnimation.transformFor(
+                                    animSpec.preset,
+                                    SceneAnimation.ease(animSpec.easing, phase.phase01),
+                                    SceneRectPx(
+                                        left.roundToInt(), top.roundToInt(),
+                                        right.roundToInt(), bottom.roundToInt()
+                                    ),
+                                    size.width.roundToInt(), size.height.roundToInt()
+                                )
+                                if (!t.isIdentity()) {
+                                    val animCx = (left + right) / 2f + t.dxPx
+                                    val animCy = (top + bottom) / 2f + t.dyPx
+                                    val animHw = (right - left) / 2f * t.scale
+                                    val animHh = (bottom - top) / 2f * t.scale
+                                    left = animCx - animHw
+                                    right = animCx + animHw
+                                    top = animCy - animHh
+                                    bottom = animCy + animHh
+                                    drawAlpha = (box.alpha * t.alphaMul).coerceIn(0f, 1f)
+                                    animRotDeg = t.rotationDeg
+                                }
+                            }
+                        }
+                        if (animRotDeg != 0f) {
+                            drawContext.canvas.nativeCanvas.save()
+                            drawContext.canvas.nativeCanvas.rotate(
+                                animRotDeg, (left + right) / 2f, (top + bottom) / 2f
+                            )
+                        }
                         if (box.enabled) {
                             val style = specById[box.id]
                             val borderPx = (style?.borderWidthPx ?: 0) * scale
@@ -1276,7 +1471,7 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
                                     topLeft = androidx.compose.ui.geometry.Offset(left + shadowPx, top + shadowPx),
                                     size = androidx.compose.ui.geometry.Size(right - left - shadowPx, bottom - top - shadowPx),
                                     cornerRadius = radiusPx,
-                                    alpha = box.alpha
+                                    alpha = drawAlpha
                                 )
                             }
                             val bg = style?.backgroundColor
@@ -1286,7 +1481,7 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
                                     topLeft = androidx.compose.ui.geometry.Offset(left, top),
                                     size = androidx.compose.ui.geometry.Size(right - left - shadowPx, bottom - top - shadowPx),
                                     cornerRadius = radiusPx,
-                                    alpha = box.alpha
+                                    alpha = drawAlpha
                                 )
                             }
                             if (style != null && borderPx > 0f) {
@@ -1299,18 +1494,18 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
                                     ),
                                     cornerRadius = radiusPx,
                                     style = Stroke(width = borderPx),
-                                    alpha = box.alpha
+                                    alpha = drawAlpha
                                 )
                             }
                             if (bg == null) {
                                 drawRect(
-                                    color = Color.White.copy(alpha = 0.14f * box.alpha),
+                                    color = Color.White.copy(alpha = 0.14f * drawAlpha),
                                     topLeft = androidx.compose.ui.geometry.Offset(left, top),
                                     size = androidx.compose.ui.geometry.Size(right - left, bottom - top)
                                 )
                             }
                             drawRect(
-                                color = Color.White.copy(alpha = 0.65f * box.alpha),
+                                color = Color.White.copy(alpha = 0.65f * drawAlpha),
                                 topLeft = androidx.compose.ui.geometry.Offset(left, top),
                                 size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
                                 style = Stroke(width = 2f)
@@ -1338,12 +1533,12 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
                                             (top + borderPx).roundToInt()
                                         ),
                                         dstSize = IntSize(dw, dh),
-                                        alpha = box.alpha
+                                        alpha = drawAlpha
                                     )
                                 }
                             } else {
                                 drawPaint.color = style?.textColor ?: android.graphics.Color.WHITE
-                                drawPaint.alpha = (box.alpha * 255f).roundToInt().coerceIn(0, 255)
+                                drawPaint.alpha = (drawAlpha * 255f).roundToInt().coerceIn(0, 255)
                                 drawPaint.textSize = textSize * scale
                                 drawContext.canvas.nativeCanvas.drawText(
                                     glyphs, left + borderPx,
@@ -1363,6 +1558,9 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
                             drawContext.canvas.nativeCanvas.drawText(
                                 "OFF", (left + right) / 2f, (top + bottom) / 2f, badgePaint
                             )
+                        }
+                        if (animRotDeg != 0f) {
+                            drawContext.canvas.nativeCanvas.restore()
                         }
                         badgePaint.color = android.graphics.Color.BLACK
                         badgePaint.alpha = 200
@@ -1396,7 +1594,9 @@ private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
             )
         }
         Text(
-            text = "1080p-reference layout • top badge is draw order (z1 = back)",
+            text = if (hasAnimatedLayers)
+                "1080p-reference layout • animated preview: same timing engine as the stream"
+            else "1080p-reference layout • top badge is draw order (z1 = back)",
             color = p.muted,
             fontSize = 10.sp
         )

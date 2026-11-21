@@ -415,6 +415,11 @@ class MainActivity : ComponentActivity() {
                                 it.copy(scaleMode = mode)
                             }
                         },
+                        onLayerAnimation = { sceneId, layerId, animation ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(animation = animation)
+                            }
+                        },
                         onLayerTextColor = { sceneId, layerId, color ->
                             updateLayer(sceneId, layerId) { it.copy(textColor = color) }
                         },

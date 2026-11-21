@@ -47,7 +47,7 @@ class SceneVideoPlaybackTest {
     fun videoRoundTripsOnV5() {
         val scene = StreamScene("s", "S", listOf(videoLayer()))
         val encoded = SceneConfigCodec.encodeScene(scene)
-        assertTrue(encoded.startsWith("v5\n"))
+        assertTrue(encoded.startsWith("v6\n"))
         assertEquals(scene, SceneConfigCodec.decodeScene(encoded))
     }
 

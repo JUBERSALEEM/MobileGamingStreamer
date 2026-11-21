@@ -59,6 +59,8 @@ internal const val GL_INIT_TIMEOUT_MS = 5_000L
 internal const val GL_TEARDOWN_TIMEOUT_MS = 5_000L
 /** J2 per-player stop/release rendezvous inside slot teardown. */
 internal const val VIDEO_RELEASE_TIMEOUT_MS = 3_000L
+/** J3 animation tick cadence (~60 Hz redraw requests while motion runs). */
+internal const val ANIM_TICK_MS = 16L
 
 /**
  * One static overlay's GL resources. Slots are preallocated once (fixed
@@ -89,6 +91,15 @@ private class OverlaySlot {
     var videoPendingFrame: Boolean = false
     var videoHasFrame: Boolean = false
     val videoController: SceneVideoPlaybackController = SceneVideoPlaybackController()
+    // J3 animation state: source rects (style + video-content), a reused
+    // 8-float scratch NDC, and the slot clock start (elapsedRealtime).
+    var hasAnimation: Boolean = false
+    var animRectPx: SceneRectPx? = null
+    var animVideoRectPx: SceneRectPx? = null
+    var animScratchNdc: FloatBuffer? = null
+    var animScratchArr: FloatArray = FloatArray(8)
+    var animScratchAlpha: Float = 1f
+    var animStartElapsedMs: Long = 0L
 }
 
 /** Init-latch scratch: one requested overlay with its measurement. */
@@ -145,8 +156,9 @@ internal class SceneCompositorGL(
     private var videoSamplerHandle = -1
     private var videoAlphaHandle = -1
     private var lastInputTimestampNs: Long = 0L
-    private var videoRedrawPosted: Boolean = false
-    private val videoRedrawRunnable = Runnable { onVideoRedrawLocked() }
+    private var motionRedrawPosted: Boolean = false
+    private val motionRedrawRunnable = Runnable { onMotionRedrawLocked() }
+    private val animTickRunnable = Runnable { onAnimTickLocked() }
     private val overlaySlots = Array(MAX_STATIC_OVERLAY_LAYERS) { OverlaySlot() }
     private var overlaySlotCount = 0
     private val mvpMatrix = FloatArray(16)
@@ -503,32 +515,34 @@ internal class SceneCompositorGL(
     }
 
     /**
-     * J2 coalesced redraw request from a video ST arrival (GL thread).
-     * The screen VD emits only on content change, so motion must
-     * re-present itself on static screens. At most one redraw is
-     * queued per video frame; before the first input latch the
-     * pending video frame simply waits for the first screen draw.
+     * J2/J3 coalesced redraw request (GL thread): video ST arrivals
+     * and animation ticks re-present through here. The screen VD
+     * emits only on content change, so motion must re-present itself
+     * on static screens. At most one redraw is queued; before the
+     * first input latch the motion simply waits for the first screen
+     * draw.
      */
-    private fun requestVideoRedrawLocked() {
-        if (videoRedrawPosted) return
+    private fun requestMotionRedrawLocked() {
+        if (motionRedrawPosted) return
         if (!glReady || frameSequence == 0L) return
-        videoRedrawPosted = true
+        motionRedrawPosted = true
         try {
-            glHandler?.post(videoRedrawRunnable)
+            glHandler?.post(motionRedrawRunnable)
         } catch (_: Exception) {
-            videoRedrawPosted = false
+            motionRedrawPosted = false
         }
     }
 
     /**
-     * J2 on-demand redraw (GL thread): re-presents the last latched
-     * input frame with fresh video latches. Not a controller arrival
-     * (no counting — this is re-presentation, not a new frame) and
-     * reuses the last input timestamp (arrival-order fallback, same
-     * rationale as the swap handling in the input path).
+     * J2/J3 on-demand redraw (GL thread): re-presents the last latched
+     * input frame with fresh video latches and animation samples. Not
+     * a controller arrival (no counting — this is re-presentation,
+     * not a new frame) and reuses the last input timestamp
+     * (arrival-order fallback, same rationale as the swap handling in
+     * the input path).
      */
-    private fun onVideoRedrawLocked() {
-        videoRedrawPosted = false
+    private fun onMotionRedrawLocked() {
+        motionRedrawPosted = false
         if (!controller.isAcceptingFrames) return
         val surfaceTexture = inputSurfaceTexture
         if (surfaceTexture == null || !glReady || frameSequence == 0L) return
@@ -536,13 +550,13 @@ internal class SceneCompositorGL(
             drawFrameLocked(surfaceTexture)
             drawSlotsLocked()
             if (!EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, lastInputTimestampNs)) {
-                Log.e(TAG, "video redraw eglPresentationTimeANDROID failed")
+                Log.e(TAG, "motion redraw eglPresentationTimeANDROID failed")
             }
             if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
-                Log.e(TAG, "video redraw eglSwapBuffers failed")
+                Log.e(TAG, "motion redraw eglSwapBuffers failed")
             }
         } catch (error: RuntimeException) {
-            failFrame("video redraw draw failed", error)
+            failFrame("motion redraw draw failed", error)
         }
     }
 
@@ -580,7 +594,7 @@ internal class SceneCompositorGL(
      */
     private fun onVideoFrameLocked(slot: OverlaySlot) {
         slot.videoPendingFrame = true
-        requestVideoRedrawLocked()
+        requestMotionRedrawLocked()
     }
 
     private fun releaseEglLocked() {
@@ -732,11 +746,17 @@ internal class SceneCompositorGL(
         // J2: video redraws cancel the same way; the pause flag dies
         // with the slots (no badge without live video).
         try {
-            glHandler?.removeCallbacks(videoRedrawRunnable)
+            glHandler?.removeCallbacks(motionRedrawRunnable)
         } catch (_: Exception) {
         }
-        videoRedrawPosted = false
+        motionRedrawPosted = false
         videosPaused = false
+        // J3: animation ticker cancels like the H9 ticker (re-armed by
+        // the next build iff motion is still running).
+        try {
+            glHandler?.removeCallbacks(animTickRunnable)
+        } catch (_: Exception) {
+        }
         // J2: decoders stop BEFORE their STs die (a player rendering
         // into a released ST would error loudly but harmlessly; clean
         // order avoids even that). Bounded rendezvous per player.
@@ -771,6 +791,12 @@ internal class SceneCompositorGL(
             slot.offsetTop = 0
             slot.lastContent = null
             releaseVideoSlotLocked(slot)
+            slot.hasAnimation = false
+            slot.animRectPx = null
+            slot.animVideoRectPx = null
+            slot.animScratchNdc = null
+            slot.animScratchAlpha = 1f
+            slot.animStartElapsedMs = 0L
         }
         overlaySlotCount = 0
         try {
@@ -946,6 +972,16 @@ internal class SceneCompositorGL(
                 slot.offsetLeft = layer.offsetLeft
                 slot.offsetTop = layer.offsetTop
                 slot.lastContent = layer.content
+                // J3: animated slots sample from the build clock on
+                // (all static layers share the build instant, so scene
+                // entrances start together).
+                val animPreset = layer.spec.animation?.preset
+                if (animPreset != null && animPreset != SceneAnimPreset.NONE) {
+                    slot.hasAnimation = true
+                    slot.animRectPx = rect
+                    slot.animScratchNdc = floatBufferOf(FloatArray(8))
+                    slot.animStartElapsedMs = buildElapsedMs
+                }
                 // Sanitized: layer id + kind/length only, never content.
                 val detail = if (layer.spec.kind == SceneLayerKind.IMAGE) "image" else "${layer.content.length} chars"
                 // (Video slots log their own ready line in buildVideoSlotLocked.)
@@ -953,6 +989,7 @@ internal class SceneCompositorGL(
                     "${rect.width}x${rect.height}")
             }
             armDynamicTickLocked()
+            armAnimTickLocked()
         } finally {
             for (pending in decodedPending) {
                 try {
@@ -1033,6 +1070,51 @@ internal class SceneCompositorGL(
             }
         }
         armDynamicTickLocked()
+    }
+
+    /**
+     * J3 animation tick arm (GL thread only): schedules the ~60 Hz
+     * tick while some animated slot still samples active. Idempotent
+     * (cancels first). No animated slot — or all rested — → no
+     * ticker, zero overhead (same H9 pattern as the widget ticker).
+     */
+    private fun armAnimTickLocked() {
+        try {
+            glHandler?.removeCallbacks(animTickRunnable)
+        } catch (_: Exception) {
+        }
+        val nowMs = SystemClock.elapsedRealtime()
+        var anyActive = false
+        for (index in 0 until overlaySlotCount) {
+            val slot = overlaySlots[index]
+            if (!slot.hasAnimation) continue
+            val anim = slot.spec?.animation ?: continue
+            val active = try {
+                SceneAnimation.phaseAt(anim, nowMs - slot.animStartElapsedMs)?.active == true
+            } catch (_: Exception) {
+                false
+            }
+            if (active) {
+                anyActive = true
+                break
+            }
+        }
+        if (!anyActive) return
+        try {
+            glHandler?.postDelayed(animTickRunnable, ANIM_TICK_MS)
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * J3 tick (GL thread only): motion re-presents through the shared
+     * coalesced redraw, then re-arms while motion runs. Same queue as
+     * frames, so ticks never interleave a draw.
+     */
+    private fun onAnimTickLocked() {
+        if (!glReady) return
+        requestMotionRedrawLocked()
+        armAnimTickLocked()
     }
 
     /**
@@ -1359,6 +1441,19 @@ internal class SceneCompositorGL(
             slot.alpha = entry.alpha
             slot.spec = spec
             slot.isVideo = true
+            // J3: the style quad animates on the full rect, the OES
+            // quad on the content rect (same clock, same preset). The
+            // clock starts at slot assignment (not build): video layers
+            // appear after probe/decode, so the entrance starts when the
+            // layer appears instead of during the black wait.
+            val animPreset = spec.animation?.preset
+            if (animPreset != null && animPreset != SceneAnimPreset.NONE) {
+                slot.hasAnimation = true
+                slot.animRectPx = rect
+                slot.animVideoRectPx = content
+                slot.animScratchNdc = floatBufferOf(FloatArray(8))
+                slot.animStartElapsedMs = SystemClock.elapsedRealtime()
+            }
             Matrix.setIdentityM(slot.videoStMatrix, 0)
             slot.videoController.onRebuild()
             if (!slot.videoController.onSlotAssigned()) {
@@ -1455,6 +1550,12 @@ internal class SceneCompositorGL(
         slot.bitmap = null
         slot.quadBuffer = null
         slot.spec = null
+        slot.hasAnimation = false
+        slot.animRectPx = null
+        slot.animVideoRectPx = null
+        slot.animScratchNdc = null
+        slot.animScratchAlpha = 1f
+        slot.animStartElapsedMs = 0L
     }
 
     /** Posts [block] to the GL queue (any thread; drops when gone). Never throws. */
@@ -1544,16 +1645,22 @@ internal class SceneCompositorGL(
         if (ndc == null || uv == null || videoProgram == 0 || slot.videoTextureId == 0) {
             throw RuntimeException("video slot state missing")
         }
+        // J3: the OES quad animates on the content rect (same clock as
+        // the style quad above, which sampled the full rect).
+        val sampled = sampleAnimQuadLocked(slot, slot.animVideoRectPx)
+        val positions = sampled ?: ndc
+        val alpha = if (sampled == null) slot.alpha
+            else (slot.alpha * slot.animScratchAlpha).coerceIn(0f, 1f)
         GLES20.glUseProgram(videoProgram)
-        ndc.position(0)
-        GLES20.glVertexAttribPointer(videoPositionHandle, 2, GLES20.GL_FLOAT, false, 0, ndc)
+        positions.position(0)
+        GLES20.glVertexAttribPointer(videoPositionHandle, 2, GLES20.GL_FLOAT, false, 0, positions)
         GLES20.glEnableVertexAttribArray(videoPositionHandle)
         uv.position(0)
         GLES20.glVertexAttribPointer(videoCoordHandle, 2, GLES20.GL_FLOAT, false, 0, uv)
         GLES20.glEnableVertexAttribArray(videoCoordHandle)
         GLES20.glUniformMatrix4fv(videoMvpHandle, 1, false, mvpMatrix, 0)
         GLES20.glUniformMatrix4fv(videoStMatrixHandle, 1, false, slot.videoStMatrix, 0)
-        GLES20.glUniform1f(videoAlphaHandle, slot.alpha)
+        GLES20.glUniform1f(videoAlphaHandle, alpha)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, slot.videoTextureId)
         GLES20.glUniform1i(videoSamplerHandle, 0)
@@ -1589,6 +1696,49 @@ internal class SceneCompositorGL(
     }
 
     /**
+     * J3 animation sample (GL thread only): evaluates the slot preset
+     * at the current clock into the reused scratch NDC, or returns
+     * null when the base quad draws unchanged (no animation, resting
+     * identity). The alpha multiplier lands in `animScratchAlpha`.
+     * One tiny sample object per animated slot per frame (time varies
+     * — necessary); zero bitmap/CPU-copy work. Never throws: any
+     * failure draws the base quad loudly.
+     */
+    private fun sampleAnimQuadLocked(slot: OverlaySlot, rectPx: SceneRectPx?): FloatBuffer? {
+        if (!slot.hasAnimation) return null
+        val rect = rectPx ?: return null
+        val anim = slot.spec?.animation ?: return null
+        try {
+            val phase = SceneAnimation.phaseAt(anim, SystemClock.elapsedRealtime() - slot.animStartElapsedMs)
+                ?: return null
+            val t = SceneAnimation.transformFor(
+                anim.preset, SceneAnimation.ease(anim.easing, phase.phase01),
+                rect, layout.outputWidth, layout.outputHeight
+            )
+            if (t.isIdentity()) {
+                slot.animScratchAlpha = 1f
+                return null
+            }
+            SceneAnimation.writeTransformedNdc(
+                rect, t, layout.outputWidth, layout.outputHeight, slot.animScratchArr
+            )
+            var scratch = slot.animScratchNdc
+            if (scratch == null) {
+                scratch = floatBufferOf(FloatArray(8))
+                slot.animScratchNdc = scratch
+            }
+            scratch.clear()
+            scratch.put(slot.animScratchArr)
+            scratch.position(0)
+            slot.animScratchAlpha = t.alphaMul
+            return scratch
+        } catch (e: Exception) {
+            Log.w(TAG, "animation sample failed, drawing base: ${slot.spec?.id}", e)
+            return null
+        }
+    }
+
+    /**
      * Draws one static overlay quad over the passthrough frame (GL thread).
      * Blend is enabled for this draw only; per-draw state (program,
      * buffers, texture unit) is fully re-specified, so the passthrough
@@ -1600,14 +1750,20 @@ internal class SceneCompositorGL(
         if (quad == null || texCoords == null || overlayProgram == 0 || slot.textureId == 0) {
             throw RuntimeException("overlay slot state missing")
         }
+        // J3: animated quads draw from the sampled scratch (alpha
+        // multiplied); resting slots cost nothing extra.
+        val sampled = sampleAnimQuadLocked(slot, slot.animRectPx)
+        val positions = sampled ?: quad
+        val alpha = if (sampled == null) slot.alpha
+            else (slot.alpha * slot.animScratchAlpha).coerceIn(0f, 1f)
         GLES20.glUseProgram(overlayProgram)
-        quad.position(0)
-        GLES20.glVertexAttribPointer(overlayPositionHandle, 2, GLES20.GL_FLOAT, false, 0, quad)
+        positions.position(0)
+        GLES20.glVertexAttribPointer(overlayPositionHandle, 2, GLES20.GL_FLOAT, false, 0, positions)
         GLES20.glEnableVertexAttribArray(overlayPositionHandle)
         texCoords.position(0)
         GLES20.glVertexAttribPointer(overlayCoordHandle, 2, GLES20.GL_FLOAT, false, 0, texCoords)
         GLES20.glEnableVertexAttribArray(overlayCoordHandle)
-        GLES20.glUniform1f(uAlphaHandle, slot.alpha)
+        GLES20.glUniform1f(uAlphaHandle, alpha)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, slot.textureId)
         GLES20.glUniform1i(uSamplerHandle, 0)

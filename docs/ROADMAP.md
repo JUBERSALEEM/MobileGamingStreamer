@@ -81,6 +81,26 @@ Build a reliable Android-first livestreaming app for mobile gamers. The first re
 - [x] Preserve the floating bubble, drag-to-dismiss, stream stop, bitrate presets, local speaker mute, stream-audio mute, and YouTube chat.
 - [ ] Validate layout, touch targets, overlay behaviour, and the clay-only surfaces on the Galaxy S25 Ultra.
 
+## Phase K — Direct-manipulation scene canvas (PLANNED — NOT STARTED)
+
+Recorded during J3 (fixed preset/timing controls are NOT this phase).
+Phase K replaces fixed sliders/buttons with a direct-manipulation
+canvas editor. It is complete ONLY when every item below works on the
+canvas itself; shipping more fixed controls NEVER satisfies Phase K.
+
+- [ ] Tap-to-select layers directly on the canvas (selection chrome visible in editor only)
+- [ ] Drag-to-reposition the selected layer
+- [ ] Resize handles (corner/edge) with aspect behavior per layer kind
+- [ ] Rotation gesture/control about the layer center
+- [ ] Tap-to-edit text in place
+- [ ] On-canvas styling affordances (colors, border, shadow, opacity — same model as today)
+- [ ] Layer order / duplicate / delete / lock / visibility from the canvas
+- [ ] Canvas zoom + pan for precise placement on small screens
+- [ ] Editor-canvas to live-output coordinate mapping (what you place is what streams)
+- [ ] Portrait + landscape canvases (both Phase I canvas profiles)
+- [ ] Selection handles/badges NEVER appear in the streamed output
+- [ ] Geometry consistency: canvas placement matches GL renderer placement within rounding
+
 ## Phase 4 — Release-readiness engineering (0.5.17-dev)
 - [x] Add JVM tests for RTMP/RTMPS URL validation and malformed/unsupported destination rejection.
 - [x] Run Android unit tests and lint in CI before APK packaging.

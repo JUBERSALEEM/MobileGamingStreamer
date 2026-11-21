@@ -83,7 +83,8 @@ data class StreamSceneLayer(
     val cornerRadiusPx: Int = 0,
     val shadowOffsetPx: Int = 0,
     val shadowColor: Int = SHADOW_COLOR_DEFAULT,
-    val scaleMode: SceneScaleMode = SceneScaleMode.FIT
+    val scaleMode: SceneScaleMode = SceneScaleMode.FIT,
+    val animation: SceneLayerAnimation? = null
 ) {
     /**
      * Validated H4 spec, or null when this layer cannot render. H4
@@ -108,7 +109,8 @@ data class StreamSceneLayer(
         cornerRadiusPx = cornerRadiusPx,
         shadowOffsetPx = shadowOffsetPx,
         shadowColor = shadowColor,
-        scaleMode = scaleMode
+        scaleMode = scaleMode,
+        animation = animation
     )
 }
 
@@ -142,9 +144,9 @@ data class StreamScene(
 }
 
 /**
- * Versioned text encoding for scenes and the scene store. Format v4:
+ * Versioned text encoding for scenes and the scene store. Format v6:
  * `scene:<id>\\t<name>\\t<ORIENTATION>` header line, then one `layer:` line per layer
- * with 18 tab-separated fields (17 v3/v4 fields + J1 scaleMode)
+ * with 19 tab-separated fields (18 v5 fields + J3 animation)
  * (id, text, ANCHOR, z, margin, maxWidth, alpha, enabled, KIND,
  * imageUri, textColor, backgroundColor, borderWidth, borderColor,
  * cornerRadius, shadowOffset, shadowColor); store blocks joined by a
@@ -152,16 +154,17 @@ data class StreamScene(
  * are backslash-escaped, so the framing can never be confused by user
  * content. Colors are 8-hex ARGB (empty = null background). Decoding
  * accepts v1 (8-field text-only), v2 (10-field text/image), v3/v4
- * (17 fields), and v5 (18 fields; v1–v4 layers take the FIT
- * default); encoding always writes v5. J2 VIDEO layers ride v5
- * (see docs/J2_VIDEO_LAYERS_DESIGN.md for why no v6 bump).
+ * (17 fields), v5 (18 fields), and v6 (19 fields; v1–v4 layers take
+ * the FIT default, v1–v5 layers take no animation); encoding always
+ * writes v6. J2 VIDEO layers ride v5 (see docs/J2_VIDEO_LAYERS_DESIGN.md).
  */
 internal object SceneConfigCodec {
-    const val VERSION = "v5"
+    const val VERSION = "v6"
     private const val VERSION_V1 = "v1"
     private const val VERSION_V2 = "v2"
     private const val VERSION_V3 = "v3"
     private const val VERSION_V4 = "v4"
+    private const val VERSION_V5 = "v5"
     private const val SCENE_PREFIX = "scene:"
     private const val LAYER_PREFIX = "layer:"
     private const val BLOCK_SEPARATOR = "\n===\n"
@@ -232,7 +235,7 @@ internal object SceneConfigCodec {
                     colorHex(layer.textColor) + "\t" + (layer.backgroundColor?.let { colorHex(it) } ?: "") + "\t" +
                     layer.borderWidthPx + "\t" + colorHex(layer.borderColor) + "\t" +
                     layer.cornerRadiusPx + "\t" + layer.shadowOffsetPx + "\t" + colorHex(layer.shadowColor) +
-                    "\t" + layer.scaleMode.name
+                    "\t" + layer.scaleMode.name + "\t" + (layer.animation?.encode() ?: "")
             )
         }
         return VERSION + "\n" + lines.joinToString("\n")
@@ -247,7 +250,8 @@ internal object SceneConfigCodec {
             VERSION_V2 -> 2
             VERSION_V3 -> 3
             VERSION_V4 -> 4
-            VERSION -> 5
+            VERSION_V5 -> 5
+            VERSION -> 6
             else -> return null
         }
         if (lines.size < 2 || !lines[1].startsWith(SCENE_PREFIX)) return null
@@ -374,7 +378,8 @@ internal object SceneConfigCodec {
                 1 -> 8
                 2 -> 10
                 3, 4 -> 17
-                else -> 18
+                5 -> 18
+                else -> 19
             }
         ) return null
         val id = unescape(fields[0]) ?: return null
@@ -463,10 +468,19 @@ internal object SceneConfigCodec {
                 return null
             }
         }
+        // J3: v1–v5 predate animation (null = static, pixel-identical
+        // restore); a corrupt v6 token drops the layer like kind/scale.
+        val animation = if (version < 6) {
+            null
+        } else if (fields[18].isEmpty()) {
+            null
+        } else {
+            SceneLayerAnimation.parse(fields[18]) ?: return null
+        }
         return StreamSceneLayer(
             id, text, anchor, z, margin, maxWidth, alpha, enabled, kind, imageUri,
             textColor, backgroundColor, borderWidthPx, borderColor,
-            cornerRadiusPx, shadowOffsetPx, shadowColor, scaleMode
+            cornerRadiusPx, shadowOffsetPx, shadowColor, scaleMode, animation
         )
     }
 

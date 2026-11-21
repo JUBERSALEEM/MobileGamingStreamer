@@ -97,11 +97,11 @@ class SceneScaleModeTest {
     // ---- codec v5 ----
 
     @Test
-    fun encodeWritesV5WithScaleMode() {
+    fun encodeWritesV6WithScaleMode() {
         val scene = StreamScene("s", "S", listOf(imageLayer()))
         val encoded = SceneConfigCodec.encodeScene(scene)
-        assertTrue(encoded.startsWith("v5\n"))
-        assertTrue(encoded.endsWith("\tFILL"))
+        assertTrue(encoded.startsWith("v6\n"))
+        assertTrue(encoded.endsWith("\tFILL\t"))
         assertEquals(scene, SceneConfigCodec.decodeScene(encoded))
     }
 
@@ -118,7 +118,7 @@ class SceneScaleModeTest {
         assertEquals(SceneScaleMode.FIT, v4.layers.single().scaleMode)
         // FILL never appears unless a v5 line carries it.
         val encoded = SceneConfigCodec.encodeScene(v4)
-        assertTrue(encoded.endsWith("\tFIT"))
+        assertTrue(encoded.endsWith("\tFIT\t"))
     }
 
     @Test

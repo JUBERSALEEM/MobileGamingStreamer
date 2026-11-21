@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
+import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerAnimation
 import com.jubersaleem.mobilegamingstreamer.scene.SceneScaleMode
 import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
 
@@ -128,6 +129,7 @@ data class StudioActions(
     val onLayerMaxWidth: (String, String, Int) -> Unit = { _, _, _ -> },
     val onLayerAlpha: (String, String, Float) -> Unit = { _, _, _ -> },
     val onLayerScaleMode: (String, String, SceneScaleMode) -> Unit = { _, _, _ -> },
+    val onLayerAnimation: (String, String, SceneLayerAnimation?) -> Unit = { _, _, _ -> },
     val onLayerTextColor: (String, String, Int) -> Unit = { _, _, _ -> },
     val onLayerBackground: (String, String, Int?) -> Unit = { _, _, _ -> },
     val onLayerBorderWidth: (String, String, Int) -> Unit = { _, _, _ -> },
@@ -306,6 +308,7 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
                         onLayerMaxWidth = actions.onLayerMaxWidth,
                         onLayerAlpha = actions.onLayerAlpha,
                         onLayerScaleMode = actions.onLayerScaleMode,
+                        onLayerAnimation = actions.onLayerAnimation,
                         onLayerTextColor = actions.onLayerTextColor,
                         onLayerBackground = actions.onLayerBackground,
                         onLayerBorderWidth = actions.onLayerBorderWidth,
