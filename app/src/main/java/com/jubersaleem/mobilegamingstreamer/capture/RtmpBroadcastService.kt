@@ -33,7 +33,9 @@ import com.pedro.encoder.utils.CodecUtil
 import com.pedro.encoder.input.sources.audio.AudioSource
 import com.pedro.encoder.input.sources.audio.InternalAudioSource
 import com.pedro.encoder.input.sources.audio.MicrophoneSource
+import com.jubersaleem.mobilegamingstreamer.scene.SceneSource
 import com.pedro.encoder.input.sources.video.ScreenSource
+import com.pedro.encoder.input.sources.video.VideoSource
 import com.pedro.library.generic.GenericStream
 
 /** RTMP broadcast service with microphone audio and screen video. */
@@ -461,10 +463,22 @@ class RtmpBroadcastService : Service() {
             val streamMuted = getSharedPreferences(STATE_PREFS, MODE_PRIVATE).getBoolean(KEY_STREAM_AUDIO_MUTED, false)
             if (streamMuted) setAudioSourceMuted(audioSource, true)
 
+            // H2 scene seam: explicit opt-in only (default false). Production
+            // launches carry no extra, so the ScreenSource path below is
+            // byte-identical in behavior; SceneSource is device-tested via
+            // `am start ... --ez scene_source true` before GO LIVE.
+            val useSceneSource = intent.getBooleanExtra(EXTRA_SCENE_SOURCE, false)
+            Log.i(TAG, "Video source: " + if (useSceneSource) "SceneSource compositor passthrough"
+                else "ScreenSource direct passthrough")
+            val videoSource: VideoSource = if (useSceneSource) {
+                SceneSource(mediaProjection, dpi)
+            } else {
+                ScreenSource(this, mediaProjection)
+            }
             val stream = GenericStream(
                 this,
                 checker,
-                ScreenSource(this, mediaProjection),
+                videoSource,
                 audioSource
             )
             stream.forceCodecType(CodecUtil.CodecType.HARDWARE, CodecUtil.CodecType.FIRST_COMPATIBLE_FOUND)
@@ -807,6 +821,7 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_FPS = "fps"
         const val EXTRA_ORIENTATION = "orientation"
         const val EXTRA_AUDIO_MODE = "audio_mode"
+        const val EXTRA_SCENE_SOURCE = "scene_source"
         const val AUDIO_MODE_MIC = "MIC"
         const val AUDIO_MODE_GAME = "GAME"
         const val AUDIO_MODE_BOTH = "BOTH"

@@ -151,6 +151,12 @@ class MainActivity : ComponentActivity() {
                 putExtra(RtmpBroadcastService.EXTRA_FPS, fps.toInt())
                 putExtra(RtmpBroadcastService.EXTRA_ORIENTATION, orientation)
                 putExtra(RtmpBroadcastService.EXTRA_AUDIO_MODE, audioMode)
+                // H2 scene seam: forwarded from our own launch intent (default
+                // false) so `am start ... --ez scene_source true` can select
+                // the compositor for device validation. Normal launches omit
+                // it, keeping the ScreenSource production path identical.
+                putExtra(RtmpBroadcastService.EXTRA_SCENE_SOURCE,
+                    getIntent().getBooleanExtra(RtmpBroadcastService.EXTRA_SCENE_SOURCE, false))
             }
             try {
                 startForegroundService(liveIntent)
