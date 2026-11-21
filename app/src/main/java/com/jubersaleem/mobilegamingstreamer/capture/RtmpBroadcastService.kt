@@ -478,13 +478,15 @@ class RtmpBroadcastService : Service() {
             val sceneFallbackDone = intent.getBooleanExtra(EXTRA_SCENE_FALLBACK_DONE, false)
             // Sanitized: text length only, never content.
             val sceneText = intent.getStringExtra(EXTRA_SCENE_TEXT)
+            val sceneText2 = intent.getStringExtra(EXTRA_SCENE_TEXT2)
             Log.i(TAG, "Video source requested=" + if (useSceneSource) "SceneSource" else "ScreenSource" +
                 " selected=" + if (useSceneSource) "SceneSource compositor passthrough"
                 else "ScreenSource direct passthrough" +
                 if (sceneFallbackDone) " (scene fallback retry)" else "" +
-                if (useSceneSource && !sceneText.isNullOrBlank()) " text=${sceneText.length} chars" else "")
+                if (useSceneSource && !sceneText.isNullOrBlank()) " text=${sceneText.length} chars" else "" +
+                if (useSceneSource && !sceneText2.isNullOrBlank()) " text2=${sceneText2.length} chars" else "")
             val videoSource: VideoSource = if (useSceneSource) {
-                SceneSource(this, mediaProjection, sceneText)
+                SceneSource(this, mediaProjection, sceneText, sceneText2)
             } else {
                 ScreenSource(this, mediaProjection)
             }
@@ -858,6 +860,7 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_SCENE_FALLBACK_DONE = "scene_fallback_done"
         const val EXTRA_SCENE_FALLBACK_REASON = "scene_fallback_reason"
         const val EXTRA_SCENE_TEXT = "scene_text"
+        const val EXTRA_SCENE_TEXT2 = "scene_text2"
         const val AUDIO_MODE_MIC = "MIC"
         const val AUDIO_MODE_GAME = "GAME"
         const val AUDIO_MODE_BOTH = "BOTH"

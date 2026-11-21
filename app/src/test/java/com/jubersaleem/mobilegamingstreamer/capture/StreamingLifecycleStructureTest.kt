@@ -40,6 +40,9 @@ class StreamingLifecycleStructureTest {
 
     private fun manifest(): String = source("AndroidManifest.xml")
 
+    private fun sceneSource(): String =
+        source("java/com/jubersaleem/mobilegamingstreamer/scene/SceneSource.kt")
+
     /** Body of the first function whose declaration contains [marker]. */
     private fun functionBody(src: String, marker: String): String {
         val decl = src.indexOf(marker)
@@ -146,5 +149,44 @@ class StreamingLifecycleStructureTest {
     fun sceneSeamStaysDefaultOff() {
         assertTrue(service().contains("getBooleanExtra(EXTRA_SCENE_SOURCE, false)"))
         assertTrue(activity().contains("EXTRA_SCENE_SOURCE, false"))
+    }
+
+    @Test
+    fun sceneText2SeamForwardedBothEnds() {
+        // H4 second overlay: null-absent by default, forwarded activity ->
+        // service -> SceneSource like the H3 text seam.
+        assertTrue(service().contains("getStringExtra(EXTRA_SCENE_TEXT2)"))
+        assertTrue(activity().contains("EXTRA_SCENE_TEXT2"))
+        assertTrue(sceneSource().contains("subtextContent"))
+    }
+
+    @Test
+    fun fallbackRetryPreservesSceneExtras() {
+        // The one-shot fallback retries with a COPY of the start intent, so
+        // scene_text/scene_text2 (and all other extras) survive; only the
+        // source selection flips. A rebuilt-from-scratch intent would drop
+        // them and silently change the session.
+        val body = functionBody(service(), "private fun startBroadcast(intent: Intent)")
+        assertTrue(body.contains("startBroadcast(Intent(intent)"))
+        assertTrue(body.contains("EXTRA_SCENE_SOURCE, false"))
+        assertTrue(body.contains("EXTRA_SCENE_FALLBACK_DONE, true"))
+    }
+
+    @Test
+    fun projectionRevocationFlipsGuardWithoutStopping() {
+        // Revocation flips the frame guard; teardown authority stays with
+        // the service/library stop path — the source never stops anything.
+        val src = sceneSource()
+        assertTrue(src.contains("registerCallback"))
+        assertTrue(src.contains("onProjectionRevoked"))
+        assertFalse(src.contains("stopSelf"))
+        assertFalse(src.contains("ACTION_STOP"))
+        // Scoped to the revocation callback itself (file-level text also
+        // matches design comments): guard flip only, no teardown trigger.
+        val onStop = functionBody(src, "override fun onStop()")
+        assertTrue(onStop.contains("onProjectionRevoked"))
+        assertFalse(onStop.contains("requestRelease"))
+        assertFalse(onStop.contains("performTeardown"))
+        assertFalse(onStop.contains("teardown()"))
     }
 }

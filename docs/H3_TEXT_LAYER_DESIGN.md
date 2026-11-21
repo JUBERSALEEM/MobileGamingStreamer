@@ -45,6 +45,9 @@ the original screen passthrough bit-for-bit when the layer is off.
   path implements it (OES draw, then text draw). `SceneLayer`/
   `SceneComposition` stay metadata-only at runtime — no GL-thread model
   consumption, by design (static layer, zero per-frame model traffic).
+  H4 update: the H4 stack makes `SceneComposition` the genuine runtime
+  draw-order substrate (`SceneOverlayStack.resolve`, init-time only); the
+  H3 single layer still performs zero per-frame model traffic.
 - Activation strictly through the existing default-disabled `SceneSource`
   test seam: no overlay renders unless the SceneSource path is explicitly
   activated AND text content is provided (absent content = passthrough).

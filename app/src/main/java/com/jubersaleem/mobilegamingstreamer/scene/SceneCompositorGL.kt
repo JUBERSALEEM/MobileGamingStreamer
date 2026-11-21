@@ -35,8 +35,8 @@ import java.util.concurrent.TimeUnit
  *
  * Frame path (all on [workerThread]): input SurfaceTexture arrival →
  * `updateTexImage` → capture timestamp → controller offer → fullscreen OES
- * passthrough draw (+ optional H3 text quad) → presentation timestamp →
- * swap into the library ST.
+ * passthrough draw (+ optional H4 overlay quads) → presentation timestamp
+ * → swap into the library ST.
  *
  * Ownership (see the architecture doc for the full map):
  * - Owns: GL thread + handler, EGL display/context/surface/program, OES
@@ -55,11 +55,33 @@ import java.util.concurrent.TimeUnit
 internal const val GL_INIT_TIMEOUT_MS = 5_000L
 internal const val GL_TEARDOWN_TIMEOUT_MS = 5_000L
 
+/**
+ * One static overlay's GL resources. Slots are preallocated once (fixed
+ * array, never resized); only the used prefix is live between init and
+ * EGL teardown.
+ */
+private class OverlaySlot {
+    var textureId: Int = 0
+    var quadBuffer: FloatBuffer? = null
+    var alpha: Float = 1f
+    var bitmap: Bitmap? = null
+}
+
+/** Init-latch scratch: one requested overlay with its measurement. */
+private data class MeasuredOverlay(
+    val spec: SceneOverlaySpec,
+    val content: String,
+    val measured: SceneSizePx,
+    val offsetLeft: Int,
+    val offsetTop: Int
+)
+
 internal class SceneCompositorGL(
     private val controller: SceneCompositorController,
     private val outputSurface: Surface,
     private val layout: SceneSourceLayout,
-    private val textContent: String?
+    private val textContent: String?,
+    private val subtextContent: String?
 ) : SurfaceTexture.OnFrameAvailableListener {
 
     private var workerThread: HandlerThread? = null
@@ -79,16 +101,13 @@ internal class SceneCompositorGL(
     private var aTextureHandle = -1
     private var uMvpHandle = -1
     private var uStMatrixHandle = -1
-    private var textProgram: Int = 0
-    private var textTextureId: Int = 0
-    private var textBitmap: Bitmap? = null
-    private var textQuadBuffer: FloatBuffer? = null
-    private var textPositionHandle = -1
-    private var textCoordHandle = -1
+    private var overlayProgram: Int = 0
+    private var overlayPositionHandle = -1
+    private var overlayCoordHandle = -1
     private var uSamplerHandle = -1
     private var uAlphaHandle = -1
-    private var textAlpha = 1f
-    private var textVisible = false
+    private val overlaySlots = Array(MAX_STATIC_OVERLAY_LAYERS) { OverlaySlot() }
+    private var overlaySlotCount = 0
     private val mvpMatrix = FloatArray(16)
     private val stMatrix = FloatArray(16)
     private var vertexBuffer: FloatBuffer? = null
@@ -222,7 +241,7 @@ internal class SceneCompositorGL(
         if (handle == null) return // Counted drop/reject: skip the draw.
         try {
             drawFrameLocked(surfaceTexture)
-            if (textVisible) drawTextLocked()
+            for (index in 0 until overlaySlotCount) drawOverlaySlotLocked(overlaySlots[index])
             // EGL_ANDROID_presentation_time: present-time is timestamp currency
             // for EGL producers (per the SurfaceTexture contract), so the
             // captured monotonic-nanoseconds timestamp keeps its clock domain
@@ -347,7 +366,7 @@ internal class SceneCompositorGL(
         inputSurfaceTexture = surfaceTexture
         val surface = Surface(surfaceTexture)
         inputSurface = surface
-        initTextLayerLocked()
+        initOverlayStackLocked()
         glReady = true
         Log.i(TAG, "compositor ready: input=${layout.displayWidth}x${layout.displayHeight} " +
             "output=${layout.outputWidth}x${layout.outputHeight}")
@@ -381,26 +400,29 @@ internal class SceneCompositorGL(
 
     private fun releaseEglLocked() {
         glReady = false
-        // Text objects die first (reverse of creation), inside the same EGL
-        // step that owns the OES program — see the teardown-order contract
-        // pinned in SceneCompositorControllerTest.
+        // Overlay slots die first (reverse of creation), inside the same
+        // EGL step that owns the OES program — see the teardown-order
+        // contract pinned in SceneCompositorControllerTest.
+        for (index in 0 until overlaySlotCount) {
+            val slot = overlaySlots[index]
+            try {
+                if (slot.textureId != 0) GLES20.glDeleteTextures(1, intArrayOf(slot.textureId), 0)
+            } catch (_: Exception) {
+            }
+            slot.textureId = 0
+            try {
+                slot.bitmap?.recycle()
+            } catch (_: Exception) {
+            }
+            slot.bitmap = null
+            slot.quadBuffer = null
+        }
+        overlaySlotCount = 0
         try {
-            if (textProgram != 0) GLES20.glDeleteProgram(textProgram)
+            if (overlayProgram != 0) GLES20.glDeleteProgram(overlayProgram)
         } catch (_: Exception) {
         }
-        textProgram = 0
-        try {
-            if (textTextureId != 0) GLES20.glDeleteTextures(1, intArrayOf(textTextureId), 0)
-        } catch (_: Exception) {
-        }
-        textTextureId = 0
-        try {
-            textBitmap?.recycle()
-        } catch (_: Exception) {
-        }
-        textBitmap = null
-        textQuadBuffer = null
-        textVisible = false
+        overlayProgram = 0
         try {
             if (program != 0) GLES20.glDeleteProgram(program)
         } catch (_: Exception) {
@@ -475,98 +497,142 @@ internal class SceneCompositorGL(
     }
 
     /**
-     * H3 text layer setup (GL thread, inside init latch): measure, raster
-     * once, upload once, build the blend program. No-op when no text was
-     * requested (passthrough). Throws loudly on any failure — a half-built
-     * layer never reaches the frame path.
+     * H4 overlay-stack setup (GL thread, inside init latch): build specs
+     * from requested content, measure, resolve the stack, then raster once
+     * and upload once per layer and build the shared blend program. No-op
+     * when no overlay was requested (passthrough). Throws loudly on any
+     * failure — a half-built stack never reaches the frame path.
      */
-    private fun initTextLayerLocked() {
-        val content = textContent
-        if (content.isNullOrBlank()) return
+    private fun initOverlayStackLocked() {
         val outW = layout.outputWidth
         val outH = layout.outputHeight
-        val spec = SceneTextLayerSpec.of(
-            text = content,
-            marginPx = SceneTextLayerLayout.marginPxFor(outH),
-            maxWidthPx = outW,
-            alpha = 1f
-        ) ?: throw RuntimeException("text layer spec invalid")
+        val margin = SceneTextLayerLayout.marginPxFor(outH)
+        val textSizePx = SceneTextLayerLayout.textSizePxFor(outH)
+        val requests = mutableListOf<SceneOverlaySpec>()
+        val contents = mutableListOf<String>()
+        fun request(id: String, content: String?, anchor: SceneOverlayAnchor, z: Int) {
+            if (content.isNullOrBlank()) return
+            contents.add(content)
+            requests.add(
+                SceneOverlaySpec.of(
+                    id = id,
+                    text = content,
+                    anchor = anchor,
+                    zOrder = z,
+                    marginPx = margin,
+                    maxWidthPx = outW,
+                    alpha = 1f
+                ) ?: throw RuntimeException("overlay spec invalid: $id")
+            )
+        }
+        // Fixed H4 mapping: primary text top-left above passthrough, second
+        // text bottom-left above that. Per-layer alpha/visibility config is
+        // an H5 decision; runtime fixes alpha=1 and derives visibility from
+        // content presence.
+        request(TEXT_LAYER_ID, textContent, SceneOverlayAnchor.TOP_LEFT, 1)
+        request(SUBTEXT_LAYER_ID, subtextContent, SceneOverlayAnchor.BOTTOM_LEFT, 2)
+        if (requests.isEmpty()) return
         val paint = Paint().apply {
             isAntiAlias = true
             color = Color.WHITE
-            textSize = SceneTextLayerLayout.textSizePxFor(outH).toFloat()
+            textSize = textSizePx.toFloat()
         }
-        if (paint.textSize <= 0f) throw RuntimeException("text size invalid for height=$outH")
+        if (paint.textSize <= 0f) throw RuntimeException("overlay text size invalid for height=$outH")
         val bounds = Rect()
-        paint.getTextBounds(content, 0, content.length, bounds)
-        val rect = SceneTextLayerLayout.layout(
-            SceneCanvas(outW, outH), SceneSizePx(bounds.width(), bounds.height()), spec
-        ) ?: throw RuntimeException("text layer does not fit ${outW}x${outH}")
-        val bitmap = Bitmap.createBitmap(rect.width, rect.height, Bitmap.Config.ARGB_8888)
-        Canvas(bitmap).drawText(content, -bounds.left.toFloat(), -bounds.top.toFloat(), paint)
-        textBitmap = bitmap
+        val measured = requests.mapIndexed { index, spec ->
+            val content = contents[index]
+            paint.getTextBounds(content, 0, content.length, bounds)
+            MeasuredOverlay(
+                spec = spec,
+                content = content,
+                measured = SceneSizePx(bounds.width(), bounds.height()),
+                offsetLeft = bounds.left,
+                offsetTop = bounds.top
+            )
+        }
+        val entries = SceneOverlayStack.resolve(
+            SceneCanvas(outW, outH),
+            measured.map { SceneOverlayLayerInput(it.spec, it.measured) }
+        ) ?: throw RuntimeException("overlay stack invalid for ${outW}x${outH}")
+        if (entries.isEmpty()) return // Defensive: requests non-empty and all enabled.
+        overlayProgram = buildProgramFor(
+            OVERLAY_VERTEX_SHADER.trimIndent(), OVERLAY_FRAGMENT_SHADER.trimIndent()
+        )
+        overlayPositionHandle = GLES20.glGetAttribLocation(overlayProgram, "aPosition")
+        overlayCoordHandle = GLES20.glGetAttribLocation(overlayProgram, "aTextureCoord")
+        uSamplerHandle = GLES20.glGetUniformLocation(overlayProgram, "uSampler")
+        uAlphaHandle = GLES20.glGetUniformLocation(overlayProgram, "uAlpha")
+        val byId = measured.associateBy { it.spec.id }
         val textures = IntArray(1)
-        GLES20.glGenTextures(1, textures, 0)
-        checkGl("glGenTextures(text)")
-        textTextureId = textures[0]
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textTextureId)
-        GLES20.glTexParameteri(
-            GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR
-        )
-        GLES20.glTexParameteri(
-            GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR
-        )
-        GLES20.glTexParameteri(
-            GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE
-        )
-        GLES20.glTexParameteri(
-            GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE
-        )
-        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
-        checkGl("text texture upload")
-        textProgram = buildProgramFor(TEXT_VERTEX_SHADER.trimIndent(), TEXT_FRAGMENT_SHADER.trimIndent())
-        textPositionHandle = GLES20.glGetAttribLocation(textProgram, "aPosition")
-        textCoordHandle = GLES20.glGetAttribLocation(textProgram, "aTextureCoord")
-        uSamplerHandle = GLES20.glGetUniformLocation(textProgram, "uSampler")
-        uAlphaHandle = GLES20.glGetUniformLocation(textProgram, "uAlpha")
-        val quad = SceneTextLayerLayout.ndcQuad(rect, outW, outH)
-            ?: throw RuntimeException("text NDC mapping failed")
-        textQuadBuffer = floatBufferOf(quad)
-        textAlpha = spec.alpha
-        textVisible = true
-        Log.i(TAG, "text layer ready: ${content.length} chars ${rect.width}x${rect.height}")
+        for ((slotIndex, entry) in entries.withIndex()) {
+            val layer = byId.getValue(entry.id)
+            val rect = entry.rectPx
+            val slot = overlaySlots[slotIndex]
+            // Count first: if any step below throws, teardown deletes and
+            // recycles exactly the slots claimed so far — no leak, no
+            // half-built slot on the frame path.
+            overlaySlotCount = slotIndex + 1
+            val bitmap = Bitmap.createBitmap(rect.width, rect.height, Bitmap.Config.ARGB_8888)
+            Canvas(bitmap).drawText(
+                layer.content, -layer.offsetLeft.toFloat(), -layer.offsetTop.toFloat(), paint
+            )
+            slot.bitmap = bitmap
+            GLES20.glGenTextures(1, textures, 0)
+            checkGl("glGenTextures(overlay)")
+            slot.textureId = textures[0]
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, slot.textureId)
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR
+            )
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR
+            )
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE
+            )
+            GLES20.glTexParameteri(
+                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE
+            )
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+            checkGl("overlay texture upload")
+            slot.quadBuffer = floatBufferOf(entry.ndcQuad)
+            slot.alpha = entry.alpha
+            // Sanitized: layer id + text length only, never content.
+            Log.i(TAG, "overlay ready: ${entry.id} ${layer.content.length} chars " +
+                "${rect.width}x${rect.height}")
+        }
     }
 
     /**
-     * Draws the static text quad over the passthrough frame (GL thread).
-     * Blend is enabled for this draw only; per-frame state (buffers,
-     * texture unit) is fully re-specified, so passthrough draws before and
-     * after are unaffected.
+     * Draws one static overlay quad over the passthrough frame (GL thread).
+     * Blend is enabled for this draw only; per-draw state (program,
+     * buffers, texture unit) is fully re-specified, so the passthrough
+     * draw and sibling slots are unaffected.
      */
-    private fun drawTextLocked() {
-        val quad = textQuadBuffer
+    private fun drawOverlaySlotLocked(slot: OverlaySlot) {
+        val quad = slot.quadBuffer
         val texCoords = texCoordBuffer
-        if (quad == null || texCoords == null || textProgram == 0 || textTextureId == 0) {
-            throw RuntimeException("text layer state missing")
+        if (quad == null || texCoords == null || overlayProgram == 0 || slot.textureId == 0) {
+            throw RuntimeException("overlay slot state missing")
         }
-        GLES20.glUseProgram(textProgram)
+        GLES20.glUseProgram(overlayProgram)
         quad.position(0)
-        GLES20.glVertexAttribPointer(textPositionHandle, 2, GLES20.GL_FLOAT, false, 0, quad)
-        GLES20.glEnableVertexAttribArray(textPositionHandle)
+        GLES20.glVertexAttribPointer(overlayPositionHandle, 2, GLES20.GL_FLOAT, false, 0, quad)
+        GLES20.glEnableVertexAttribArray(overlayPositionHandle)
         texCoords.position(0)
-        GLES20.glVertexAttribPointer(textCoordHandle, 2, GLES20.GL_FLOAT, false, 0, texCoords)
-        GLES20.glEnableVertexAttribArray(textCoordHandle)
-        GLES20.glUniform1f(uAlphaHandle, textAlpha)
+        GLES20.glVertexAttribPointer(overlayCoordHandle, 2, GLES20.GL_FLOAT, false, 0, texCoords)
+        GLES20.glEnableVertexAttribArray(overlayCoordHandle)
+        GLES20.glUniform1f(uAlphaHandle, slot.alpha)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textTextureId)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, slot.textureId)
         GLES20.glUniform1i(uSamplerHandle, 0)
         GLES20.glEnable(GLES20.GL_BLEND)
         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         GLES20.glDisable(GLES20.GL_BLEND)
-        GLES20.glDisableVertexAttribArray(textPositionHandle)
-        GLES20.glDisableVertexAttribArray(textCoordHandle)
-        checkGl("text draw")
+        GLES20.glDisableVertexAttribArray(overlayPositionHandle)
+        GLES20.glDisableVertexAttribArray(overlayCoordHandle)
+        checkGl("overlay draw")
     }
 
     private fun buildProgramFor(vertexSource: String, fragmentSource: String): Int {
@@ -661,7 +727,7 @@ internal class SceneCompositorGL(
               gl_FragColor = texture2D(uSampler, vTextureCoord);
             }
         """
-        private const val TEXT_VERTEX_SHADER = """
+        private const val OVERLAY_VERTEX_SHADER = """
             attribute vec4 aPosition;
             attribute vec2 aTextureCoord;
             varying vec2 vTextureCoord;
@@ -670,7 +736,7 @@ internal class SceneCompositorGL(
               vTextureCoord = aTextureCoord;
             }
         """
-        private const val TEXT_FRAGMENT_SHADER = """
+        private const val OVERLAY_FRAGMENT_SHADER = """
             precision mediump float;
             varying vec2 vTextureCoord;
             uniform sampler2D uSampler;

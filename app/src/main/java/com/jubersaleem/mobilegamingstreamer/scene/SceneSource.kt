@@ -45,7 +45,8 @@ import com.pedro.encoder.input.sources.video.VideoSource
 class SceneSource(
     context: Context,
     private val mediaProjection: MediaProjection,
-    private val textContent: String? = null
+    private val textContent: String? = null,
+    private val subtextContent: String? = null
 ) : VideoSource() {
 
     // Mirrors ScreenSource: dpi snapshot from context, context not retained.
@@ -80,7 +81,7 @@ class SceneSource(
         try {
             val output = Surface(librarySurfaceTexture)
             outputSurface = output
-            val gl = SceneCompositorGL(controller, output, activeLayout, textContent)
+            val gl = SceneCompositorGL(controller, output, activeLayout, textContent, subtextContent)
             compositor = gl
             val input = gl.start() // Latch-inits EGL + input endpoint; throws on failure.
             val callback = object : MediaProjection.Callback() {
@@ -102,7 +103,8 @@ class SceneSource(
             virtualDisplay = display
             // Sanitized: text length only, never content.
             Log.i(TAG, "started: ${activeLayout.displayWidth}x${activeLayout.displayHeight} dpi=$densityDpi" +
-                if (textContent.isNullOrBlank()) "" else " text=${textContent.length} chars")
+                if (textContent.isNullOrBlank()) "" else " text=${textContent.length} chars" +
+                if (subtextContent.isNullOrBlank()) "" else " text2=${subtextContent.length} chars")
         } catch (error: Throwable) {
             // Sanitized: framework error text only, never URLs or keys.
             Log.e(TAG, "SceneSource start failed (${error.message ?: error.javaClass.simpleName}); torn down", error)

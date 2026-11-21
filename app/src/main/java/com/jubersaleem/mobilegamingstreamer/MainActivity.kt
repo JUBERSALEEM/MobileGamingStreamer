@@ -160,6 +160,9 @@ class MainActivity : ComponentActivity() {
                 // H3 text layer: forwarded content (absent/null = no overlay).
                 putExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT,
                     getIntent().getStringExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT))
+                // H4 second overlay: forwarded content (absent/null = no layer).
+                putExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT2,
+                    getIntent().getStringExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT2))
             }
             try {
                 startForegroundService(liveIntent)

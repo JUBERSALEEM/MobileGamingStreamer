@@ -20,6 +20,7 @@ package com.jubersaleem.mobilegamingstreamer.scene
 internal const val MAX_TEXT_LAYER_CHARS = 64
 internal const val SCREEN_LAYER_ID = "screen"
 internal const val TEXT_LAYER_ID = "text"
+internal const val SUBTEXT_LAYER_ID = "subtext"
 
 /**
  * Validated static-text specification. [of] returns null (never throws)
