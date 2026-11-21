@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Clay-toned studio mark used inside the app and on the floating control bubble. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#E6E1F2"
+        android:pathData="M54,9 C78.85,9 99,29.15 99,54 C99,78.85 78.85,99 54,99 C29.15,99 9,78.85 9,54 C9,29.15 29.15,9 54,9 Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:pathData="M26,38 C29,27 39,20 51,19 M82,38 C79,27 69,20 57,19" />
+    <path
+        android:fillColor="#E4736B"
+        android:pathData="M31,31 C31,27 34,24 38,24 L49,24 L49,31 L39,31 L39,77 L49,77 L49,84 L38,84 C34,84 31,81 31,77 Z" />
+    <path
+        android:fillColor="#E4736B"
+        android:pathData="M53,30 C53,26 57,24 60,26 L82,49 C85,52 85,56 82,59 L60,82 C57,85 53,82 53,78 Z" />
+    <path
+        android:fillColor="#2A2740"
+        android:pathData="M62,40 L76,54 L62,68 Z" />
+    <path
+        android:fillColor="#7A6AB8"
+        android:pathData="M21,51 L25,51 L25,57 L21,57 Z M87,51 L91,51 L91,57 L87,57 Z" />
+    <path
+        android:fillColor="#C9C2E0"
+        android:pathData="M45,14 L63,14 L63,18 L45,18 Z" />
+</vector>

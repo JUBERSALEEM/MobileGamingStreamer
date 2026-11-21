@@ -1,63 +1,98 @@
 package com.jubersaleem.mobilegamingstreamer
 
 import android.Manifest
-import android.content.Intent
-import android.content.ComponentName
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.net.Uri
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.jubersaleem.mobilegamingstreamer.capture.MgsMicAccessibilityService
 import com.jubersaleem.mobilegamingstreamer.capture.RtmpBroadcastService
 import com.jubersaleem.mobilegamingstreamer.capture.ScreenCaptureService
 import com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService
+import com.jubersaleem.mobilegamingstreamer.scene.ALL_SCENES_COLLECTION_ID
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_COLLECTION_NAME_CHARS
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_SCENE_NAME_CHARS
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_STATIC_OVERLAY_LAYERS
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_STORED_COLLECTIONS
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_STORED_SCENES
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_STYLE_BORDER_PX
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_STYLE_RADIUS_PX
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_STYLE_SHADOW_PX
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_TEXT_LAYER_CHARS
+import com.jubersaleem.mobilegamingstreamer.scene.SceneCollectionCodec
+import com.jubersaleem.mobilegamingstreamer.scene.SceneCollectionStore
+import com.jubersaleem.mobilegamingstreamer.scene.SceneConfigCodec
+import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerKind
+import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
+import com.jubersaleem.mobilegamingstreamer.scene.SceneScaleMode
+import com.jubersaleem.mobilegamingstreamer.scene.SceneTextLayerLayout
+import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
+import com.jubersaleem.mobilegamingstreamer.scene.StreamSceneCollection
+import com.jubersaleem.mobilegamingstreamer.scene.SceneTransition
+import com.jubersaleem.mobilegamingstreamer.scene.StreamSceneLayer
 
 class MainActivity : ComponentActivity() {
     private var status by mutableStateOf("Ready to stream")
     private var liveBitrate by mutableStateOf(0L)
-    private var page by mutableStateOf("SETUP")
-    private var themeMode by mutableStateOf("CLASSIC")
-    private var showAccessibilityDisclosure by mutableStateOf(false)
-    private var accessibilityDisclosureAccepted by mutableStateOf(false)
+    private var page by mutableStateOf("STUDIO")
+    private var showStreamKeyDialog by mutableStateOf(false)
     private var captureActive by mutableStateOf(false)
     private var broadcastActive by mutableStateOf(false)
     private var broadcastStarting by mutableStateOf(false)
     private var notificationsAllowed by mutableStateOf(true)
-    private var accessibilityEnabled by mutableStateOf(false)
+    private var accessibilityMicEnabled by mutableStateOf(false)
+    private var aecActive by mutableStateOf(false)
+    private var nsActive by mutableStateOf(false)
+    private var voiceOptimizationActive by mutableStateOf(false)
+    private var micSource by mutableStateOf(AudioRouteLabels.SOURCE_NONE)
+    private var headsetConnected by mutableStateOf(false)
+    private var streamAudioMuted by mutableStateOf(false)
+    private var audioCaptureActive by mutableStateOf(false)
+    private var showAccessibilityDisclosure by mutableStateOf(false)
     private var server by mutableStateOf("rtmp://a.rtmp.youtube.com/live2")
     private var key by mutableStateOf("")
+    private var rememberStreamKey by mutableStateOf(true)
     private var quality by mutableStateOf("1080p")
     private var fps by mutableStateOf("30")
     private var orientation by mutableStateOf("LANDSCAPE")
     private var audioMode by mutableStateOf("BALANCED")
     private var pendingLive by mutableStateOf(false)
     private var waitingForOverlayPermission = false
-    private var waitingForAccessibility = false
+    private var lastAnnouncedKind = BroadcastStatusKind.STANDBY
+    private var scenes by mutableStateOf(listOf<StreamScene>())
+    private var sceneTransition by mutableStateOf(SceneTransition.DEFAULT)
+    private var activeSceneId by mutableStateOf<String?>(null)
+    private var editingSceneId by mutableStateOf<String?>(null)
+    private var sceneDeleteTargetId by mutableStateOf<String?>(null)
+    private var sceneError by mutableStateOf<String?>(null)
+    private var sceneCollections by mutableStateOf(listOf<StreamSceneCollection>())
+    private var activeCollectionId by mutableStateOf(ALL_SCENES_COLLECTION_ID)
+    private var defaultCollectionId by mutableStateOf(ALL_SCENES_COLLECTION_ID)
+    private var collectionDeleteTargetId by mutableStateOf<String?>(null)
+    private var videoPaused by mutableStateOf(false)
+    private var pendingImageSceneId: String? = null
+    private var pendingVideoSceneId: String? = null
+    private var pendingVideoReplaceLayerId: String? = null
+    private val videoPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        onVideoPicked(uri)
+    }
+    private var pendingImageReplaceLayerId: String? = null
+    private val imagePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        onImagePicked(uri)
+    }
 
     private val broadcastStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -65,16 +100,39 @@ class MainActivity : ComponentActivity() {
             broadcastActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_ACTIVE, false)
             status = intent.getStringExtra(RtmpBroadcastService.EXTRA_STATUS_MESSAGE) ?: status
             liveBitrate = intent.getLongExtra(RtmpBroadcastService.EXTRA_STATUS_BITRATE, 0L)
-            broadcastStarting = !broadcastActive && listOf("Preparing", "Encoder ready", "Connecting", "RTMP connected", "Waiting for", "Stream key accepted", "60 FPS unavailable").any { status.contains(it, ignoreCase = true) }
+            aecActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_AEC, false)
+            nsActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_NS, false)
+            voiceOptimizationActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_VOICE, false)
+            micSource = intent.getIntExtra(RtmpBroadcastService.EXTRA_STATUS_MIC_SOURCE, AudioRouteLabels.SOURCE_NONE)
+            headsetConnected = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_HEADSET, false)
+            streamAudioMuted = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_STREAM_MUTED, false)
+            videoPaused = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_VIDEO_PAUSED, false)
+            audioCaptureActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_CAPTURE, false)
+            broadcastStarting = !broadcastActive && isStartingBroadcastMessage(status)
+            val kind = classifyBroadcastStatus(status, broadcastActive, broadcastStarting)
+            if (kind != lastAnnouncedKind) {
+                lastAnnouncedKind = kind
+                window.decorView?.announceForAccessibility(broadcastAnnouncement(kind, status))
+            }
         }
     }
 
     private fun restoreBroadcastState() {
         val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
-        broadcastActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
+        val savedActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
+        val heartbeat = prefs.getLong(RtmpBroadcastService.KEY_HEARTBEAT, 0L)
+        val sessionFresh = heartbeat > 0L && System.currentTimeMillis() - heartbeat <= 8_000L
+        broadcastActive = savedActive && sessionFresh
         broadcastStarting = false
-        status = prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Ready to stream") ?: "Ready to stream"
-        liveBitrate = prefs.getLong(RtmpBroadcastService.KEY_BITRATE, 0L)
+        status = if (savedActive && !sessionFresh) {
+            prefs.edit().putBoolean(RtmpBroadcastService.KEY_ACTIVE, false).putLong(RtmpBroadcastService.KEY_BITRATE, 0L).apply()
+            "Previous broadcast ended unexpectedly"
+        } else {
+            prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Ready to stream") ?: "Ready to stream"
+        }
+        liveBitrate = if (broadcastActive) prefs.getLong(RtmpBroadcastService.KEY_BITRATE, 0L) else 0L
+        // Seed the announcement tracker silently so a cold start never speaks.
+        lastAnnouncedKind = classifyBroadcastStatus(status, broadcastActive, broadcastStarting)
     }
 
     @Suppress("UnspecifiedRegisterReceiverFlag")
@@ -93,18 +151,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        accessibilityEnabled = isAccessibilityServiceEnabled()
-        if (waitingForAccessibility) {
-            waitingForAccessibility = false
-            if (accessibilityEnabled) {
-                status = "Microphone concurrency enabled • continue screen capture setup"
-                if (pendingLive) requestProjection()
-            } else {
-                pendingLive = false
-                broadcastStarting = false
-                status = "Accessibility microphone access was not enabled"
-            }
-        }
+        accessibilityMicEnabled = MgsMicAccessibilityService.isEnabled(this)
         if (waitingForOverlayPermission) {
             waitingForOverlayPermission = false
             if (Settings.canDrawOverlays(this)) {
@@ -116,15 +163,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun isAccessibilityServiceEnabled(): Boolean {
-        val expected = ComponentName(this, com.jubersaleem.mobilegamingstreamer.capture.MicCompatibilityService::class.java)
-        val enabled = Settings.Secure.getString(
-            contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        ).orEmpty()
-        return enabled.split(':').any { ComponentName.unflattenFromString(it) == expected }
-    }
-
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         notificationsAllowed = it
     }
@@ -134,7 +172,7 @@ class MainActivity : ComponentActivity() {
         else {
             pendingLive = false
             broadcastStarting = false
-            status = "Microphone permission is required for voice audio"
+            status = "Audio permission is required for microphone or eligible game-audio capture"
         }
     }
 
@@ -156,6 +194,32 @@ class MainActivity : ComponentActivity() {
                 putExtra(RtmpBroadcastService.EXTRA_FPS, fps.toInt())
                 putExtra(RtmpBroadcastService.EXTRA_ORIENTATION, orientation)
                 putExtra(RtmpBroadcastService.EXTRA_AUDIO_MODE, audioMode)
+                // H2 scene seam: an explicit launch-intent extra (default
+                // false) selects the compositor for device validation via
+                // `am start ... --ez scene_source true`. The H5 editor path
+                // below activates the same seam only with a valid scene;
+                // normal launches omit both, keeping the ScreenSource
+                // production path identical.
+                val adbSceneSource =
+                    getIntent().getBooleanExtra(RtmpBroadcastService.EXTRA_SCENE_SOURCE, false)
+                val sceneConfig = SceneConfigCodec.activeSceneEncoding(scenes, activeSceneId)
+                putExtra(
+                    RtmpBroadcastService.EXTRA_SCENE_SOURCE,
+                    adbSceneSource || sceneConfig != null
+                )
+                // H3 text layer: forwarded content (absent/null = no overlay).
+                putExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT,
+                    getIntent().getStringExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT))
+                // H4 second overlay: forwarded content (absent/null = no layer).
+                putExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT2,
+                    getIntent().getStringExtra(RtmpBroadcastService.EXTRA_SCENE_TEXT2))
+                // H5 scene delivery: encoded active scene for the service
+                // (parsed through the pure codec + H4 validation there).
+                // Omitted on the legacy ADB path, which keeps H2/H3/H4
+                // extras behavior as the validation override.
+                if (!adbSceneSource && sceneConfig != null) {
+                    putExtra(RtmpBroadcastService.EXTRA_SCENE_CONFIG, sceneConfig)
+                }
             }
             try {
                 startForegroundService(liveIntent)
@@ -190,163 +254,612 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // H5 scenes: persisted source of truth, reloaded on every create
+        // (including Activity recreation); mutations write through.
+        val stored = ScenePrefsStore.load(this)
+        scenes = stored.scenes
+        activeSceneId = stored.activeSceneId
+        sceneTransition = ScenePrefsStore.loadTransition(this)
+        // K1: scenes load first (live scene untouched); collections
+        // resolve against the stored scene ids (absent keys → All).
+        val storedCollections = SceneCollectionStore(
+            getSharedPreferences(ScenePrefsStore.PREFS, MODE_PRIVATE)
+        ).load(scenes.map { it.id }.toSet())
+        sceneCollections = storedCollections.collections
+        activeCollectionId = storedCollections.activeCollectionId
+        defaultCollectionId = storedCollections.defaultCollectionId
         notificationsAllowed = Build.VERSION.SDK_INT < 33 ||
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         if (Build.VERSION.SDK_INT >= 33 && !notificationsAllowed) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         val appPreferences = getSharedPreferences("mgs_preferences", MODE_PRIVATE)
-        themeMode = appPreferences.getString("theme_mode", "CLASSIC") ?: "CLASSIC"
-        accessibilityDisclosureAccepted = appPreferences.getBoolean("accessibility_disclosure_accepted", false)
+        rememberStreamKey = appPreferences.getBoolean("remember_stream_key", true)
+        key = if (rememberStreamKey) StreamKeyVault.load(this).orEmpty() else ""
         setContent {
-            MgsTheme(mode = themeMode) {
-                val palette = LocalMgsPalette.current
-                if (showAccessibilityDisclosure) {
-                    AlertDialog(
-                        onDismissRequest = { showAccessibilityDisclosure = false; pendingLive = false; broadcastStarting = false },
-                        title = { Text("Microphone compatibility service") },
-                        text = {
-                            Text("Mobile Gaming Streamer uses Android Accessibility Service only to help keep microphone capture available while a game such as BGMI is using voice chat. The service does not subscribe to accessibility events, read screen text or content, inspect UI controls, click, type, or automate gameplay. When you start a stream, the microphone and any capturable game audio are sent to the RTMP destination you enter. You can turn this service off at any time in Android Settings.")
-                        },
-                        confirmButton = {
-                            Button(onClick = {
-                                showAccessibilityDisclosure = false
-                                accessibilityDisclosureAccepted = true
-                                getSharedPreferences("mgs_preferences", MODE_PRIVATE).edit().putBoolean("accessibility_disclosure_accepted", true).apply()
-                                if (isAccessibilityServiceEnabled()) {
-                                    waitingForAccessibility = false
-                                    if (pendingLive) requestProjection()
-                                } else {
-                                    waitingForAccessibility = true
-                                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                                }
-                            }) { Text("I AGREE • CONTINUE") }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showAccessibilityDisclosure = false; pendingLive = false; broadcastStarting = false }) { Text("NOT NOW") }
-                        }
-                    )
-                }
-                Surface(Modifier.fillMaxSize(), color = palette.background) {
-                    Column(
-                        Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState())
-                            .padding(horizontal = 18.dp, vertical = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        Header()
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            listOf("SETUP" to "Studio", "SETTINGS" to "Settings", "ABOUT" to "About").forEach { (target, label) ->
-                                FilterChip(selected = page == target, onClick = { page = target }, label = { Text(label, fontSize = 11.sp) }, modifier = Modifier.weight(1f))
-                            }
-                        }
-                        if (page == "SETTINGS") SettingsPage(themeMode, { selected ->
-                            themeMode = selected
-                            getSharedPreferences("mgs_preferences", MODE_PRIVATE).edit().putString("theme_mode", selected).apply()
-                        }, onTerms = { page = "TERMS" }, onPrivacy = { page = "PRIVACY" })
-                        else if (page == "ABOUT") AboutPage(onTerms = { page = "TERMS" }, onPrivacy = { page = "PRIVACY" })
-                        else if (page == "TERMS") LegalPage(title = "Terms & Conditions", body = TermsText, onBack = { page = "SETTINGS" })
-                        else if (page == "PRIVACY") LegalPage(title = "Privacy Policy", body = PrivacyText, onBack = { page = "SETTINGS" })
-                        if (page != "SETTINGS" && page != "ABOUT" && page != "TERMS" && page != "PRIVACY") {
-                        Hero(status, captureActive, broadcastActive, broadcastStarting)
-                        if (!notificationsAllowed) {
-                            Card(shape = RoundedCornerShape(if (palette.isClay) 30.dp else 12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 20.dp else 1.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-                                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("ENABLE NOTIFICATIONS", color = palette.primary, fontWeight = FontWeight.Bold)
-                                    Text("Android notifications show capture and live-stream status, with a stop control.", color = palette.muted)
-                                    Button(onClick = {
-                                        if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                    }) { Text("ALLOW NOTIFICATIONS") }
-                                }
-                            }
-                        }
-                        if (!accessibilityEnabled) {
-                            Card(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-                                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("ENABLE IN-GAME MIC COMPATIBILITY", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                                    Text("Android can silence a normal recorder while BGMI is using voice chat. Enable this app's Accessibility service so the stream can capture your microphone concurrently. This service does not read screen content.", color = palette.muted, fontSize = 11.sp, lineHeight = 15.sp)
-                                    Button(onClick = { showAccessibilityDisclosure = true }, modifier = Modifier.fillMaxWidth()) {
-                                        Text("OPEN ACCESSIBILITY SETTINGS")
-                                    }
-                                }
-                            }
-                        }
-                        if (page == "SETUP") {
-                            BroadcastPanel(server, { server = it }, key, { key = it },
-                                quality, { quality = it }, fps, { fps = it }, orientation, { orientation = it },
-                                audioMode, { audioMode = it },
-                                broadcastActive || broadcastStarting,
-                                onGoLive = {
-                                    if (broadcastActive) status = "Broadcast is already running"
-                                    else if (server.isBlank() || key.isBlank()) status = "Enter your server URL and stream key"
-                                    else if (!server.startsWith("rtmp://") && !server.startsWith("rtmps://")) status = "Server must begin with rtmp:// or rtmps://"
-                                    else {
-                                        pendingLive = true
-                                        broadcastStarting = true
-                                        if (!accessibilityDisclosureAccepted) {
-                                            showAccessibilityDisclosure = true
-                                            status = "Review the microphone compatibility disclosure to continue"
-                                        } else if (!isAccessibilityServiceEnabled()) {
-                                            waitingForAccessibility = true
-                                            status = "Enable microphone compatibility in Android Accessibility settings"
-                                            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                                        } else {
-                                            status = "Requesting screen/app selection permission…"
-                                            requestProjection()
-                                        }
-                                    }
-                                },
-                                onStopLive = { RtmpBroadcastService.requestStop(this@MainActivity) }
-                            )
-                            Text("FLOATING CONTROLS", color = palette.secondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            Text("Optional: allow Display over other apps. Streaming does not depend on this permission; the small control bubble appears after video is actually being sent.", color = palette.muted, fontSize = 11.sp)
-                            OutlinedButton(onClick = { enableFloatingControls() }, modifier = Modifier.fillMaxWidth()) {
-                                Text(if (Settings.canDrawOverlays(this@MainActivity)) "SHOW FLOATING CONTROLS" else "ENABLE FLOATING CONTROLS")
-                            }
-                        } else {
-                            Card(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-                                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text("LIVE SESSION", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                                    Text(if (broadcastActive) status else "No active broadcast", color = if (broadcastActive) palette.primary else palette.muted)
-                                    Text(if (broadcastActive && liveBitrate > 0) "${liveBitrate / 1000} kbps" else if (broadcastActive) "Waiting for bitrate…" else "0 kbps", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
-                                    OutlinedButton(onClick = { enableFloatingControls() }, modifier = Modifier.fillMaxWidth()) {
-                                        Text(if (Settings.canDrawOverlays(this@MainActivity)) "OPEN FLOATING CONTROLS" else "ENABLE FLOATING CONTROLS")
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(onClick = { page = "SETUP" }, modifier = Modifier.weight(1f)) { Text("BROADCAST SETUP") }
-                                        OutlinedButton(onClick = { RtmpBroadcastService.requestStop(this@MainActivity) }, enabled = broadcastActive || broadcastStarting, modifier = Modifier.weight(1f)) { Text("STOP LIVE") }
-                                    }
-                                }
-                            }
-                        }
-                        if (page == "HOME") Card(colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-                            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                Text("CAPTURE TEST", color = palette.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                                Text("Test the H.264 encoder without connecting to a streaming platform.", color = palette.muted)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
-                                        onClick = { pendingLive = false; requestProjection() },
-                                        enabled = !captureActive && !broadcastActive,
-                                        modifier = Modifier.weight(1f)
-                                    ) { Text("START TEST") }
-                                    OutlinedButton(
-                                        onClick = {
-                                            startService(Intent(this@MainActivity, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_STOP))
-                                            captureActive = false
-                                            status = "Capture stopped"
-                                        },
-                                        enabled = captureActive,
-                                        modifier = Modifier.weight(1f)
-                                    ) { Text("STOP TEST") }
-                                }
-                            }
-                        }
-                        if (page == "HOME") ModuleStatus(captureActive, broadcastActive)
-                        Text("Screen video • Microphone / game audio selectable", color = palette.muted, fontSize = 11.sp)
-                        }
+            MgsTheme {
+                BackHandler(enabled = page != "STUDIO") {
+                    page = when (page) {
+                        "ABOUT", "TERMS", "PRIVACY" -> "SETTINGS"
+                        else -> "STUDIO"
                     }
                 }
+                StudioShell(
+                    state = StudioUiState(
+                        page = page,
+                        status = status,
+                        captureActive = captureActive,
+                        broadcastActive = broadcastActive,
+                        videoPaused = videoPaused,
+                        broadcastStarting = broadcastStarting,
+                        liveBitrate = liveBitrate,
+                        notificationsAllowed = notificationsAllowed,
+                        accessibilityMicEnabled = accessibilityMicEnabled,
+                        aecActive = aecActive,
+                        nsActive = nsActive,
+                        voiceOptimizationActive = voiceOptimizationActive,
+                        micSource = micSource,
+                        headsetConnected = headsetConnected,
+                        streamAudioMuted = streamAudioMuted,
+                        audioCaptureActive = audioCaptureActive,
+                        floatingControlsAvailable = Settings.canDrawOverlays(this@MainActivity),
+                        server = server,
+                        key = key,
+                        rememberStreamKey = rememberStreamKey,
+                        quality = quality,
+                        fps = fps,
+                        orientation = orientation,
+                        audioMode = audioMode,
+                        showStreamKeyDialog = showStreamKeyDialog,
+                        showAccessibilityDisclosure = showAccessibilityDisclosure,
+                        scenes = scenes,
+                        activeSceneId = activeSceneId,
+                        editingSceneId = editingSceneId,
+                        sceneDeleteTargetName = scenes.firstOrNull { it.id == sceneDeleteTargetId }?.name,
+                        sceneError = sceneError,
+                        sceneTransition = sceneTransition,
+                        sceneCollections = sceneCollections,
+                        activeCollectionId = activeCollectionId,
+                        collectionDeleteTargetName = sceneCollections.firstOrNull { it.id == collectionDeleteTargetId }?.name
+                    ),
+                    actions = StudioActions(
+                        onPageChange = { target -> page = target },
+                        onGoLive = { startBroadcastFlow() },
+                        onStopLive = { RtmpBroadcastService.requestStop(this@MainActivity) },
+                        onAllowNotifications = {
+                            if (Build.VERSION.SDK_INT >= 33) {
+                                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                        },
+                        onStartCaptureTest = {
+                            pendingLive = false
+                            requestProjection()
+                        },
+                        onStopCaptureTest = {
+                            startService(
+                                Intent(this@MainActivity, ScreenCaptureService::class.java)
+                                    .setAction(ScreenCaptureService.ACTION_STOP)
+                            )
+                            captureActive = false
+                            status = "Capture stopped"
+                        },
+                        onEnableFloatingControls = { enableFloatingControls() },
+                        onEnableAccessibility = { showAccessibilityDisclosure = true },
+                        onDismissAccessibility = { showAccessibilityDisclosure = false },
+                        onConfirmAccessibility = {
+                            showAccessibilityDisclosure = false
+                            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                        },
+                        onDismissStreamKey = { showStreamKeyDialog = false },
+                        onConfirmStreamKey = {
+                            showStreamKeyDialog = false
+                            startBroadcastFlow()
+                        },
+                        onServerChange = { server = it },
+                        onKeyChange = { key = it },
+                        onRememberStreamKeyChange = { enabled ->
+                            rememberStreamKey = enabled
+                            appPreferences.edit().putBoolean("remember_stream_key", enabled).apply()
+                            if (!enabled) {
+                                StreamKeyVault.clear(this@MainActivity)
+                                status = "Saved stream key removed from this device"
+                            } else if (key.isNotBlank()) {
+                                runCatching { StreamKeyVault.save(this@MainActivity, key.trim()) }
+                                    .onFailure { status = "Could not securely save the stream key" }
+                            }
+                        },
+                        onQualityChange = { quality = it },
+                        onFpsChange = { fps = it },
+                        onOrientationChange = { orientation = it },
+                        onAudioModeChange = { audioMode = it },
+                        onCreateScene = { createScene() },
+                        onActiveScene = { id ->
+                            activeSceneId = id
+                            editingSceneId = id
+                            persistScenes()
+                            // H8 live switch: USE while streaming also
+                            // pushes the fresh active encoding (or none).
+                            // Courtesy gate — the service no-session
+                            // guard is authoritative.
+                            if (broadcastActive || broadcastStarting) {
+                                RtmpBroadcastService.requestSceneUpdate(
+                                    this@MainActivity,
+                                    SceneConfigCodec.activeSceneEncoding(scenes, activeSceneId),
+                                    sceneTransition.encode()
+                                )
+                            }
+                        },
+                        onEditScene = { id -> editingSceneId = id },
+                        onDuplicateScene = { id -> duplicateScene(id) },
+                        onDeleteScene = { id -> sceneDeleteTargetId = id },
+                        onConfirmDeleteScene = { confirmDeleteScene() },
+                        onDismissDeleteScene = { sceneDeleteTargetId = null },
+                        onRenameScene = { id, name -> renameScene(id, name) },
+                        onSelectCollection = { id -> selectCollection(id) },
+                        onCreateCollection = { createCollection() },
+                        onDeleteCollection = { id -> collectionDeleteTargetId = id },
+                        onConfirmDeleteCollection = { confirmDeleteCollection() },
+                        onDismissDeleteCollection = { collectionDeleteTargetId = null },
+                        onRenameCollection = { id, name -> renameCollection(id, name) },
+                        onAddSceneToActiveCollection = { id -> addSceneToActiveCollection(id) },
+                        onRemoveSceneFromActiveCollection = { id -> removeSceneFromActiveCollection(id) },
+                        onSceneTransition = {
+                            sceneTransition = it
+                            ScenePrefsStore.saveTransition(this@MainActivity, it)
+                        },
+                        onSceneOrientation = { id, canvas ->
+                            updateScene(id) { it.copy(orientation = canvas) }
+                        },
+                        onAddLayer = { id -> addLayer(id) },
+                        onAddImageLayer = { id -> launchImagePicker(id, null) },
+                        onAddVideoLayer = { id -> launchVideoPicker(id, null) },
+                        onAddClockLayer = { id -> addClockLayer(id) },
+                        onAddTimerLayer = { id -> addTimerLayer(id) },
+                        onReplaceImageLayer = { sceneId, layerId -> launchImagePicker(sceneId, layerId) },
+                        onReplaceVideoLayer = { sceneId, layerId -> launchVideoPicker(sceneId, layerId) },
+                        onRemoveLayer = { sceneId, layerId -> removeLayer(sceneId, layerId) },
+                        onMoveLayer = { sceneId, layerId, towardFront ->
+                            moveLayer(sceneId, layerId, towardFront)
+                        },
+                        onToggleLayer = { sceneId, layerId -> toggleLayer(sceneId, layerId) },
+                        onLayerText = { sceneId, layerId, text ->
+                            updateLayerText(sceneId, layerId, text)
+                        },
+                        onLayerAnchor = { sceneId, layerId, anchor ->
+                            updateLayer(sceneId, layerId) { it.copy(anchor = anchor) }
+                        },
+                        onLayerMargin = { sceneId, layerId, margin ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(marginPx = margin.coerceIn(0, SCENE_LAYER_MAX_MARGIN_UI_PX))
+                            }
+                        },
+                        onLayerMaxWidth = { sceneId, layerId, maxWidth ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(
+                                    maxWidthPx = maxWidth.coerceIn(
+                                        SCENE_LAYER_MIN_MAX_WIDTH_UI_PX,
+                                        SCENE_LAYER_MAX_MAX_WIDTH_UI_PX
+                                    )
+                                )
+                            }
+                        },
+                        onLayerAlpha = { sceneId, layerId, alpha ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(alpha = alpha.coerceIn(0f, 1f))
+                            }
+                        },
+                        onLayerScaleMode = { sceneId, layerId, mode ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(scaleMode = mode)
+                            }
+                        },
+                        onLayerAnimation = { sceneId, layerId, animation ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(animation = animation)
+                            }
+                        },
+                        onLayerTextColor = { sceneId, layerId, color ->
+                            updateLayer(sceneId, layerId) { it.copy(textColor = color) }
+                        },
+                        onLayerBackground = { sceneId, layerId, color ->
+                            updateLayer(sceneId, layerId) { it.copy(backgroundColor = color) }
+                        },
+                        onLayerBorderWidth = { sceneId, layerId, width ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(borderWidthPx = width.coerceIn(0, MAX_STYLE_BORDER_PX))
+                            }
+                        },
+                        onLayerBorderColor = { sceneId, layerId, color ->
+                            updateLayer(sceneId, layerId) { it.copy(borderColor = color) }
+                        },
+                        onLayerCornerRadius = { sceneId, layerId, radius ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(cornerRadiusPx = radius.coerceIn(0, MAX_STYLE_RADIUS_PX))
+                            }
+                        },
+                        onLayerShadowOffset = { sceneId, layerId, offset ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(shadowOffsetPx = offset.coerceIn(0, MAX_STYLE_SHADOW_PX))
+                            }
+                        },
+                        onLayerShadowColor = { sceneId, layerId, color ->
+                            updateLayer(sceneId, layerId) { it.copy(shadowColor = color) }
+                        },
+                        onDismissSceneError = { sceneError = null }
+                    )
+                )
             }
         }
+    }
+
+    private fun startBroadcastFlow() {
+        if (broadcastActive || broadcastStarting) { status = "Broadcast is already running or starting"; return }
+        val normalizedServer = server.trim()
+        if (normalizedServer.isBlank()) { status = "Enter your RTMP server URL before going live"; return }
+        if (key.isBlank()) { showStreamKeyDialog = true; status = "Stream key required"; return }
+        if (!StreamUrlValidator.isValidRtmpServerUrl(normalizedServer)) {
+            status = "Enter a valid RTMP server URL, such as rtmp://server.example/live"; return
+        }
+        server = normalizedServer
+        key = key.trim()
+        if (rememberStreamKey) {
+            try {
+                StreamKeyVault.save(this, key)
+            } catch (error: Exception) {
+                status = "Could not securely save the stream key: " + (error.message ?: "Android Keystore unavailable")
+                return
+            }
+        } else {
+            StreamKeyVault.clear(this)
+        }
+        pendingLive = true
+        broadcastStarting = true
+        status = "Requesting screen/app selection permission…"
+        requestProjection()
+    }
+
+    // ---- H5 scene editor mutations (write-through to prefs) ----
+
+    private fun persistScenes() {
+        ScenePrefsStore.save(this, scenes, activeSceneId ?: "")
+    }
+
+    private fun persistCollections() {
+        // Re-resolve through the pure save core so activity state
+        // stays canonical (unknown selections fall back, never linger).
+        val resolved = SceneCollectionCodec.resolveCollectionSave(
+            sceneCollections, activeCollectionId, defaultCollectionId,
+            scenes.map { it.id }.toSet()
+        )
+        sceneCollections = resolved.collections
+        activeCollectionId = resolved.activeCollectionId
+        defaultCollectionId = resolved.defaultCollectionId
+        SceneCollectionStore(
+            getSharedPreferences(ScenePrefsStore.PREFS, MODE_PRIVATE)
+        ).save(sceneCollections, activeCollectionId, defaultCollectionId, scenes.map { it.id }.toSet())
+    }
+
+    private fun updateScene(id: String, transform: (StreamScene) -> StreamScene) {
+        scenes = scenes.map { if (it.id == id) transform(it).normalizedZ() else it }
+        persistScenes()
+    }
+
+    private fun updateLayer(
+        sceneId: String,
+        layerId: String,
+        transform: (StreamSceneLayer) -> StreamSceneLayer
+    ) {
+        updateScene(sceneId) { current ->
+            current.copy(
+                layers = current.layers.map { if (it.id == layerId) transform(it) else it }
+            )
+        }
+    }
+
+    private fun newLayerText(text: String, id: String, zOrder: Int) = StreamSceneLayer(
+        id = id,
+        text = text,
+        anchor = SceneOverlayAnchor.TOP_LEFT,
+        zOrder = zOrder,
+        marginPx = SceneTextLayerLayout.marginPxFor(1080),
+        maxWidthPx = 1920,
+        alpha = 1f
+    )
+
+    private fun createScene() {
+        if (scenes.size >= MAX_STORED_SCENES) {
+            sceneError = "Scene limit reached ($MAX_STORED_SCENES). Delete a scene to add another."
+            return
+        }
+        val scene = StreamScene(
+            id = SceneConfigCodec.freshSceneId(scenes),
+            name = SceneConfigCodec.freshSceneName(scenes),
+            layers = listOf(newLayerText("New text", "layer-1", 1))
+        )
+        scenes = scenes + scene
+        editingSceneId = scene.id
+        sceneError = null
+        persistScenes()
+    }
+
+    private fun duplicateScene(id: String) {
+        val source = scenes.firstOrNull { it.id == id } ?: return
+        if (scenes.size >= MAX_STORED_SCENES) {
+            sceneError = "Scene limit reached ($MAX_STORED_SCENES). Delete a scene to add another."
+            return
+        }
+        val copy = source.copy(
+            id = SceneConfigCodec.freshSceneId(scenes),
+            name = SceneConfigCodec.duplicateName(scenes, source.name)
+        )
+        scenes = scenes + copy
+        editingSceneId = copy.id
+        sceneError = null
+        persistScenes()
+    }
+
+    private fun confirmDeleteScene() {
+        val id = sceneDeleteTargetId ?: return
+        sceneDeleteTargetId = null
+        var remaining = scenes.filterNot { it.id == id }
+        if (remaining.isEmpty()) remaining = listOf(SceneConfigCodec.defaultScene())
+        scenes = remaining
+        if (remaining.none { it.id == activeSceneId }) activeSceneId = remaining.first().id
+        if (editingSceneId == id) editingSceneId = null
+        // K1: the deleted scene's id leaves every collection (no
+        // dangling refs); other scenes and collections are untouched.
+        sceneCollections = SceneCollectionCodec.pruneScene(sceneCollections, id)
+        persistScenes()
+        persistCollections()
+    }
+
+    private fun renameScene(id: String, name: String) {
+        // Raw transient text (blank allowed while typing); the codec
+        // repairs names on persist/delivery, so stored form is valid.
+        scenes = scenes.map {
+            if (it.id == id) it.copy(name = name.take(MAX_SCENE_NAME_CHARS)) else it
+        }
+        persistScenes()
+    }
+
+    // ---- K1 scene collections (views over global scenes) ----
+
+    private fun selectCollection(id: String) {
+        // View switch only: the live scene is never touched here (no
+        // scene update is pushed, the service is never contacted).
+        activeCollectionId = SceneCollectionCodec.resolveActiveCollection(
+            id, defaultCollectionId, sceneCollections
+        )
+        persistCollections()
+    }
+
+    private fun createCollection() {
+        val created = SceneCollectionCodec.createCollection(
+            sceneCollections,
+            SceneCollectionCodec.freshCollectionName(sceneCollections)
+        )
+        if (created == null) {
+            sceneError = "Collection limit reached ($MAX_STORED_COLLECTIONS). Delete a collection to add another."
+            return
+        }
+        sceneCollections = created
+        sceneError = null
+        persistCollections()
+    }
+
+    private fun renameCollection(id: String, name: String) {
+        // Raw transient text (blank allowed while typing); the codec
+        // repairs names on persist, so stored form is valid.
+        sceneCollections = sceneCollections.map {
+            if (it.id == id) it.copy(name = name.take(MAX_COLLECTION_NAME_CHARS)) else it
+        }
+        persistCollections()
+    }
+
+    private fun confirmDeleteCollection() {
+        // Reference lists only: deleting a collection NEVER deletes
+        // scenes — the scene store is untouched here.
+        val id = collectionDeleteTargetId ?: return
+        collectionDeleteTargetId = null
+        if (id == ALL_SCENES_COLLECTION_ID) return
+        sceneCollections = sceneCollections.filterNot { it.id == id }
+        persistCollections()
+    }
+
+    private fun addSceneToActiveCollection(sceneId: String) {
+        if (activeCollectionId == ALL_SCENES_COLLECTION_ID) return
+        sceneCollections = SceneCollectionCodec.addSceneToCollection(
+            sceneCollections, activeCollectionId, sceneId, scenes.map { it.id }.toSet()
+        )
+        persistCollections()
+    }
+
+    private fun removeSceneFromActiveCollection(sceneId: String) {
+        if (activeCollectionId == ALL_SCENES_COLLECTION_ID) return
+        sceneCollections = SceneCollectionCodec.removeSceneFromCollection(
+            sceneCollections, activeCollectionId, sceneId
+        )
+        persistCollections()
+    }
+
+    private fun addLayer(sceneId: String) {
+        val scene = scenes.firstOrNull { it.id == sceneId } ?: return
+        if (scene.layers.size >= MAX_STATIC_OVERLAY_LAYERS) {
+            sceneError = "Layer limit reached ($MAX_STATIC_OVERLAY_LAYERS per scene)."
+            return
+        }
+        updateScene(sceneId) { current ->
+            current.copy(
+                layers = current.layers + newLayerText(
+                    "New text",
+                    SceneConfigCodec.freshLayerId(current),
+                    current.layers.size + 1
+                )
+            )
+        }
+        sceneError = null
+    }
+
+    private fun launchImagePicker(sceneId: String, replaceLayerId: String?) {
+        pendingImageSceneId = sceneId
+        pendingImageReplaceLayerId = replaceLayerId
+        imagePicker.launch(arrayOf("image/*"))
+    }
+
+    private fun onImagePicked(uri: Uri?) {
+        val sceneId = pendingImageSceneId
+        pendingImageSceneId = null
+        val replaceLayerId = pendingImageReplaceLayerId
+        pendingImageReplaceLayerId = null
+        if (uri == null || sceneId == null) return
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: SecurityException) {
+            sceneError = "Couldn't keep access to that image. Pick it again."
+            return
+        }
+        if (replaceLayerId != null) {
+            updateLayer(sceneId, replaceLayerId) { it.copy(imageUri = uri.toString()) }
+        } else {
+            addImageLayer(sceneId, uri.toString())
+        }
+        sceneError = null
+    }
+
+    private fun addImageLayer(sceneId: String, imageUri: String) {
+        val scene = scenes.firstOrNull { it.id == sceneId } ?: return
+        if (scene.layers.size >= MAX_STATIC_OVERLAY_LAYERS) {
+            sceneError = "Layer limit reached ($MAX_STATIC_OVERLAY_LAYERS per scene)."
+            return
+        }
+        updateScene(sceneId) { current ->
+            current.copy(
+                layers = current.layers + StreamSceneLayer(
+                    id = SceneConfigCodec.freshLayerId(current),
+                    text = "",
+                    anchor = SceneOverlayAnchor.TOP_LEFT,
+                    zOrder = current.layers.size + 1,
+                    marginPx = SceneTextLayerLayout.marginPxFor(1080),
+                    maxWidthPx = SCENE_IMAGE_DEFAULT_MAX_WIDTH_PX,
+                    alpha = 1f,
+                    kind = SceneLayerKind.IMAGE,
+                    imageUri = imageUri
+                )
+            )
+        }
+        sceneError = null
+    }
+
+    private fun launchVideoPicker(sceneId: String, replaceLayerId: String?) {
+        pendingVideoSceneId = sceneId
+        pendingVideoReplaceLayerId = replaceLayerId
+        videoPicker.launch(arrayOf("video/*"))
+    }
+
+    private fun onVideoPicked(uri: Uri?) {
+        val sceneId = pendingVideoSceneId
+        pendingVideoSceneId = null
+        val replaceLayerId = pendingVideoReplaceLayerId
+        pendingVideoReplaceLayerId = null
+        if (uri == null || sceneId == null) return
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: SecurityException) {
+            sceneError = "Couldn't keep access to that video. Pick it again."
+            return
+        }
+        if (replaceLayerId != null) {
+            updateLayer(sceneId, replaceLayerId) { it.copy(imageUri = uri.toString()) }
+        } else {
+            addVideoLayer(sceneId, uri.toString())
+        }
+        sceneError = null
+    }
+
+    private fun addVideoLayer(sceneId: String, videoUri: String) {
+        val scene = scenes.firstOrNull { it.id == sceneId } ?: return
+        if (scene.layers.size >= MAX_STATIC_OVERLAY_LAYERS) {
+            sceneError = "Layer limit reached ($MAX_STATIC_OVERLAY_LAYERS per scene)."
+            return
+        }
+        updateScene(sceneId) { current ->
+            current.copy(
+                layers = current.layers + StreamSceneLayer(
+                    id = SceneConfigCodec.freshLayerId(current),
+                    text = "",
+                    anchor = SceneOverlayAnchor.TOP_LEFT,
+                    zOrder = current.layers.size + 1,
+                    marginPx = SceneTextLayerLayout.marginPxFor(1080),
+                    maxWidthPx = SCENE_IMAGE_DEFAULT_MAX_WIDTH_PX,
+                    alpha = 1f,
+                    kind = SceneLayerKind.VIDEO,
+                    imageUri = videoUri
+                )
+            )
+        }
+        sceneError = null
+    }
+
+    private fun addClockLayer(sceneId: String) {
+        addWidgetLayer(sceneId, SceneLayerKind.CLOCK)
+    }
+
+    private fun addTimerLayer(sceneId: String) {
+        addWidgetLayer(sceneId, SceneLayerKind.TIMER)
+    }
+
+    private fun addWidgetLayer(sceneId: String, kind: SceneLayerKind) {
+        val scene = scenes.firstOrNull { it.id == sceneId } ?: return
+        if (scene.layers.size >= MAX_STATIC_OVERLAY_LAYERS) {
+            sceneError = "Layer limit reached ($MAX_STATIC_OVERLAY_LAYERS per scene)."
+            return
+        }
+        updateScene(sceneId) { current ->
+            current.copy(
+                layers = current.layers + StreamSceneLayer(
+                    id = SceneConfigCodec.freshLayerId(current),
+                    text = "",
+                    anchor = SceneOverlayAnchor.TOP_LEFT,
+                    zOrder = current.layers.size + 1,
+                    marginPx = SceneTextLayerLayout.marginPxFor(1080),
+                    maxWidthPx = 1920,
+                    alpha = 1f,
+                    kind = kind
+                )
+            )
+        }
+        sceneError = null
+    }
+
+    private fun removeLayer(sceneId: String, layerId: String) {
+        updateScene(sceneId) { current ->
+            current.copy(layers = current.layers.filterNot { it.id == layerId })
+        }
+    }
+
+    private fun moveLayer(sceneId: String, layerId: String, towardFront: Boolean) {
+        val scene = scenes.firstOrNull { it.id == sceneId } ?: return
+        val index = scene.layers.indexOfFirst { it.id == layerId }
+        if (index < 0) return
+        // List order is back-to-front; towardFront moves later in the list.
+        val swapWith = if (towardFront) index + 1 else index - 1
+        if (swapWith !in scene.layers.indices) return // Edge: ignore, never crash.
+        updateScene(sceneId) { current ->
+            val reordered = current.layers.toMutableList()
+            val moved = reordered.removeAt(index)
+            reordered.add(swapWith, moved)
+            current.copy(layers = reordered)
+        }
+    }
+
+    private fun toggleLayer(sceneId: String, layerId: String) {
+        updateLayer(sceneId, layerId) { it.copy(enabled = !it.enabled) }
+    }
+
+    private fun updateLayerText(sceneId: String, layerId: String, text: String) {
+        // Raw transient text (blank allowed while typing); blank/invalid
+        // layers are dropped from streaming and flagged in the preview.
+        updateLayer(sceneId, layerId) { it.copy(text = text.take(MAX_TEXT_LAYER_CHARS)) }
     }
 
     private fun enableFloatingControls() {
@@ -364,7 +877,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestProjection() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        // Android requires RECORD_AUDIO for AudioPlaybackCapture as well as microphone input.
+        // GAME mode does not start the microphone foreground-service type.
+        if (pendingLive && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
@@ -375,119 +890,5 @@ class MainActivity : ComponentActivity() {
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         status = "Choose the screen or app window to share, then confirm Android screen capture"
         projectionPermission.launch(manager.createScreenCaptureIntent())
-    }
-}
-
-@Composable
-private fun Header() {
-    val palette = LocalMgsPalette.current
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Image(painterResource(R.drawable.ic_launcher_foreground), "Mobile Gaming Streamer", Modifier.size(48.dp))
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Text("MOBILE GAMING", color = palette.muted, fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Bold)
-            Text("STREAMER", fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
-        }
-        Text("DEV 0.5.9", color = palette.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-private fun Hero(status: String, capture: Boolean, live: Boolean, starting: Boolean) {
-    val palette = LocalMgsPalette.current
-    Card(shape = RoundedCornerShape(if (palette.isClay) 34.dp else 24.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 26.dp else 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-        Column(
-            Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(palette.highlight, palette.surface, palette.background))).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("YOUR STREAMING STUDIO", color = palette.muted, fontSize = 10.sp, letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold)
-                Text(if (live) "LIVE" else if (starting) "CONNECTING" else if (capture) "CAPTURING" else "STANDBY",
-                    color = if (live || starting || capture) palette.primary else palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            }
-            Text(if (live) "You're\nlive." else if (starting) "Starting\nstream." else if (capture) "Capture\nis running." else "Ready when\nyou are.",
-                fontSize = 32.sp, lineHeight = 36.sp, fontWeight = FontWeight.ExtraBold)
-            Text(status, color = palette.muted, fontSize = 12.sp)
-            Text("SCREEN CAPTURE  /  H.264  /  RTMP", color = palette.primary, fontSize = 9.sp, letterSpacing = 1.3.sp, fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-@Composable
-private fun BroadcastPanel(
-    server: String, onServer: (String) -> Unit,
-    key: String, onKey: (String) -> Unit,
-    quality: String, onQuality: (String) -> Unit,
-    fps: String, onFps: (String) -> Unit,
-    orientation: String, onOrientation: (String) -> Unit,
-    audioMode: String, onAudioMode: (String) -> Unit,
-    live: Boolean, onGoLive: () -> Unit, onStopLive: () -> Unit
-) {
-    val palette = LocalMgsPalette.current
-    Card(shape = RoundedCornerShape(if (palette.isClay) 32.dp else 22.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 24.dp else 10.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-        Column(Modifier.fillMaxWidth().background(Brush.linearGradient(if (palette.isClay) listOf(palette.highlight, palette.surface, Color(0xFFE8E2D7)) else listOf(palette.surface, palette.surface)), RoundedCornerShape(if (palette.isClay) 30.dp else 0.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-            Text("BROADCAST SETUP", color = palette.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
-            Text("Connect to YouTube or another RTMP platform", color = palette.muted, fontSize = 12.sp)
-            OutlinedTextField(
-                value = server, onValueChange = onServer, modifier = Modifier.fillMaxWidth(),
-                singleLine = true, label = { Text("RTMP server URL") }
-            )
-            OutlinedTextField(
-                value = key, onValueChange = onKey, modifier = Modifier.fillMaxWidth(),
-                singleLine = true, label = { Text("Stream key") },
-                visualTransformation = PasswordVisualTransformation()
-            )
-            Text("VIDEO QUALITY", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            ChoiceRow(listOf("720p", "1080p", "1440p"), quality, onQuality)
-            Text("FRAME RATE", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            ChoiceRow(listOf("30", "60"), fps, onFps, " FPS")
-            Text("ORIENTATION", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            ChoiceRow(listOf("AUTO", "LANDSCAPE", "PORTRAIT"), orientation, onOrientation)
-            Text("AUDIO SOURCE", color = palette.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            ChoiceRow(listOf("MIC", "GAME", "NORMAL", "BALANCED"), audioMode, onAudioMode)
-            Text(when (audioMode) { "MIC" -> "Microphone only"; "GAME" -> "Internal game/device playback only"; "NORMAL" -> "Game playback + microphone at equal level"; else -> "Balanced mix: game playback + microphone, with microphone level boosted" }, color = palette.muted, fontSize = 10.sp, lineHeight = 14.sp)
-            Text("Higher resolutions and 60 FPS depend on encoder support, game orientation, network and device temperature.",
-                color = palette.muted, fontSize = 10.sp, lineHeight = 14.sp)
-            Button(
-                onClick = if (live) onStopLive else onGoLive,
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (live) Color(0xFFB94D54) else palette.primary,
-                    contentColor = if (live) Color.White else Color(0xFF11170A))
-            ) { Text(if (live) "STOP BROADCAST" else "GO LIVE • SELECT APP", fontWeight = FontWeight.ExtraBold) }
-        }
-    }
-}
-
-@Composable
-private fun ChoiceRow(options: List<String>, selected: String, onSelect: (String) -> Unit, suffix: String = "") {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        options.forEach { item ->
-            FilterChip(selected == item, onClick = { onSelect(item) }, label = { Text(item + suffix, fontSize = 10.sp) },
-                modifier = Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun ModuleStatus(capture: Boolean, live: Boolean) {
-    val palette = LocalMgsPalette.current
-    Card(shape = RoundedCornerShape(if (palette.isClay) 30.dp else 12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, palette.edge), elevation = CardDefaults.cardElevation(defaultElevation = if (palette.isClay) 22.dp else 8.dp), colors = CardDefaults.cardColors(containerColor = palette.surface)) {
-        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("SYSTEM STATUS", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.2.sp)
-            StatusRow("Screen capture", if (capture || live) "ACTIVE" else "READY")
-            StatusRow("H.264 encoder", if (capture || live) "SESSION STARTED" else "READY")
-            StatusRow("RTMP transport", if (live) "CONNECTING" else "READY TO CONNECT")
-            StatusRow("Microphone / game audio", "DEVICE DEPENDENT")
-        }
-    }
-}
-
-@Composable
-private fun StatusRow(label: String, value: String) {
-    val palette = LocalMgsPalette.current
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = palette.muted, fontSize = 12.sp)
-        Text(value, color = if (value == "ACTIVE" || value == "SESSION STARTED" || value == "CONNECTING") palette.primary else palette.secondary,
-            fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }

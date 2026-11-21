@@ -12,6 +12,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.os.IBinder
 import android.app.Service
@@ -23,31 +24,157 @@ import android.media.AudioManager
 import android.media.AudioDeviceInfo
 import android.util.Log
 import android.view.WindowManager
+import com.jubersaleem.mobilegamingstreamer.AudioRouteLabels
+import com.jubersaleem.mobilegamingstreamer.BroadcastStatusMessages
 import com.jubersaleem.mobilegamingstreamer.MainActivity
+import com.jubersaleem.mobilegamingstreamer.StreamUrlValidator
 import com.pedro.common.ConnectChecker
 import com.pedro.encoder.utils.CodecUtil
 import com.pedro.encoder.input.sources.audio.AudioSource
 import com.pedro.encoder.input.sources.audio.InternalAudioSource
 import com.pedro.encoder.input.sources.audio.MicrophoneSource
-import com.pedro.encoder.input.sources.audio.MixAudioSource
+import com.jubersaleem.mobilegamingstreamer.capture.VideoSourceFallbackPolicy
+import com.jubersaleem.mobilegamingstreamer.scene.SceneConfigCodec
+import com.jubersaleem.mobilegamingstreamer.scene.SceneSource
+import com.jubersaleem.mobilegamingstreamer.scene.SceneSwitchPlanner
+import com.jubersaleem.mobilegamingstreamer.scene.SceneTransitions
+import com.jubersaleem.mobilegamingstreamer.scene.SwitchAction
+import com.jubersaleem.mobilegamingstreamer.scene.SwitchCurrent
 import com.pedro.encoder.input.sources.video.ScreenSource
+import com.pedro.encoder.input.sources.video.VideoSource
 import com.pedro.library.generic.GenericStream
 
 /** RTMP broadcast service with microphone audio and screen video. */
 class RtmpBroadcastService : Service() {
     private var display: GenericStream? = null
+    private var activeVideoSource: VideoSource? = null
+    private var sessionStartElapsedMs = 0L
+    private var activeAudioSource: AudioSource? = null
+    private var activeMicSource: Int = AudioRouteLabels.SOURCE_NONE
+    private var activeHeadset: Boolean = false
     private var activeProjection: MediaProjection? = null
-    private val projectionCallback = object : MediaProjection.Callback() {
-        override fun onStop() {
-            handler.post { if (display != null) stopBroadcast("Screen capture permission ended") }
-        }
-    }
+    private var activeProjectionCallback: MediaProjection.Callback? = null
     private var streamingConfirmed = false
     private var lastBitrate = 0L
+    private var lastPositiveBitrateAt = 0L
+    private var lastPositiveFpsAt = 0L
+    private var stopping = false
+    private val healthMonitor = StreamHealthMonitor()
+    private var lastWatchdogDiagnosisId: String? = null
     private val handler = Handler(Looper.getMainLooper())
     private val startupTimeout = Runnable {
-        if (display != null && !streamingConfirmed) {
-            stopBroadcast("No outgoing video bitrate after 25 seconds. Encoder or RTMP startup failed.")
+        if (display != null && recoveryDriver.isStartupBoundActive(streamingConfirmed)) {
+            stopBroadcast(BroadcastStatusMessages.STARTUP_TIMEOUT_STOP)
+        }
+    }
+    // Socket-only recovery: re-establishes the RTMP connection through
+    // RootEncoder's retry API. Capture, encoders, mixer and the
+    // MediaProjection session are never touched on this path.
+    private val reconnectRunnable: Runnable = Runnable {
+        val attemptsBefore = recoveryDriver.state.attemptsUsed
+        when (val effect = recoveryDriver.onRetryTimerFired(stopping, display != null, SystemClock.elapsedRealtime())) {
+            is RecoveryEffect.Stop -> stopBroadcast(effect.message)
+            // A consumed attempt increments the counter; a stale fire leaves
+            // it untouched, so only a real retry is recorded.
+            else -> if (recoveryDriver.state.attemptsUsed > attemptsBefore) {
+                recordDiagnostic(DiagnosticEventId.RETRY_FIRED,
+                    "attempt ${recoveryDriver.state.attemptsUsed} of ${StreamConnectionPolicy.MAX_ATTEMPTS}")
+            }
+        }
+    }
+    // Explicit types break the declaration-inference cycle between the
+    // runnable, the timer seam and the driver (they reference each other).
+    private val recoveryTimer: RecoveryTimer = object : RecoveryTimer {
+        override fun schedule(delayMs: Long) {
+            handler.removeCallbacks(reconnectRunnable)
+            handler.postDelayed(reconnectRunnable, delayMs)
+        }
+        override fun cancel() {
+            handler.removeCallbacks(reconnectRunnable)
+        }
+    }
+    private val socketRetrier: SocketRetrier = SocketRetrier { reason ->
+        display?.getStreamClient()?.reTry(0L, reason) == true
+    }
+    private val recoveryDriver: StreamRecoveryDriver = StreamRecoveryDriver(recoveryTimer, socketRetrier)
+    // Routing seam for async callbacks (Phase E). Owns the session gate and
+    // shares the driver above: every callback decision (stale/stopping guard,
+    // driver call, effect selection) runs here so JVM tests execute the real
+    // routing; the service only captures tokens and executes effects.
+    private val callbackRouter = StreamCallbackRouter(recoveryDriver)
+    // Session diagnostics (Phase F). Strictly observational: recording never
+    // gates or alters a streaming decision, and every record carries the
+    // session token so stale posts cannot contaminate the active session.
+    private val diagnostics = StreamSessionDiagnostics()
+    private var diagnosticToken = -1L
+    private val sessionHeartbeat = object : Runnable {
+        override fun run() {
+            if (display != null) {
+                getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putLong(KEY_HEARTBEAT, System.currentTimeMillis()).apply()
+                handler.postDelayed(this, 2_000L)
+            }
+        }
+    }
+    // A live stream can silently stall after the startup watchdog has been cancelled.
+    // Stop a stalled session with an actionable message; a new attempt needs fresh Android consent.
+    // While a reconnect episode is open, bitrate silence is expected: only the
+    // overall episode bound can stop the session, never the stall rule.
+    private val streamHealthWatchdog = object : Runnable {
+        override fun run() {
+            if (display == null || stopping) return
+            // Sample-before-decide on the existing tick (no new loop): the
+            // observational monitor shares the 20-second stall window, so it
+            // must see the final sample before the authoritative decision
+            // below can stop on the critical tick. The decision itself is
+            // unchanged and remains the sole termination authority; Phase D
+            // only diagnoses the resulting (health, action) pair.
+            when (runWatchdogCycle(::sampleStreamHealth) {
+                val tickNow = SystemClock.elapsedRealtime()
+                // Authoritative decision, evaluated exactly once per tick.
+                val action = recoveryDriver.onWatchdogTick(
+                    streamingConfirmed, lastPositiveBitrateAt, tickNow
+                )
+                // Health-aware diagnosis of the pair just produced. Observes
+                // only: the action returned below is the original, unchanged,
+                // and a diagnostic failure can never suppress it.
+                try {
+                    val health = healthMonitor.state
+                    val diagnosis = diagnoseWatchdogTick(
+                        health = health,
+                        recoveryState = recoveryDriver.state,
+                        streamingConfirmed = streamingConfirmed,
+                        action = action,
+                        transmissionProgressing = healthMonitor.transmissionProgressing,
+                        senderProgressing = healthMonitor.senderProgressing,
+                        encoderProgressing = healthMonitor.encoderProgressing,
+                        nowMs = tickNow
+                    )
+                    if (shouldLogDiagnosis(lastWatchdogDiagnosisId, diagnosis)) {
+                        Log.i(TAG, "Watchdog diagnosis: ${diagnosis.id} " +
+                            "(health=$health, action=$action, " +
+                            "enc=${diagnosis.encoderProgressing}, " +
+                            "snd=${diagnosis.senderProgressing}, " +
+                            "tx=${diagnosis.transmissionProgressing}, " +
+                            "attempts=${diagnosis.attemptsUsed}, " +
+                            "episodeMs=${diagnosis.episodeElapsedMs})")
+                    }
+                    lastWatchdogDiagnosisId = diagnosis.id
+                } catch (_: Exception) {
+                    // Diagnosis is observational; fall through to the action.
+                }
+                action
+            }) {
+                WatchdogAction.STOP_STALLED -> {
+                    stopBroadcast(BroadcastStatusMessages.STALL_STOP)
+                    return
+                }
+                WatchdogAction.STOP_RECONNECT_TIMEOUT -> {
+                    stopBroadcast(StreamConnectionPolicy.exhaustedMessage())
+                    return
+                }
+                WatchdogAction.NONE -> { }
+            }
+            handler.postDelayed(this, STREAM_HEALTH_CHECK_INTERVAL_MS)
         }
     }
     private val notifications by lazy { getSystemService(NotificationManager::class.java) }
@@ -58,15 +185,24 @@ class RtmpBroadcastService : Service() {
                 ACTION_START -> startBroadcast(intent)
                 ACTION_STOP -> stopBroadcast()
                 ACTION_SET_BITRATE -> setBitrate(intent)
+                ACTION_SET_STREAM_AUDIO_MUTED -> setStreamAudioMuted(intent.getBooleanExtra(EXTRA_STREAM_AUDIO_MUTED, false))
+                ACTION_UPDATE_SCENE -> updateScene(
+                    intent?.getStringExtra(EXTRA_SCENE_CONFIG),
+                    intent?.getStringExtra(EXTRA_SCENE_TRANSITION),
+                    null
+                )
             }
         }
     }
 
+    @Suppress("UnspecifiedRegisterReceiverFlag")
     override fun onCreate() {
         super.onCreate()
         val filter = IntentFilter().apply {
             addAction(ACTION_STOP)
             addAction(ACTION_SET_BITRATE)
+            addAction(ACTION_SET_STREAM_AUDIO_MUTED)
+            addAction(ACTION_UPDATE_SCENE)
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         else registerReceiver(commandReceiver, filter)
@@ -80,6 +216,12 @@ class RtmpBroadcastService : Service() {
             ACTION_START -> intent?.let { startBroadcast(it) }
             ACTION_STOP -> stopBroadcast()
             ACTION_SET_BITRATE -> intent?.let { setBitrate(it) }
+            ACTION_SET_STREAM_AUDIO_MUTED -> intent?.let { setStreamAudioMuted(it.getBooleanExtra(EXTRA_STREAM_AUDIO_MUTED, false)) }
+            ACTION_UPDATE_SCENE -> updateScene(
+                intent?.getStringExtra(EXTRA_SCENE_CONFIG),
+                intent?.getStringExtra(EXTRA_SCENE_TRANSITION),
+                startId
+            )
         }
         return START_NOT_STICKY
     }
@@ -91,78 +233,289 @@ class RtmpBroadcastService : Service() {
             active.setVideoBitrateOnFly(requested)
             update("LIVE • Target bitrate " + (requested / 1000) + " kbps")
         } else {
-            publishState(false, "No active stream to adjust", 0L)
+            publishState(false, BroadcastStatusMessages.NO_ACTIVE_STREAM, 0L)
+        }
+    }
+
+    /**
+     * H8 live scene switch (main thread — commands already serialize).
+     * [newConfig] is the requested scene encoding, absent/null = "no
+     * scene". The planner decides; this executes: IN_PLACE rebuilds
+     * overlays inside the running scene source, swaps go through the
+     * library `changeVideoSource` (its failure path restarts the old
+     * source automatically — verified in RootEncoder 2.8.1
+     * `StreamBase`). Capture, the encoder, RTMP, and audio are never
+     * touched here: no `prepare`, no `release`, no projection handling.
+     * [startId] is the `onStartCommand` id when delivered via
+     * `startService` (null from the command receiver): with no session
+     * the service stops itself instead of idling.
+     */
+    private fun updateScene(newConfig: String?, transitionExtra: String?, startId: Int?) {
+        val active = display
+        if (active == null) {
+            publishState(false, BroadcastStatusMessages.NO_ACTIVE_STREAM, 0L)
+            if (startId != null) stopSelf(startId)
+            return
+        }
+        // J4: null/garbage parses to CUT (never throws, never half-config).
+        // Source swaps ignore it (cross-source blending would need dual
+        // capture sessions — swaps stay CUT, exactly today's behavior).
+        val transition = SceneTransitions.parseExtra(transitionExtra)
+        val current = when (val source = activeVideoSource) {
+            is SceneSource -> {
+                val applied = source.currentSceneConfig
+                if (applied != null) SwitchCurrent.SceneConfig(applied) else SwitchCurrent.SceneLegacy
+            }
+            else -> SwitchCurrent.Screen
+        }
+        when (SceneSwitchPlanner.resolve(current, newConfig)) {
+            SwitchAction.NOOP -> { }
+            SwitchAction.IN_PLACE -> {
+                val source = activeVideoSource as? SceneSource
+                if (source != null && source.updateScene(newConfig, transition)) {
+                    update(BroadcastStatusMessages.SCENE_SWITCHED)
+                } else {
+                    update(BroadcastStatusMessages.SCENE_SWITCH_FAILED)
+                }
+            }
+            SwitchAction.SWAP_TO_SCENE -> {
+                val projection = activeProjection
+                if (projection == null) {
+                    update(BroadcastStatusMessages.SCENE_SWITCH_FAILED)
+                    return
+                }
+                swapVideoSource(
+                    active,
+                    SceneSource(
+                        this, projection,
+                        sceneConfig = newConfig,
+                        sessionStartElapsedMs = sessionStartElapsedMs
+                    )
+                )
+            }
+            SwitchAction.SWAP_TO_SCREEN -> {
+                val projection = activeProjection
+                if (projection == null) {
+                    update(BroadcastStatusMessages.SCENE_SWITCH_FAILED)
+                    return
+                }
+                swapVideoSource(active, ScreenSource(this, projection))
+            }
+        }
+    }
+
+    /**
+     * Library source swap with retention. On success the new source is
+     * retained (the old one was released by the library); on throw the
+     * library already rolled back to the old running source, so only
+     * the unused replacement is released and the retained source stays
+     * untouched. Never throws outward.
+     */
+    private fun swapVideoSource(active: GenericStream, replacement: VideoSource) {
+        try {
+            active.changeVideoSource(replacement)
+            activeVideoSource = replacement
+            update(BroadcastStatusMessages.SCENE_SWITCHED)
+        } catch (_: Exception) {
+            try {
+                replacement.release()
+            } catch (_: Exception) {
+            }
+            Log.w(TAG, "live scene swap failed; previous source retained")
+            update(BroadcastStatusMessages.SCENE_SWITCH_FAILED)
         }
     }
 
     private fun startBroadcast(intent: Intent) {
+        // Invalidate old ownership BEFORE releasing previous resources:
+        // release() itself triggers an async library onDisconnect that must
+        // not touch the session built below.
+        val sessionToken = callbackRouter.beginSession()
+        // H9 TIMER epoch: every startBroadcast is a new session.
+        sessionStartElapsedMs = SystemClock.elapsedRealtime()
         handler.removeCallbacks(startupTimeout)
+        handler.removeCallbacks(streamHealthWatchdog)
+        handler.removeCallbacks(sessionHeartbeat)
+        recoveryDriver.startSession()
+        healthMonitor.startSession(SystemClock.elapsedRealtime())
+        diagnosticToken = sessionToken
+        diagnostics.startSession(sessionToken, SystemClock.elapsedRealtime())
+        // A fallback retry explains its provenance in the NEW session (the
+        // failed attempt never publishes a terminal report, so recording
+        // there would lose the event). Absent on ordinary starts: no-op.
+        intent.getStringExtra(EXTRA_SCENE_FALLBACK_REASON)?.let { reason ->
+            recordDiagnostic(DiagnosticEventId.VIDEO_SOURCE_FALLBACK, reason)
+        }
+        lastWatchdogDiagnosisId = null
+        // Suppress callbacks from a previous stream while its resources are released.
+        stopping = true
         streamingConfirmed = false
         lastBitrate = 0L
+        lastPositiveBitrateAt = 0L
+        lastPositiveFpsAt = 0L
         display?.let { previous ->
             try { previous.release() } catch (_: Exception) { }
             display = null
+            activeVideoSource = null
         }
         releaseProjection()
+        stopping = false
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
         val resultData = parcelableIntent(intent, EXTRA_RESULT_DATA)
         val streamUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
-        if (resultData == null || !(streamUrl.startsWith("rtmp://") || streamUrl.startsWith("rtmps://"))) {
-            publishState(false, "Invalid stream setup", 0L)
+        if (resultData == null || !StreamUrlValidator.isValidRtmpServerUrl(streamUrl)) {
+            publishState(false, BroadcastStatusMessages.INVALID_SETUP, 0L)
             stopSelf()
             return
         }
-
-        publishState(false, "Preparing video encoder…", 0L)
+        val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE) ?: AUDIO_MODE_BALANCED
+        val usesMicrophone = audioMode != AUDIO_MODE_GAME
+        publishState(false, BroadcastStatusMessages.PREPARING_ENCODER, 0L)
         try {
             startForeground(
                 NOTIFICATION_ID,
                 notification("Preparing video encoder…"),
-                if (Build.VERSION.SDK_INT >= 30) {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                if (Build.VERSION.SDK_INT >= 29) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                        (if (usesMicrophone) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
                 } else {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                 }
             )
-            val checker = object : ConnectChecker {
-                override fun onConnectionStarted(url: String) = update("Connecting to streaming server…")
-                override fun onConnectionSuccess() = update("RTMP connected • Waiting for video frames")
+            var activeProfileLabel = "Preparing video profile"
+        val checker = object : ConnectChecker {
+                override fun onConnectionStarted(url: String) {
+                    if (!callbackRouter.onConnectionStarted(sessionToken, stopping)) return
+                    update(BroadcastStatusMessages.CONNECTING)
+                }
+                override fun onConnectionSuccess() {
+                    when (callbackRouter.onConnectionSuccess(sessionToken, stopping, SystemClock.elapsedRealtime())) {
+                        null -> { }
+                        SuccessOutcome.RECOVERED -> {
+                            // Restore the library retry budget consumed by the episode
+                            // just ended, so a later independent failure gets full
+                            // attempts again. RootEncoder only resets its counter on
+                            // explicit disconnect, never on success.
+                            try {
+                                display?.getStreamClient()?.setReTries(StreamConnectionPolicy.MAX_ATTEMPTS)
+                            } catch (_: Exception) { }
+                            if (!streamingConfirmed) {
+                                // A reconnected socket still has to produce frames;
+                                // re-arm the startup bound that scheduling the retry
+                                // had removed. Untouched on a plain first connect.
+                                handler.removeCallbacks(startupTimeout)
+                                handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
+                            }
+                            update(BroadcastStatusMessages.RECONNECTED_WAITING)
+                            recordDiagnostic(DiagnosticEventId.RECOVERY_SUCCEEDED,
+                                "socket re-established within the deadline")
+                        }
+                        SuccessOutcome.CONNECTED -> update(BroadcastStatusMessages.RTMP_CONNECTED_WAITING)
+                        // Strict deadline: a late success revives nothing. The
+                        // stop path below tears down even the late-connected
+                        // socket; no LIVE is published and no budget is reset.
+                        SuccessOutcome.EXPIRED -> {
+                            recordDiagnostic(DiagnosticEventId.RECOVERY_EXPIRED,
+                                "success arrived after the deadline")
+                            stopBroadcast(StreamConnectionPolicy.exhaustedMessage())
+                        }
+                        SuccessOutcome.IGNORED -> { }
+                    }
+                }
                 override fun onConnectionFailed(reason: String) {
-                    Log.e(TAG, "RTMP connection failed: $reason")
-                    stopBroadcast("Connection failed: $reason")
+                    val effect = callbackRouter.onConnectionFailed(
+                        sessionToken, reason, stopping, display != null, activeProjection != null,
+                        SystemClock.elapsedRealtime()
+                    ) ?: return
+                    Log.e(TAG, "RTMP connection failed: " + sanitizeDiagnosticText(reason))
+                    recordDiagnostic(DiagnosticEventId.CONNECTION_FAILED, reason)
+                    when (effect) {
+                        is RecoveryEffect.Publish -> {
+                            lastBitrate = 0L
+                            lastPositiveBitrateAt = 0L
+                            handler.removeCallbacks(startupTimeout)
+                            handler.removeCallbacks(streamHealthWatchdog)
+                            handler.postDelayed(streamHealthWatchdog, STREAM_HEALTH_CHECK_INTERVAL_MS)
+                            update(effect.message, 0L)
+                            // The scheduled attempt is attemptsUsed + 1 by
+                            // policy construction (the counter increments only
+                            // when the backoff fires), with the matching delay.
+                            val attempt = recoveryDriver.state.attemptsUsed + 1
+                            recordDiagnostic(DiagnosticEventId.RETRY_SCHEDULED,
+                                "attempt $attempt of ${StreamConnectionPolicy.MAX_ATTEMPTS} " +
+                                    "in ${StreamConnectionPolicy.retryDelayMs(attempt)}ms")
+                        }
+                        is RecoveryEffect.Stop -> stopBroadcast(effect.message)
+                        RecoveryEffect.None -> { }
+                    }
                 }
                 override fun onDisconnect() {
+                    if (!callbackRouter.onDisconnect(sessionToken, stopping)) return
+                    stopping = true
                     handler.removeCallbacks(startupTimeout)
+                    handler.removeCallbacks(streamHealthWatchdog)
+                    handler.removeCallbacks(sessionHeartbeat)
+                    recoveryDriver.onStop()
                     streamingConfirmed = false
                     lastBitrate = 0L
                     val disconnected = display
                     display = null
+                    activeVideoSource = null
+                    activeAudioSource = null
+                    activeMicSource = AudioRouteLabels.SOURCE_NONE
+                    activeHeadset = false
                     try { disconnected?.release() } catch (error: Exception) {
                         Log.w(TAG, "Error releasing disconnected stream", error)
                     }
                     releaseProjection()
-                    publishState(false, "Broadcast disconnected", 0L)
+                    val terminalMessage = BroadcastStatusMessages.DISCONNECTED
+                    recordDiagnostic(DiagnosticEventId.STREAM_STOPPED, terminalMessage)
+                    logTerminalReport(terminalMessage)
+                    publishState(false, terminalMessage, 0L)
+                    // Halt only after the final status event so it preserves
+                    // the terminal health verdict instead of UNKNOWN.
+                    healthMonitor.onStopped()
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                 }
                 override fun onAuthError() {
-                    stopBroadcast("Stream authentication failed. Check the stream key.")
+                    if (!callbackRouter.onAuthError(sessionToken)) return
+                    recordDiagnostic(DiagnosticEventId.AUTH_FAILED, "server rejected the stream key")
+                    stopBroadcast(BroadcastStatusMessages.AUTH_FAILED)
                 }
-                override fun onAuthSuccess() = update("Stream key accepted")
+                override fun onAuthSuccess() {
+                    if (!callbackRouter.onAuthSuccess(sessionToken, stopping)) return
+                    update(BroadcastStatusMessages.KEY_ACCEPTED)
+                }
                 override fun onNewBitrate(bitrate: Long) {
-                    if (bitrate > 0L) {
-                        val firstConfirmation = !streamingConfirmed
-                        streamingConfirmed = true
-                        lastBitrate = bitrate
-                        handler.removeCallbacks(startupTimeout)
-                        update("LIVE • ${bitrate / 1000} kbps", bitrate)
-                        if (firstConfirmation && Settings.canDrawOverlays(this@RtmpBroadcastService) &&
-                            !getSharedPreferences("mgs_preferences", MODE_PRIVATE).getBoolean(com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService.KEY_BUBBLE_DISMISSED, false)) {
-                            startService(Intent(this@RtmpBroadcastService, com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService::class.java))
+                    // Bitrate ticks during a reconnect episode carry no signal:
+                    // the sender is stopped while the socket is down, and any
+                    // stray tick must neither flap the status message nor fake
+                    // a LIVE line while the episode is open. Only a connection
+                    // success may end the episode. Guarded inside the router.
+                    when (val routing = callbackRouter.onNewBitrate(sessionToken, bitrate, stopping, streamingConfirmed)) {
+                        BitrateRouting.None -> { }
+                        BitrateRouting.Zero -> {
+                            lastBitrate = 0L
+                            update(BroadcastStatusMessages.CONNECTED_WAITING, 0L)
                         }
-                    } else {
-                        lastBitrate = 0L
-                        update("Connected • Waiting for outgoing video", 0L)
+                        is BitrateRouting.Positive -> {
+                            val firstConfirmation = routing.firstConfirmation
+                            streamingConfirmed = true
+                            lastBitrate = routing.bitrate
+                            lastPositiveBitrateAt = SystemClock.elapsedRealtime()
+                            handler.removeCallbacks(startupTimeout)
+                            if (firstConfirmation) {
+                                handler.removeCallbacks(streamHealthWatchdog)
+                                handler.postDelayed(streamHealthWatchdog, STREAM_HEALTH_CHECK_INTERVAL_MS)
+                                recordDiagnostic(DiagnosticEventId.STREAM_CONFIRMED, "first outgoing video frames")
+                            }
+                            update("LIVE • ${routing.bitrate / 1000} kbps", routing.bitrate)
+                            if (firstConfirmation && Settings.canDrawOverlays(this@RtmpBroadcastService) &&
+                                !getSharedPreferences("mgs_preferences", MODE_PRIVATE).getBoolean(com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService.KEY_BUBBLE_DISMISSED, false)) {
+                                startService(Intent(this@RtmpBroadcastService, com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService::class.java))
+                            }
+                        }
                     }
                 }
             }
@@ -171,76 +524,134 @@ class RtmpBroadcastService : Service() {
             val quality = intent.getStringExtra(EXTRA_QUALITY) ?: "1080p"
             val orientation = intent.getStringExtra(EXTRA_ORIENTATION) ?: "AUTO"
             val fps = intent.getIntExtra(EXTRA_FPS, 30).coerceIn(30, 60)
-            val maxLongEdge = when (quality) {
-                "720p" -> 1280
-                "1440p" -> 2560
-                else -> 1920
-            }
-
-            // Use standard 16:9 landscape or 9:16 portrait output dimensions.
             // Portrait is a real vertical canvas, not a rotated landscape resolution.
             val portrait = when (orientation) {
                 "PORTRAIT" -> true
                 "LANDSCAPE" -> false
                 else -> screenHeight > screenWidth
             }
-            val width: Int
-            val height: Int
-            if (portrait) {
-                width = ((maxLongEdge * 9f / 16f).toInt() / 2) * 2
-                height = maxLongEdge
-            } else {
-                width = maxLongEdge
-                height = ((maxLongEdge * 9f / 16f).toInt() / 2) * 2
-            }
-            val bitrate = when (quality) {
-                "720p" -> if (fps >= 60) 6_000_000 else 4_000_000
-                "1440p" -> if (fps >= 60) 18_000_000 else 14_000_000
-                else -> if (fps >= 60) 12_000_000 else 8_000_000
-            }
+            val profileCandidates = VideoProfileSelector.build(quality, fps, portrait)
 
             // RtmpDisplay.prepareAudio() captures ONLY the microphone. It never configures
             // AudioPlaybackCapture, which is why BGMI gunshots/game effects were absent.
-            // GenericStream with MixAudioSource uses the same MediaProjection token for
-            // screen video + internal playback + microphone, matching RootEncoder's
-            // supported screen-stream architecture.
+            // Independent microphone and playback recorders are mixed after mic-only DSP.
             val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
                 ?: throw IllegalStateException("Android did not provide a MediaProjection session")
             activeProjection = mediaProjection
-            mediaProjection.registerCallback(projectionCallback, handler)
-
-            val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE) ?: AUDIO_MODE_BALANCED
-            val micSource = chooseMicrophoneSource()
-            val audioSource: AudioSource = when (audioMode) {
-                AUDIO_MODE_MIC -> MicrophoneSource(audioSource = micSource)
-                AUDIO_MODE_GAME -> InternalAudioSource(mediaProjection)
-                AUDIO_MODE_NORMAL -> MixAudioSource(mediaProjection, null, micSource).apply {
-                    microphoneVolume = 1.0f
-                    internalVolume = 1.0f
-                }
-                else -> MixAudioSource(mediaProjection, null, micSource).apply {
-                    // Balanced preset gives voice a little more headroom than game playback.
-                    microphoneVolume = 1.6f
-                    internalVolume = 1.0f
+            // Per-session callback: captures this session's token so a stale
+            // onStop queued from a revoked previous projection cannot stop a
+            // newer session. The display check is unchanged for the current
+            // session.
+            val projectionCallback = object : MediaProjection.Callback() {
+                override fun onStop() {
+                    handler.post {
+                        if (callbackRouter.onProjectionStop(sessionToken, display != null)) {
+                            stopBroadcast(StreamConnectionPolicy.PROJECTION_ENDED_MESSAGE)
+                        }
+                    }
                 }
             }
+            activeProjectionCallback = projectionCallback
+            mediaProjection.registerCallback(projectionCallback, handler)
 
+            val preferredInput = choosePreferredMicrophoneDevice()
+            val accessibilityMicConnected = MgsMicAccessibilityService.instance != null &&
+                MgsMicAccessibilityService.isEnabled(this)
+            // Glip's observed source-selection pattern: DEFAULT with accessibility enabled
+            // and the phone mic; VOICE_RECOGNITION for an external headset; MIC as fallback.
+            val micSource = MicrophoneAudioSourcePolicy.select(
+                accessibilityConnected = accessibilityMicConnected,
+                externalInputConnected = preferredInput != null
+            )
+            Log.i(TAG, "Microphone route: accessibility=" + accessibilityMicConnected +
+                " externalInput=" + (preferredInput != null) + " audioSource=" + micSource)
+            // The audio route is fixed when the session starts; a headset
+            // connected or removed mid-session takes effect on the next GO LIVE.
+            activeMicSource = if (audioMode == AUDIO_MODE_GAME) AudioRouteLabels.SOURCE_NONE else micSource
+            activeHeadset = preferredInput != null
+            val audioSource: AudioSource = when (audioMode) {
+                AUDIO_MODE_MIC -> ProcessedMixAudioSource(mediaProjection, false, micSource).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.0f) }
+                AUDIO_MODE_GAME -> InternalAudioSource(mediaProjection)
+                AUDIO_MODE_NORMAL, AUDIO_MODE_BOTH -> ProcessedMixAudioSource(mediaProjection, true, micSource).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.0f); setPlaybackGain(1.0f) }
+                else -> ProcessedMixAudioSource(mediaProjection, true, micSource).apply { setPreferredDevice(preferredInput); setMicrophoneGain(1.6f); setPlaybackGain(1.0f) }
+            }
+
+            activeAudioSource = audioSource
+            val streamMuted = getSharedPreferences(STATE_PREFS, MODE_PRIVATE).getBoolean(KEY_STREAM_AUDIO_MUTED, false)
+            if (streamMuted) setAudioSourceMuted(audioSource, true)
+
+            // H2 scene seam: explicit opt-in only (default false). Production
+            // launches carry no extra, so the ScreenSource path below is
+            // byte-identical in behavior; SceneSource is device-tested via
+            // `am start ... --ez scene_source true` before GO LIVE.
+            // H5 scene delivery: the GO LIVE intent carries the encoded
+            // active scene (if any); it parses through the pure codec and
+            // H4 validation stays authoritative (invalid layers dropped).
+            // An explicit ADB scene_source extra keeps legacy extras
+            // behavior (validation override wins when both are present).
+            val explicitSceneExtra = intent.getBooleanExtra(EXTRA_SCENE_SOURCE, false)
+            val sceneConfigPresent = intent.hasExtra(EXTRA_SCENE_CONFIG)
+            val sceneSpecs = SceneConfigCodec.streamableSpecs(intent.getStringExtra(EXTRA_SCENE_CONFIG))
+            val useSceneSource = explicitSceneExtra || sceneSpecs.isNotEmpty()
+            val sceneFallbackDone = intent.getBooleanExtra(EXTRA_SCENE_FALLBACK_DONE, false)
+            // Sanitized: counts and text lengths only, never content.
+            val sceneText = intent.getStringExtra(EXTRA_SCENE_TEXT)
+            val sceneText2 = intent.getStringExtra(EXTRA_SCENE_TEXT2)
+            Log.i(TAG, "Video source requested=" + if (useSceneSource) "SceneSource" else "ScreenSource" +
+                " selected=" + if (useSceneSource) "SceneSource compositor passthrough"
+                else "ScreenSource direct passthrough" +
+                if (sceneFallbackDone) " (scene fallback retry)" else "" +
+                if (!explicitSceneExtra && sceneSpecs.isNotEmpty()) " scene=${sceneSpecs.size} layers " +
+                    SceneConfigCodec.decodedOrientation(intent.getStringExtra(EXTRA_SCENE_CONFIG)) else "" +
+                if (!explicitSceneExtra && sceneConfigPresent && sceneSpecs.isEmpty()) " scene invalid, defaulting" else "" +
+                if (useSceneSource && !sceneText.isNullOrBlank()) " text=${sceneText.length} chars" else "" +
+                if (useSceneSource && !sceneText2.isNullOrBlank()) " text2=${sceneText2.length} chars" else "")
+            val videoSource: VideoSource = if (useSceneSource) {
+                if (!explicitSceneExtra && sceneSpecs.isNotEmpty()) {
+                    SceneSource(
+                        this, mediaProjection,
+                        sceneConfig = intent.getStringExtra(EXTRA_SCENE_CONFIG),
+                        sessionStartElapsedMs = sessionStartElapsedMs
+                    )
+                } else {
+                    SceneSource(
+                        this, mediaProjection, sceneText, sceneText2,
+                        sessionStartElapsedMs = sessionStartElapsedMs
+                    )
+                }
+            } else {
+                ScreenSource(this, mediaProjection)
+            }
             val stream = GenericStream(
                 this,
                 checker,
-                ScreenSource(this, mediaProjection),
+                videoSource,
                 audioSource
             )
             stream.forceCodecType(CodecUtil.CodecType.HARDWARE, CodecUtil.CodecType.FIRST_COMPATIBLE_FOUND)
 
-            val videoPrepared = stream.prepareVideo(width, height, bitrate, fps, 2, 0)
-            if (!videoPrepared) {
-                throw IllegalStateException("H.264 video encoder preparation failed for ${width}x${height} @ ${fps} FPS")
+            var selectedProfile: VideoProfile? = null
+            for (candidate in profileCandidates) {
+                val prepared = try {
+                    stream.prepareVideo(candidate.width, candidate.height, candidate.bitrate, candidate.fps, 2, 0)
+                } catch (error: Exception) {
+                    Log.w(TAG, "Encoder rejected ${candidate.label}; trying next profile", error)
+                    false
+                }
+                if (prepared) {
+                    selectedProfile = candidate
+                    break
+                }
+                Log.w(TAG, "Hardware H.264 encoder cannot prepare ${candidate.label}; trying fallback")
             }
+            val activeProfile = selectedProfile
+                ?: throw IllegalStateException("No supported hardware H.264 profile found. Try 720p30 or check device encoder support.")
+            activeProfileLabel = activeProfile.label
             val echoCancellation = audioMode != AUDIO_MODE_GAME
             val noiseSuppression = audioMode != AUDIO_MODE_GAME
-            val audioPrepared = stream.prepareAudio(44_100, true, 128_000, echoCancellation, noiseSuppression)
+            Log.i(TAG, "Audio effects requested: AEC=$echoCancellation, NS=$noiseSuppression; microphone source=$micSource; accessibility=$accessibilityMicConnected")
+            val audioPrepared = stream.prepareAudio(48_000, true, 128_000, echoCancellation, noiseSuppression)
             if (!audioPrepared) {
                 throw IllegalStateException("Audio source preparation failed for mode: $audioMode")
             }
@@ -248,72 +659,207 @@ class RtmpBroadcastService : Service() {
             // This is a single-source scene for now; custom top/bottom scene layers
             // require the separate scene-compositor milestone.
             stream.getGlInterface().setStreamIsPortrait(portrait)
-            stream.getGlInterface().setForceRender(true, 15)
+            // Keep static-screen fallback frames on the same cadence as the selected stream profile.
+            stream.getGlInterface().setForceRender(true, activeProfile.fps)
             display = stream
-            publishState(false, "Encoder ready • Connecting…", 0L)
-            update("Encoder ready • Connecting…")
+            activeVideoSource = videoSource
+            stream.setFpsListener { outputFps ->
+                handler.post {
+                    // Encoder-output cadence for health sampling, tracked in
+                    // every phase (including reconnecting) for the stalled
+                    // encoder-versus-transmission distinction.
+                    if (display === stream && outputFps > 0) {
+                        lastPositiveFpsAt = SystemClock.elapsedRealtime()
+                    }
+                    if (display === stream && streamingConfirmed && recoveryDriver.state.phase != StreamPhase.RECONNECTING) {
+                        update("LIVE • $activeProfileLabel • ${outputFps} FPS • ${lastBitrate / 1000} kbps", lastBitrate)
+                    }
+                }
+            }
+            handler.removeCallbacks(sessionHeartbeat)
+            handler.post(sessionHeartbeat)
+            publishState(false, BroadcastStatusMessages.encoderReadyMessage(activeProfileLabel), 0L)
+            update(BroadcastStatusMessages.encoderReadyMessage(activeProfileLabel))
+            // Library-level backstop for the policy above: RootEncoder refuses
+            // further reTry calls once this counter is consumed, so the two
+            // bounds always agree even if a callback arrives unexpectedly.
+            stream.getStreamClient().setReTries(StreamConnectionPolicy.MAX_ATTEMPTS)
             stream.startStream(streamUrl)
-            handler.postDelayed(startupTimeout, 25_000L)
-            Log.i(TAG, "RTMP broadcast requested: ${width}x${height} @ ${fps}fps, orientation=${if (portrait) "PORTRAIT" else "LANDSCAPE"}, audio=$audioMode, dpi=$dpi")
+            recordDiagnostic(DiagnosticEventId.SESSION_STARTED,
+                "$activeProfileLabel • ${if (portrait) "portrait" else "landscape"} • $audioMode")
+            handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
+            Log.i(TAG, "RTMP broadcast requested: $activeProfileLabel, orientation=${if (portrait) "PORTRAIT" else "LANDSCAPE"}, audio=$audioMode, dpi=$dpi")
         } catch (error: Exception) {
-            Log.e(TAG, "Unable to start RTMP broadcast", error)
-            stopBroadcast("Unable to start: ${error.message ?: "encoder error"}")
+            val fallback = VideoSourceFallbackPolicy.shouldFallbackToScreenSource(
+                requestedSceneSource = intent.getBooleanExtra(EXTRA_SCENE_SOURCE, false),
+                fallbackAlreadyAttempted = intent.getBooleanExtra(EXTRA_SCENE_FALLBACK_DONE, false),
+                streamingConfirmed = streamingConfirmed
+            )
+            if (fallback) {
+                // Single loud retry with the default source: the retry intent
+                // carries scene_source=false, so this branch is unreachable on
+                // the second attempt (depth at most one). startBroadcast's own
+                // head tears down the partial scene attempt via the same
+                // release path as a duplicate GO LIVE — no new cleanup logic.
+                val reason = error.message ?: error.javaClass.simpleName
+                Log.e(TAG, "SceneSource start failed ($reason); falling back to ScreenSource", error)
+                publishState(false, BroadcastStatusMessages.sceneFallbackMessage(reason), 0L)
+                // The retry strips the scene configuration (not just the
+                // source flag): a preserved scene_config would reselect
+                // SceneSource and the "fallback" would retry the scene
+                // instead of the default source.
+                startBroadcast(Intent(intent).apply {
+                    putExtra(EXTRA_SCENE_SOURCE, false)
+                    putExtra(EXTRA_SCENE_FALLBACK_DONE, true)
+                    putExtra(EXTRA_SCENE_FALLBACK_REASON, reason)
+                    removeExtra(EXTRA_SCENE_CONFIG)
+                })
+            } else {
+                Log.e(TAG, "Unable to start RTMP broadcast", error)
+                stopBroadcast(BroadcastStatusMessages.UNABLE_TO_START_PREFIX + (error.message ?: "encoder error"))
+            }
         }
     }
 
-    private fun stopBroadcast(message: String = "Broadcast stopped") {
+    /**
+     * Feed one observational health sample from the live pipeline. Runs only
+     * on the existing watchdog tick, before the authoritative driver
+     * decision; a sampling failure skips the tick and never affects the
+     * session. Health transitions are logged for device debugging and ride
+     * along the next status broadcast as an extra.
+     */
+    private fun sampleStreamHealth() {
+        val stream = display ?: return
+        val previous = healthMonitor.state
+        val sample = try {
+            val client = stream.getStreamClient()
+            StreamHealthSample(
+                nowMs = SystemClock.elapsedRealtime(),
+                bitrateBps = lastBitrate,
+                bytesSendTotal = client.getBytesSend(),
+                sentVideoTotal = client.getSentVideoFrames(),
+                sentAudioTotal = client.getSentAudioFrames(),
+                droppedVideoTotal = client.getDroppedVideoFrames(),
+                droppedAudioTotal = client.getDroppedAudioFrames(),
+                queueItems = client.getItemsInCache(),
+                queueBytesOut = client.getQueueBytesOut(),
+                congested = client.hasCongestion(),
+                lastPositiveBitrateMs = lastPositiveBitrateAt,
+                lastEncoderFpsMs = lastPositiveFpsAt,
+                recovering = recoveryDriver.state.phase == StreamPhase.RECONNECTING
+            )
+        } catch (_: Exception) {
+            return
+        }
+        val next = healthMonitor.onSample(sample)
+        if (next != previous) {
+            Log.i(TAG, "Stream health: $previous -> $next")
+            recordDiagnostic(DiagnosticEventId.HEALTH_TRANSITION, "$previous -> $next")
+        }
+    }
+
+    private fun stopBroadcast(message: String = BroadcastStatusMessages.STOPPED) {
+        if (stopping) return
+        stopping = true
         handler.removeCallbacks(startupTimeout)
+        handler.removeCallbacks(streamHealthWatchdog)
+        handler.removeCallbacks(sessionHeartbeat)
+        recoveryDriver.onStop()
         streamingConfirmed = false
         lastBitrate = 0L
         val active = display
         display = null
+        activeVideoSource = null
+        activeAudioSource = null
+        activeMicSource = AudioRouteLabels.SOURCE_NONE
+        activeHeadset = false
         try { active?.release() } catch (error: Exception) {
             Log.w(TAG, "Error while releasing RTMP stream", error)
         }
         releaseProjection()
+        recordDiagnostic(DiagnosticEventId.STREAM_STOPPED, message)
+        logTerminalReport(message)
         publishState(false, message, 0L)
+        // Halt only after the final status event so it preserves the
+        // terminal health verdict (e.g. STALLED) instead of UNKNOWN.
+        healthMonitor.onStopped()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     /**
-     * Glip-compatible concurrent capture: DEFAULT without a headset, and
-     * VOICE_RECOGNITION when a headset/Bluetooth input is connected.
+     * DEFAULT allows Android's platform AEC/NS effects to be attached by RootEncoder.
+     * VOICE_RECOGNITION commonly bypasses or disables those effects.
      */
-    private fun chooseMicrophoneSource(): Int {
+    private fun choosePreferredMicrophoneDevice(): AudioDeviceInfo? {
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val headsetInputConnected = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).any { device ->
+        return audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { device ->
             device.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
                 device.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
                 device.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
                 (Build.VERSION.SDK_INT >= 31 && device.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
         }
-        return if (headsetInputConnected) MediaRecorder.AudioSource.VOICE_RECOGNITION
-        else MediaRecorder.AudioSource.DEFAULT
+    }
+
+    private fun setAudioSourceMuted(source: AudioSource?, muted: Boolean) {
+        when (source) {
+            is MicrophoneSource -> if (muted) source.mute() else source.unMute()
+            is InternalAudioSource -> if (muted) source.mute() else source.unMute()
+            is ProcessedMixAudioSource -> if (muted) source.mute() else source.unMute()
+        }
+    }
+
+    private fun setStreamAudioMuted(muted: Boolean) {
+        getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putBoolean(KEY_STREAM_AUDIO_MUTED, muted).apply()
+        setAudioSourceMuted(activeAudioSource, muted)
+        update(if (muted) "Stream audio muted" else "Stream audio unmuted")
     }
 
     private fun releaseProjection() {
         val projection = activeProjection ?: return
         activeProjection = null
-        try { projection.unregisterCallback(projectionCallback) } catch (_: Exception) { }
+        val callback = activeProjectionCallback
+        activeProjectionCallback = null
+        try { if (callback != null) projection.unregisterCallback(callback) } catch (_: Exception) { }
         try { projection.stop() } catch (_: Exception) { }
     }
 
     private fun update(message: String, bitrate: Long = 0L) {
-        publishState(streamingConfirmed && lastBitrate > 0L, message, if (bitrate > 0L) bitrate else lastBitrate)
+        // A session whose socket dropped is never reported live, even though
+        // the confirmation flag from before the outage is retained.
+        val live = streamingConfirmed && lastBitrate > 0L && recoveryDriver.state.phase != StreamPhase.RECONNECTING
+        publishState(live, message, if (bitrate > 0L) bitrate else lastBitrate)
         notifications.notify(NOTIFICATION_ID, notification(message))
     }
 
     private fun publishState(active: Boolean, message: String, bitrate: Long) {
+        val voice = activeAudioSource as? ProcessedMixAudioSource
+        val aec = voice?.aecAttached == true
+        val ns = voice?.nsAttached == true
+        val voiceOptimized = voice?.voiceOptimizerActive == true
+        val captureRunning = activeAudioSource?.isRunning() == true
+        val streamMuted = getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_STREAM_AUDIO_MUTED, false)
         getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_ACTIVE, active)
             .putString(KEY_MESSAGE, message)
             .putLong(KEY_BITRATE, bitrate)
+            .putString(KEY_HEALTH, healthMonitor.state.name)
+            .putLong(KEY_HEARTBEAT, System.currentTimeMillis())
             .apply()
         sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).apply {
             putExtra(EXTRA_STATUS_ACTIVE, active)
             putExtra(EXTRA_STATUS_MESSAGE, message)
             putExtra(EXTRA_STATUS_BITRATE, bitrate)
+            putExtra(EXTRA_STATUS_HEALTH, healthMonitor.state.name)
+            putExtra(EXTRA_STATUS_AEC, aec)
+            putExtra(EXTRA_STATUS_NS, ns)
+            putExtra(EXTRA_STATUS_VOICE, voiceOptimized)
+            putExtra(EXTRA_STATUS_MIC_SOURCE, activeMicSource)
+            putExtra(EXTRA_STATUS_HEADSET, activeHeadset)
+            putExtra(EXTRA_STATUS_STREAM_MUTED, streamMuted)
+            putExtra(EXTRA_STATUS_CAPTURE, captureRunning)
+            putExtra(EXTRA_STATUS_VIDEO_PAUSED, (activeVideoSource as? SceneSource)?.isVideoPaused == true)
         })
     }
 
@@ -364,7 +910,12 @@ class RtmpBroadcastService : Service() {
     // The foreground service owns the broadcast until explicit STOP or projection revocation.
 
     override fun onDestroy() {
+        // Terminal invalidation first: the display release below triggers an
+        // async library onDisconnect that posts after destruction and must
+        // not overwrite the terminal state published here.
+        callbackRouter.invalidate()
         handler.removeCallbacksAndMessages(null)
+        recoveryDriver.onDestroyed()
         if (commandReceiverRegistered) {
             try { unregisterReceiver(commandReceiver) } catch (_: IllegalArgumentException) { }
             commandReceiverRegistered = false
@@ -373,15 +924,62 @@ class RtmpBroadcastService : Service() {
         lastBitrate = 0L
         try { display?.release() } catch (_: Exception) { }
         display = null
+        activeVideoSource = null
+        activeAudioSource = null
+        activeMicSource = AudioRouteLabels.SOURCE_NONE
+        activeHeadset = false
         releaseProjection()
-        publishState(false, "Broadcast service stopped", 0L)
+        // Publish before halting so the destruction event preserves the
+        // terminal verdict already published by stopBroadcast/onDisconnect
+        // (or the last live state when the system kills an active session)
+        // instead of UNKNOWN. Same message scope as before; only the health
+        // extra keeps its terminal value.
+        val destroyMessage = BroadcastStatusMessages.SERVICE_STOPPED
+        recordDiagnostic(DiagnosticEventId.SERVICE_DESTROYED, destroyMessage)
+        logTerminalReport(destroyMessage)
+        publishState(false, destroyMessage, 0L)
+        healthMonitor.onStopped()
         super.onDestroy()
+    }
+
+    /**
+     * Failure-isolated diagnostic recording. An ordinary recording failure
+     * can never suppress, delay or change the surrounding streaming action;
+     * fatal errors are never caught.
+     */
+    private fun recordDiagnostic(id: String, detail: String) {
+        guardDiagnosticAction {
+            diagnostics.record(diagnosticToken, id, detail, SystemClock.elapsedRealtime())
+        }
+    }
+
+    /**
+     * Log the concise terminal session report. Observational only: runs
+     * after the teardown above, and a reporting failure can never affect
+     * the terminal state already being published.
+     */
+    private fun logTerminalReport(reason: String) {
+        if (!diagnostics.hasSession) return
+        guardDiagnosticAction {
+            Log.i(TAG, "Session report:\n" + diagnostics.terminalReport(
+                reason = reason,
+                endMs = SystemClock.elapsedRealtime(),
+                phase = recoveryDriver.state.phase,
+                health = healthMonitor.state,
+                attemptsUsed = recoveryDriver.state.attemptsUsed,
+                staleDropped = callbackRouter.staleDropped
+            ))
+        }
     }
 
     companion object {
         const val ACTION_START = "com.jubersaleem.mobilegamingstreamer.action.START_RTMP"
         const val ACTION_STOP = "com.jubersaleem.mobilegamingstreamer.action.STOP_RTMP"
         const val ACTION_SET_BITRATE = "com.jubersaleem.mobilegamingstreamer.action.SET_BITRATE"
+        const val ACTION_SET_STREAM_AUDIO_MUTED = "com.jubersaleem.mobilegamingstreamer.action.SET_STREAM_AUDIO_MUTED"
+        const val ACTION_UPDATE_SCENE = "com.jubersaleem.mobilegamingstreamer.action.UPDATE_SCENE"
+        const val EXTRA_STREAM_AUDIO_MUTED = "stream_audio_muted"
+        const val KEY_STREAM_AUDIO_MUTED = "stream_audio_muted"
 
         /** Shared stop entry point used by the app UI, notification and floating controls. */
         fun requestStop(context: Context) {
@@ -389,6 +987,18 @@ class RtmpBroadcastService : Service() {
         }
         fun requestBitrate(context: Context, bitrate: Int) {
             context.sendBroadcast(Intent(ACTION_SET_BITRATE).setPackage(context.packageName).putExtra(EXTRA_BITRATE, bitrate))
+        }
+        fun requestStreamAudioMuted(context: Context, muted: Boolean) {
+            context.sendBroadcast(Intent(ACTION_SET_STREAM_AUDIO_MUTED).setPackage(context.packageName)
+                .putExtra(EXTRA_STREAM_AUDIO_MUTED, muted))
+        }
+        /** H8 push: absent extra = "no scene" (swap home to passthrough). */
+        fun requestSceneUpdate(context: Context, sceneConfig: String?, transition: String? = null) {
+            val update = Intent(ACTION_UPDATE_SCENE).setPackage(context.packageName)
+            if (sceneConfig != null) update.putExtra(EXTRA_SCENE_CONFIG, sceneConfig)
+            // J4: absent/garbage transition extra = CUT (today's behavior).
+            if (transition != null) update.putExtra(EXTRA_SCENE_TRANSITION, transition)
+            context.sendBroadcast(update)
         }
         const val EXTRA_BITRATE = "video_bitrate"
         const val EXTRA_RESULT_CODE = "result_code"
@@ -398,6 +1008,13 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_FPS = "fps"
         const val EXTRA_ORIENTATION = "orientation"
         const val EXTRA_AUDIO_MODE = "audio_mode"
+        const val EXTRA_SCENE_SOURCE = "scene_source"
+        const val EXTRA_SCENE_FALLBACK_DONE = "scene_fallback_done"
+        const val EXTRA_SCENE_FALLBACK_REASON = "scene_fallback_reason"
+        const val EXTRA_SCENE_TEXT = "scene_text"
+        const val EXTRA_SCENE_TEXT2 = "scene_text2"
+        const val EXTRA_SCENE_TRANSITION = "scene_transition"
+        const val EXTRA_SCENE_CONFIG = "scene_config"
         const val AUDIO_MODE_MIC = "MIC"
         const val AUDIO_MODE_GAME = "GAME"
         const val AUDIO_MODE_BOTH = "BOTH"
@@ -407,11 +1024,23 @@ class RtmpBroadcastService : Service() {
         const val EXTRA_STATUS_ACTIVE = "status_active"
         const val EXTRA_STATUS_MESSAGE = "status_message"
         const val EXTRA_STATUS_BITRATE = "status_bitrate"
+        const val EXTRA_STATUS_AEC = "status_aec"
+        const val EXTRA_STATUS_NS = "status_ns"
+        const val EXTRA_STATUS_VOICE = "status_voice_optimized"
+        const val EXTRA_STATUS_MIC_SOURCE = "status_mic_source"
+        const val EXTRA_STATUS_HEADSET = "status_headset"
+        const val EXTRA_STATUS_STREAM_MUTED = "status_stream_muted"
+        const val EXTRA_STATUS_CAPTURE = "status_capture_running"
+        const val EXTRA_STATUS_VIDEO_PAUSED = "status_video_paused"
+        const val EXTRA_STATUS_HEALTH = "status_health"
         const val STATE_PREFS = "broadcast_state"
         const val KEY_ACTIVE = "active"
         const val KEY_MESSAGE = "message"
         const val KEY_BITRATE = "bitrate"
-        const val KEY_ACCESSIBILITY_READY = "accessibility_ready"
+        const val KEY_HEALTH = "health"
+        const val KEY_HEARTBEAT = "service_heartbeat"
+        private const val STREAM_HEALTH_CHECK_INTERVAL_MS = 5_000L
+        private const val STARTUP_TIMEOUT_MS = 25_000L
         private const val TAG = "MGS-RTMP"
         private const val CHANNEL_ID = "live_broadcast"
         private const val NOTIFICATION_ID = 1002

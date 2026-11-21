@@ -14,6 +14,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -28,7 +29,13 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.jubersaleem.mobilegamingstreamer.R
+import com.jubersaleem.mobilegamingstreamer.AudioRouteLabels
+import com.jubersaleem.mobilegamingstreamer.BroadcastStatusKind
 import com.jubersaleem.mobilegamingstreamer.capture.RtmpBroadcastService
+import com.jubersaleem.mobilegamingstreamer.classifyBroadcastStatus
+import com.jubersaleem.mobilegamingstreamer.isStartingBroadcastMessage
+import com.jubersaleem.mobilegamingstreamer.capture.SpeakerMutePolicy
+import com.jubersaleem.mobilegamingstreamer.capture.SpeakerMuteState
 import kotlin.math.abs
 
 /** Compact recorder-style bubble. The expanded controls are shown only on user tap. */
@@ -47,22 +54,29 @@ class FloatingControlService : Service() {
     private var stopButton: Button? = null
     private var speakerButton: Button? = null
     private var statusLabel: TextView? = null
+    private var footerLabel: TextView? = null
     private var broadcastActive = false
     private var broadcastStarting = false
     private var broadcastMessage = "Broadcast setup ready"
-    private var speakerMuted = false
+    private var micSource = AudioRouteLabels.SOURCE_NONE
+    private var speakerMuteState = SpeakerMuteState()
+    private var streamAudioMuted = false
+    private var streamAudioButton: Button? = null
 
     private val broadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != RtmpBroadcastService.ACTION_STATUS) return
             broadcastActive = intent.getBooleanExtra(RtmpBroadcastService.EXTRA_STATUS_ACTIVE, false)
             broadcastMessage = intent.getStringExtra(RtmpBroadcastService.EXTRA_STATUS_MESSAGE) ?: "Broadcast status updated"
-            broadcastStarting = !broadcastActive && isStartingMessage(broadcastMessage)
+            micSource = intent.getIntExtra(RtmpBroadcastService.EXTRA_STATUS_MIC_SOURCE, AudioRouteLabels.SOURCE_NONE)
+            broadcastStarting = !broadcastActive && isStartingBroadcastMessage(broadcastMessage)
             renderBroadcastState()
+            renderFooter()
             if (!broadcastActive && !broadcastStarting && bubble == null) stopSelf()
         }
     }
 
+    @Suppress("UnspecifiedRegisterReceiverFlag")
     override fun onCreate() {
         super.onCreate()
         val filter = IntentFilter(RtmpBroadcastService.ACTION_STATUS)
@@ -84,10 +98,12 @@ class FloatingControlService : Service() {
         if (prefs.getBoolean(KEY_BUBBLE_DISMISSED, false)) { stopSelf(); return START_NOT_STICKY }
         refreshBroadcastState()
         if (bubble == null) createBubble()
-        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        speakerMuted = audio.getStreamVolume(AudioManager.STREAM_MUSIC) == 0
+        adoptSpeakerMuteOwnership()
+        streamAudioMuted = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE).getBoolean(RtmpBroadcastService.KEY_STREAM_AUDIO_MUTED, false)
         renderBroadcastState()
         renderSpeakerState()
+        renderStreamAudioState()
+        renderFooter()
         scheduleDim()
         return START_NOT_STICKY
     }
@@ -100,18 +116,18 @@ class FloatingControlService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
         val icon = ImageView(this).apply {
-            setImageResource(R.drawable.ic_mgs_bubble)
+            setImageResource(R.drawable.ic_mgs_clay_mark)
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(dp(3), dp(3), dp(3), dp(3))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(0xFF101820.toInt())
-                setStroke(dp(2), 0xFFC4FF5C.toInt())
+                setColors(intArrayOf(0xFFFFFCFF.toInt(), 0xFFEDE8FA.toInt()))
+                setStroke(dp(2), 0xFFFFFFFF.toInt())
             }
             alpha = 1f
             contentDescription = "Open Mobile Gaming Streamer controls"
         }
-        val lp = WindowManager.LayoutParams(dp(42), dp(42), type, secureFlags, PixelFormat.TRANSLUCENT).apply {
+        val lp = WindowManager.LayoutParams(dp(48), dp(48), type, secureFlags, PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.END
             x = dp(12)
             y = dp(180)
@@ -144,8 +160,8 @@ class FloatingControlService : Service() {
                         if (abs(dx) > dp(5) || abs(dy) > dp(5)) { dragged = true; showDismissTarget() }
                         val bounds = android.graphics.Rect()
                         wm.defaultDisplay.getRectSize(bounds)
-                        lp.x = (initialX - dx.toInt()).coerceIn(0, (bounds.width() - dp(42)).coerceAtLeast(0))
-                        lp.y = (initialY + dy.toInt()).coerceIn(0, (bounds.height() - dp(42)).coerceAtLeast(0))
+                        lp.x = (initialX - dx.toInt()).coerceIn(0, (bounds.width() - dp(48)).coerceAtLeast(0))
+                        lp.y = (initialY + dy.toInt()).coerceIn(0, (bounds.height() - dp(48)).coerceAtLeast(0))
                         wm.updateViewLayout(icon, lp)
                         dismissTarget?.let { target ->
                             val location = IntArray(2); target.getLocationOnScreen(location)
@@ -175,54 +191,59 @@ class FloatingControlService : Service() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(10), dp(12), dp(12))
-            setBackgroundColor(0xF018222D.toInt())
+            background = panelSurfaceBackground()
+            elevation = dp(18).toFloat()
+            clipToOutline = true
         }
         val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val title = TextView(this).apply {
             text = "MGS  STREAM CONTROLS"
-            setTextColor(0xFFC4FF5C.toInt())
+            setTextColor(0xFFE9E7F5.toInt())
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
         }
-        val minimize = Button(this).apply { text = "—"; setOnClickListener { panel?.visibility = View.GONE; bubble?.visibility = View.VISIBLE; scheduleDim() } }
-        header.addView(title, LinearLayout.LayoutParams(0, dp(42), 1f))
-        header.addView(minimize, LinearLayout.LayoutParams(dp(44), dp(42)))
-        header.addView(Button(this).apply { text = "×"; contentDescription = "Hide floating controls"; setOnClickListener { dismissBubbleByDrag() } }, LinearLayout.LayoutParams(dp(44), dp(42)))
+        val minimize = clayOverlayButton("—", 14f).apply {
+            contentDescription = "Minimize floating controls"
+            setOnClickListener { panel?.visibility = View.GONE; bubble?.visibility = View.VISIBLE; scheduleDim() }
+        }
+        header.addView(title, LinearLayout.LayoutParams(0, dp(48), 1f))
+        header.addView(minimize, LinearLayout.LayoutParams(dp(48), dp(48)))
+        header.addView(clayOverlayButton("×", 14f).apply { contentDescription = "Hide floating controls"; setOnClickListener { dismissBubbleByDrag() } }, LinearLayout.LayoutParams(dp(48), dp(48)))
         root.addView(header)
 
         val status = TextView(this).apply {
             text = "Broadcast setup ready"
-            setTextColor(0xFFE8EEF5.toInt())
+            setTextColor(0xFFB9B4CC.toInt())
             textSize = 11f
+            typeface = Typeface.MONOSPACE
             setPadding(0, dp(3), 0, dp(8))
         }
         statusLabel = status
         root.addView(status)
         val label = TextView(this).apply {
             text = "VIDEO BITRATE"
-            setTextColor(0xFF63D8E8.toInt())
+            setTextColor(0xFF9C97B3.toInt())
             textSize = 10f
             typeface = Typeface.DEFAULT_BOLD
         }
         root.addView(label)
         val bitrateRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         listOf(4000, 6000, 8000, 12000, 16000, 18000).forEach { kbps ->
-            val button = Button(this).apply {
-                text = "${kbps / 1000}M"
-                textSize = 10f
+            val button = clayOverlayButton("${kbps / 1000}M", 10f).apply {
+                contentDescription = "Request ${kbps} kilobits per second video"
                 setPadding(dp(1), 0, dp(1), 0)
                 setOnClickListener {
                     RtmpBroadcastService.requestBitrate(this@FloatingControlService, kbps * 1000)
                     status.text = "Requested ${kbps} kbps video"
                 }
             }
-            bitrateRow.addView(button, LinearLayout.LayoutParams(0, dp(42), 1f))
+            bitrateRow.addView(button, LinearLayout.LayoutParams(0, dp(48), 1f))
         }
         root.addView(bitrateRow)
 
         val chatLabel = TextView(this).apply {
             text = "YOUTUBE LIVE CHAT"
-            setTextColor(0xFF63D8E8.toInt())
+            setTextColor(0xFF9C97B3.toInt())
             textSize = 10f
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, dp(9), 0, dp(3))
@@ -232,12 +253,21 @@ class FloatingControlService : Service() {
             hint = "Live video ID (until YouTube account linking)"
             setSingleLine(true)
             textSize = 11f
-            setTextColor(0xFFFFFFFF.toInt())
-            setHintTextColor(0xFF91A0AE.toInt())
+            typeface = Typeface.MONOSPACE
+            setTextColor(0xFFE9E7F5.toInt())
+            setHintTextColor(0xFF8E89A3.toInt())
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(16).toFloat()
+                setColor(0xFF1B1B25.toInt())
+                setStroke(dp(1), 0xFF4A4A5E.toInt())
+            }
+            setPadding(dp(12), 0, dp(12), 0)
         }
-        root.addView(videoId, LinearLayout.LayoutParams(-1, dp(44)))
-        val chatButton = Button(this).apply {
-            text = "OPEN LIVE CHAT"
+        root.addView(videoId, LinearLayout.LayoutParams(-1, dp(48)))
+        val chatButton = clayOverlayButton("OPEN LIVE CHAT", 11f).apply {
+            setTextColor(0xFFFFFFFF.toInt())
+            background = overlayButtonBackground(0xFFD95F45.toInt())
             setOnClickListener {
                 val id = videoId.text.toString().trim()
                 if (!id.matches(Regex("[A-Za-z0-9_-]{6,}"))) {
@@ -257,15 +287,22 @@ class FloatingControlService : Service() {
             }
         }
         root.addView(chatButton)
-        val speaker = Button(this).apply {
-            textSize = 11f
+        val speaker = clayOverlayButton("", 11f).apply {
             setOnClickListener { toggleSpeakerMute() }
         }
         speakerButton = speaker
         root.addView(speaker)
+        val streamAudio = clayOverlayButton("", 11f).apply {
+            setOnClickListener {
+                streamAudioMuted = !streamAudioMuted
+                RtmpBroadcastService.requestStreamAudioMuted(this@FloatingControlService, streamAudioMuted)
+                renderStreamAudioState()
+            }
+        }
+        streamAudioButton = streamAudio
+        root.addView(streamAudio)
 
-        val stop = Button(this).apply {
-            textSize = 12f
+        val stop = clayOverlayButton("", 12f).apply {
             setTextColor(0xFFFFFFFF.toInt())
             setOnClickListener {
                 when {
@@ -289,8 +326,17 @@ class FloatingControlService : Service() {
         }
         stopButton = stop
         root.addView(stop)
+        val footer = TextView(this).apply {
+            setTextColor(0xFF8E89A3.toInt())
+            textSize = 9f
+            typeface = Typeface.MONOSPACE
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        footerLabel = footer
+        root.addView(footer)
 
-        val lp = WindowManager.LayoutParams(dp(320), dp(480), type, flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv(), PixelFormat.TRANSLUCENT).apply {
+        val lp = WindowManager.LayoutParams(dp(320), dp(520), type, flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv(), PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.END
             x = dp(12)
             y = dp(250)
@@ -312,7 +358,7 @@ class FloatingControlService : Service() {
             setTextColor(0xFFFFFFFF.toInt())
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(0xFFE34D59.toInt())
+                setColor(0xFFD1344C.toInt())
                 setStroke(dp(2), 0xFFFFFFFF.toInt())
             }
             alpha = 0.82f
@@ -344,7 +390,7 @@ class FloatingControlService : Service() {
         dismissTarget?.let { try { wm.removeView(it) } catch (_: Exception) { } }; dismissTarget = null
         panel?.let { try { wm.removeView(it) } catch (_: Exception) { } }; panel = null
         bubble?.let { try { wm.removeView(it) } catch (_: Exception) { } }; bubble = null
-        stopButton = null; speakerButton = null; statusLabel = null
+        stopButton = null; speakerButton = null; streamAudioButton = null; statusLabel = null; footerLabel = null
     }
 
     // Removing the app task must not stop an active broadcast. The RTMP
@@ -355,31 +401,42 @@ class FloatingControlService : Service() {
 
     private fun refreshBroadcastState() {
         val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
-        broadcastActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
-        broadcastMessage = prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Broadcast setup ready") ?: "Broadcast setup ready"
+        val savedActive = prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false)
+        val heartbeat = prefs.getLong(RtmpBroadcastService.KEY_HEARTBEAT, 0L)
+        val sessionFresh = heartbeat > 0L && System.currentTimeMillis() - heartbeat <= 8_000L
+        broadcastActive = savedActive && sessionFresh
+        broadcastMessage = if (savedActive && !sessionFresh) {
+            "Previous broadcast session ended unexpectedly"
+        } else {
+            prefs.getString(RtmpBroadcastService.KEY_MESSAGE, "Broadcast setup ready") ?: "Broadcast setup ready"
+        }
+        if (savedActive && !sessionFresh) {
+            prefs.edit().putBoolean(RtmpBroadcastService.KEY_ACTIVE, false).putLong(RtmpBroadcastService.KEY_BITRATE, 0L).apply()
+        }
         if (!prefs.getBoolean(RtmpBroadcastService.KEY_ACTIVE, false) &&
             listOf("stopped", "disconnected").any { broadcastMessage.contains(it, ignoreCase = true) }) {
             broadcastMessage = "Broadcast setup ready"
         }
-        broadcastStarting = !broadcastActive && isStartingMessage(broadcastMessage)
+        broadcastStarting = !broadcastActive && isStartingBroadcastMessage(broadcastMessage)
         renderBroadcastState()
     }
 
-    private fun isStartingMessage(message: String): Boolean {
-        val value = message.lowercase()
-        return listOf("preparing", "encoder ready", "connecting", "waiting for", "stream key accepted")
-            .any { value.contains(it) }
-    }
-
     private fun renderBroadcastState() {
-        val errorState = !broadcastActive && !broadcastStarting &&
-            listOf("failed", "error", "invalid", "authentication").any { broadcastMessage.contains(it, ignoreCase = true) }
+        val errorState = classifyBroadcastStatus(broadcastMessage, broadcastActive, broadcastStarting) == BroadcastStatusKind.ERROR
         statusLabel?.text = when {
             broadcastActive -> "● LIVE  •  $broadcastMessage"
             broadcastStarting -> "◌ CONNECTING  •  $broadcastMessage"
             errorState -> "⚠ ERROR  •  $broadcastMessage"
             else -> "○ SETUP  •  $broadcastMessage"
         }
+        statusLabel?.setTextColor(
+            when {
+                broadcastActive -> 0xFF6FD8E3.toInt()
+                errorState -> 0xFFFF8A7A.toInt()
+                broadcastStarting -> 0xFFF2C879.toInt()
+                else -> 0xFFB9B4CC.toInt()
+            }
+        )
         stopButton?.apply {
             isEnabled = true
             text = when {
@@ -388,33 +445,81 @@ class FloatingControlService : Service() {
                 errorState -> "↻  RETRY / OPEN SETUP"
                 else -> "↗  OPEN BROADCAST SETUP"
             }
-            setBackgroundColor(if (broadcastActive || broadcastStarting || errorState) 0xFFB94D54.toInt() else 0xFFC4FF5C.toInt())
-            setTextColor(if (broadcastActive || broadcastStarting || errorState) 0xFFFFFFFF.toInt() else 0xFF11170A.toInt())
-        }
-    }
-
-    private fun renderSpeakerState() {
-        speakerButton?.apply {
-            text = if (speakerMuted) "◖))  SPEAKER MUTED  •  TAP TO UNMUTE" else "◖))  SPEAKER ON  •  TAP TO MUTE"
-            setBackgroundColor(if (speakerMuted) 0xFFB94D54.toInt() else 0xFF263642.toInt())
+            background = overlayButtonBackground(
+                if (broadcastActive || broadcastStarting || errorState) 0xFFD1344C.toInt() else 0xFF5B3DF5.toInt()
+            )
             setTextColor(0xFFFFFFFF.toInt())
         }
     }
 
-    @Suppress("DEPRECATION")
-    private fun toggleSpeakerMute() {
+    private fun renderSpeakerState() {
         val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
-        if (!speakerMuted) {
-            val current = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
-            prefs.edit().putInt("speaker_previous_music_volume", current.coerceAtLeast(1)).apply()
-            audio.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
-            speakerMuted = true
-        } else {
-            val previous = prefs.getInt("speaker_previous_music_volume", audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC) / 2)
-            audio.setStreamVolume(AudioManager.STREAM_MUSIC, previous.coerceIn(1, audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)), 0)
-            speakerMuted = false
+        val muted = SpeakerMutePolicy.displayMuted(audio.getStreamVolume(AudioManager.STREAM_MUSIC))
+        speakerButton?.apply {
+            text = if (muted) "◖))  LOCAL SPEAKER MUTED  •  TAP TO UNMUTE" else "◖))  LOCAL SPEAKER ON  •  TAP TO MUTE"
+            contentDescription = if (muted) {
+                "Local speaker is muted. Tap to restore the previous volume. Stream audio is unaffected."
+            } else {
+                "Local speaker is on. Tap to mute this device only. Stream audio is unaffected."
+            }
+            background = overlayButtonBackground(if (muted) 0xFFD1344C.toInt() else 0xFF5B3DF5.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
         }
+    }
+
+    /**
+     * Local speaker mute only moves the device music stream; the outgoing
+     * stream mix is controlled separately by the stream-audio button.
+     */
+    private fun musicVolumes(): Triple<AudioManager, Int, Int> {
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return Triple(audio, audio.getStreamVolume(AudioManager.STREAM_MUSIC), audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC))
+    }
+
+    private fun adoptSpeakerMuteOwnership() {
+        val prefs = getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE)
+        val (_, current, max) = musicVolumes()
+        speakerMuteState = SpeakerMutePolicy.onStart(
+            prefs.getBoolean(KEY_SPEAKER_MUTE_OWNED, false),
+            prefs.getInt(KEY_SPEAKER_PREVIOUS_VOLUME, 0),
+            current,
+            max
+        )
+        persistSpeakerMuteState()
+    }
+
+    private fun persistSpeakerMuteState() {
+        getSharedPreferences(RtmpBroadcastService.STATE_PREFS, MODE_PRIVATE).edit()
+            .putBoolean(KEY_SPEAKER_MUTE_OWNED, speakerMuteState.owned)
+            .putInt(KEY_SPEAKER_PREVIOUS_VOLUME, speakerMuteState.savedVolume)
+            .apply()
+    }
+
+    private fun renderStreamAudioState() {
+        streamAudioButton?.apply {
+            text = if (streamAudioMuted) "STREAM AUDIO MUTED • TAP TO UNMUTE" else "STREAM AUDIO ON • TAP TO MUTE"
+            background = overlayButtonBackground(if (streamAudioMuted) 0xFFD1344C.toInt() else 0xFF0097A7.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
+        }
+        renderFooter()
+    }
+
+    /**
+     * One-line session footer. It only repeats facts this service actually
+     * knows: the local stream-audio toggle and the microphone route the
+     * broadcast service published for the running session.
+     */
+    private fun renderFooter() {
+        val audio = if (streamAudioMuted) "STREAM AUDIO OFF" else "STREAM AUDIO ON"
+        footerLabel?.text = "$audio • MIC ${AudioRouteLabels.micSourceLabel(micSource)}"
+    }
+
+    private fun toggleSpeakerMute() {
+        val (audio, current, max) = musicVolumes()
+        val result = SpeakerMutePolicy.onToggle(speakerMuteState, current, max)
+        result.applyVolume?.let { audio.setStreamVolume(AudioManager.STREAM_MUSIC, it, 0) }
+        speakerMuteState = result.state
+        persistSpeakerMuteState()
         renderSpeakerState()
     }
 
@@ -422,6 +527,9 @@ class FloatingControlService : Service() {
         val expanded = panel?.visibility == View.VISIBLE
         panel?.visibility = if (expanded) View.GONE else View.VISIBLE
         bubble?.visibility = if (expanded) View.VISIBLE else View.GONE
+        // The volume may have moved via hardware buttons while the panel was
+        // closed; re-read it so the speaker button never shows a stale state.
+        if (!expanded) renderSpeakerState()
         if (expanded) scheduleDim()
     }
 
@@ -435,14 +543,72 @@ class FloatingControlService : Service() {
         handler.postDelayed(dimRunnable, 3500L)
     }
 
+    /**
+     * Dark graphite panel that stays readable over gameplay. The fills mirror
+     * the clay tokens from the design-tokens doc; text tints are the
+     * lightened variants that hold contrast on the dark surface.
+     */
+    private fun panelSurfaceBackground(): GradientDrawable {
+        val colors = intArrayOf(0xFF262633.toInt(), 0xFF1B1B25.toInt())
+        return GradientDrawable(GradientDrawable.Orientation.TL_BR, colors).apply {
+            cornerRadius = dp(26).toFloat()
+            setStroke(dp(1), 0xFF4A4A5E.toInt())
+        }
+    }
+
+    private fun overlayButtonBackground(color: Int): GradientDrawable =
+        GradientDrawable().apply {
+            cornerRadius = dp(16).toFloat()
+            setColor(color)
+            setStroke(dp(1), 0xFF4A4A5E.toInt())
+        }
+
+    /** Dark clay platform button used by the overlay controls. */
+    private fun clayOverlayButton(label: String, textSize: Float = 11f): Button =
+        Button(this).apply {
+            text = label
+            this.textSize = textSize
+            isAllCaps = false
+            setTextColor(0xFFE9E7F5.toInt())
+            backgroundTintList = null
+            background = overlayButtonBackground(0xFF353542.toInt())
+            minimumHeight = dp(48)
+            setPadding(dp(10), 0, dp(10), 0)
+        }
+
+    /**
+     * Never leave the device silent because the overlay went away: if this
+     * service muted the music stream and still owns that mute, restore the
+     * recorded volume exactly once. Hardware-button changes win over the
+     * recorded value, and failures are logged, never swallowed.
+     */
+    private fun restoreSpeakerVolumeIfOwned() {
+        try {
+            val (audio, current, max) = musicVolumes()
+            val result = SpeakerMutePolicy.onDestroy(speakerMuteState, current, max)
+            result.applyVolume?.let {
+                audio.setStreamVolume(AudioManager.STREAM_MUSIC, it, 0)
+                Log.i(TAG, "Restored local music volume to $it on overlay destroy")
+            }
+            speakerMuteState = result.state
+            persistSpeakerMuteState()
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not restore local music volume on overlay destroy", error)
+        }
+    }
+
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     companion object {
         const val ACTION_SHOW = "com.jubersaleem.mobilegamingstreamer.action.SHOW_FLOATING_CONTROLS"
         const val KEY_BUBBLE_DISMISSED = "floating_bubble_dismissed"
+        const val KEY_SPEAKER_MUTE_OWNED = "speaker_mute_owned"
+        const val KEY_SPEAKER_PREVIOUS_VOLUME = "speaker_previous_music_volume"
+        private const val TAG = "MGS-FloatingControls"
     }
 
     override fun onDestroy() {
+        restoreSpeakerVolumeIfOwned()
         if (statusReceiverRegistered) {
             try { unregisterReceiver(broadcastReceiver) } catch (_: IllegalArgumentException) { }
             statusReceiverRegistered = false
@@ -458,7 +624,9 @@ class FloatingControlService : Service() {
         bubble = null
         stopButton = null
         speakerButton = null
+        streamAudioButton = null
         statusLabel = null
+        footerLabel = null
         super.onDestroy()
     }
 }
