@@ -6,8 +6,9 @@ package com.jubersaleem.mobilegamingstreamer.capture
  * Produced by [StreamHealthMonitor] from transmission counters and callback
  * timestamps. Health never drives the streaming lifecycle: it cannot stop,
  * restart or recover a session — Phase B owns recovery and the watchdogs own
- * termination. A session that is stopping or stopped is never reported with
- * a live health state.
+ * termination. Live sampling stops during teardown, but the terminal verdict
+ * is retained rather than cleared, so final status events can carry that
+ * retained verdict; only an explicit new session resets health to UNKNOWN.
  *
  * Pure Kotlin with no Android dependencies.
  */

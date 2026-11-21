@@ -53,6 +53,7 @@ class RtmpBroadcastService : Service() {
     private var lastPositiveFpsAt = 0L
     private var stopping = false
     private val healthMonitor = StreamHealthMonitor()
+    private var lastWatchdogDiagnosisId: String? = null
     private val handler = Handler(Looper.getMainLooper())
     private val startupTimeout = Runnable {
         if (display != null && recoveryDriver.isStartupBoundActive(streamingConfirmed)) {
@@ -102,11 +103,43 @@ class RtmpBroadcastService : Service() {
             // observational monitor shares the 20-second stall window, so it
             // must see the final sample before the authoritative decision
             // below can stop on the critical tick. The decision itself is
-            // unchanged and remains the sole termination authority.
+            // unchanged and remains the sole termination authority; Phase D
+            // only diagnoses the resulting (health, action) pair.
             when (runWatchdogCycle(::sampleStreamHealth) {
-                recoveryDriver.onWatchdogTick(
-                    streamingConfirmed, lastPositiveBitrateAt, SystemClock.elapsedRealtime()
+                val tickNow = SystemClock.elapsedRealtime()
+                // Authoritative decision, evaluated exactly once per tick.
+                val action = recoveryDriver.onWatchdogTick(
+                    streamingConfirmed, lastPositiveBitrateAt, tickNow
                 )
+                // Health-aware diagnosis of the pair just produced. Observes
+                // only: the action returned below is the original, unchanged,
+                // and a diagnostic failure can never suppress it.
+                try {
+                    val health = healthMonitor.state
+                    val diagnosis = diagnoseWatchdogTick(
+                        health = health,
+                        recoveryState = recoveryDriver.state,
+                        streamingConfirmed = streamingConfirmed,
+                        action = action,
+                        transmissionProgressing = healthMonitor.transmissionProgressing,
+                        senderProgressing = healthMonitor.senderProgressing,
+                        encoderProgressing = healthMonitor.encoderProgressing,
+                        nowMs = tickNow
+                    )
+                    if (shouldLogDiagnosis(lastWatchdogDiagnosisId, diagnosis)) {
+                        Log.i(TAG, "Watchdog diagnosis: ${diagnosis.id} " +
+                            "(health=$health, action=$action, " +
+                            "enc=${diagnosis.encoderProgressing}, " +
+                            "snd=${diagnosis.senderProgressing}, " +
+                            "tx=${diagnosis.transmissionProgressing}, " +
+                            "attempts=${diagnosis.attemptsUsed}, " +
+                            "episodeMs=${diagnosis.episodeElapsedMs})")
+                    }
+                    lastWatchdogDiagnosisId = diagnosis.id
+                } catch (_: Exception) {
+                    // Diagnosis is observational; fall through to the action.
+                }
+                action
             }) {
                 WatchdogAction.STOP_STALLED -> {
                     stopBroadcast("Stream output stalled for 20 seconds. Check your network, then tap GO LIVE and approve a fresh screen-capture session.")
@@ -176,6 +209,7 @@ class RtmpBroadcastService : Service() {
         handler.removeCallbacks(sessionHeartbeat)
         recoveryDriver.startSession()
         healthMonitor.startSession(SystemClock.elapsedRealtime())
+        lastWatchdogDiagnosisId = null
         // Suppress callbacks from a previous stream while its resources are released.
         stopping = true
         streamingConfirmed = false
