@@ -1022,6 +1022,18 @@ internal class SceneCompositorGL(
                 )
                 GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
                 checkGl("overlay texture upload")
+                // J5: static slots never re-read their bitmap (only
+                // CLOCK/TIMER refresh) — free the CPU copy now that the
+                // GPU owns the texels. Release stays null-safe.
+                if (layer.spec.kind != SceneLayerKind.CLOCK &&
+                    layer.spec.kind != SceneLayerKind.TIMER
+                ) {
+                    try {
+                        bitmap.recycle()
+                    } catch (_: Exception) {
+                    }
+                    slot.bitmap = null
+                }
                 slot.quadBuffer = floatBufferOf(entry.ndcQuad)
                 slot.alpha = entry.alpha
                 slot.spec = layer.spec
@@ -1046,6 +1058,9 @@ internal class SceneCompositorGL(
             }
             armDynamicTickLocked()
             armAnimTickLocked()
+            // J5: placed/requested summary — skips already log per layer;
+            // this line makes repeated-switch forensics one grep.
+            Log.i(TAG, "overlay build: $overlaySlotCount/${requests.size} placed")
         } finally {
             for (pending in decodedPending) {
                 try {
@@ -1145,12 +1160,7 @@ internal class SceneCompositorGL(
             val slot = overlaySlots[index]
             if (!slot.hasAnimation) continue
             val anim = slot.spec?.animation ?: continue
-            val active = try {
-                SceneAnimation.phaseAt(anim, nowMs - slot.animStartElapsedMs)?.active == true
-            } catch (_: Exception) {
-                false
-            }
-            if (active) {
+            if (SceneMotionPolicy.animActiveAt(anim, slot.animStartElapsedMs, nowMs)) {
                 anyActive = true
                 break
             }
@@ -1160,11 +1170,7 @@ internal class SceneCompositorGL(
             // animation (same queue, same coalesced redraw).
             val trans = transConfig
             if (trans != null && transTextureId != 0) {
-                anyActive = try {
-                    !SceneTransitions.isDoneAt(trans, nowMs - transStartElapsedMs)
-                } catch (_: Exception) {
-                    false
-                }
+                anyActive = SceneMotionPolicy.transActiveAt(trans, transStartElapsedMs, nowMs)
             }
         }
         if (!anyActive) return
@@ -1185,11 +1191,9 @@ internal class SceneCompositorGL(
         // last frame is clean incoming (no one-frame pop).
         val trans = transConfig
         if (trans != null && transTextureId != 0) {
-            val done = try {
-                SceneTransitions.isDoneAt(trans, SystemClock.elapsedRealtime() - transStartElapsedMs)
-            } catch (_: Exception) {
-                true
-            }
+            val done = SceneMotionPolicy.transDoneAt(
+                trans, transStartElapsedMs, SystemClock.elapsedRealtime()
+            )
             if (done) {
                 clearTransitionLocked()
                 Log.i(TAG, "transition ended: ${trans.type} ${trans.durationMs}ms")
@@ -1687,7 +1691,9 @@ internal class SceneCompositorGL(
             paint
         )
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, slot.textureId)
-        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+        // J5: same bitmap object, fixed dims — sub-upload updates texels
+        // without reallocating texture storage every widget tick.
+        GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, bitmap)
         checkGl("dynamic overlay re-upload")
         slot.lastContent = content
     }
@@ -1829,42 +1835,49 @@ internal class SceneCompositorGL(
         decodedPending: MutableList<Bitmap>
     ): Bitmap {
         decodedPending.remove(src)
-        val contentW = (rect.width - spec.borderWidthPx * 2 - spec.shadowOffsetPx).coerceAtLeast(1)
-        val contentH = (rect.height - spec.borderWidthPx * 2 - spec.shadowOffsetPx).coerceAtLeast(1)
-        val bitmap = Bitmap.createBitmap(rect.width, rect.height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        drawStyleUnderlayLocked(canvas, rect.width, rect.height, spec)
-        if (spec.scaleMode == SceneScaleMode.FILL) {
-            // J1: cover-crop first, then one direct src->dst draw (no
-            // scaler temp). A null crop is logic-impossible (same
-            // inputs measured); fall back to the full bitmap loudly.
-            val crop = SceneImageLayer.fillCrop(src.width, src.height, contentW, contentH)
-            if (crop == null) Log.w(TAG, "overlay fill crop failed, drawing full: ${spec.id}")
-            val srcRect = if (crop == null) null else Rect(crop.left, crop.top, crop.right, crop.bottom)
-            val dst = RectF(
-                spec.borderWidthPx.toFloat(), spec.borderWidthPx.toFloat(),
-                (spec.borderWidthPx + contentW).toFloat(), (spec.borderWidthPx + contentH).toFloat()
-            )
-            canvas.drawBitmap(src, srcRect, dst, null)
+        try {
+            val contentW = (rect.width - spec.borderWidthPx * 2 - spec.shadowOffsetPx).coerceAtLeast(1)
+            val contentH = (rect.height - spec.borderWidthPx * 2 - spec.shadowOffsetPx).coerceAtLeast(1)
+            val bitmap = Bitmap.createBitmap(rect.width, rect.height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            drawStyleUnderlayLocked(canvas, rect.width, rect.height, spec)
+            if (spec.scaleMode == SceneScaleMode.FILL) {
+                // J1: cover-crop first, then one direct src->dst draw (no
+                // scaler temp). A null crop is logic-impossible (same
+                // inputs measured); fall back to the full bitmap loudly.
+                val crop = SceneImageLayer.fillCrop(src.width, src.height, contentW, contentH)
+                if (crop == null) Log.w(TAG, "overlay fill crop failed, drawing full: ${spec.id}")
+                val srcRect = if (crop == null) null else Rect(crop.left, crop.top, crop.right, crop.bottom)
+                val dst = RectF(
+                    spec.borderWidthPx.toFloat(), spec.borderWidthPx.toFloat(),
+                    (spec.borderWidthPx + contentW).toFloat(), (spec.borderWidthPx + contentH).toFloat()
+                )
+                canvas.drawBitmap(src, srcRect, dst, null)
+                try {
+                    src.recycle()
+                } catch (_: Throwable) {
+                }
+                return bitmap
+            }
+            val scaled = Bitmap.createScaledBitmap(src, contentW, contentH, true)
+            canvas.drawBitmap(scaled, spec.borderWidthPx.toFloat(), spec.borderWidthPx.toFloat(), null)
             try {
-                src.recycle()
+                scaled.recycle()
             } catch (_: Throwable) {
+            }
+            if (scaled !== src) {
+                try {
+                    src.recycle()
+                } catch (_: Throwable) {
+                }
             }
             return bitmap
+        } catch (t: Throwable) {
+            // J5: src must not escape the build recycle set on
+            // failure (OOM mid-compose) — deterministic cleanup.
+            decodedPending.add(src)
+            throw t
         }
-        val scaled = Bitmap.createScaledBitmap(src, contentW, contentH, true)
-        canvas.drawBitmap(scaled, spec.borderWidthPx.toFloat(), spec.borderWidthPx.toFloat(), null)
-        try {
-            scaled.recycle()
-        } catch (_: Throwable) {
-        }
-        if (scaled !== src) {
-            try {
-                src.recycle()
-            } catch (_: Throwable) {
-            }
-        }
-        return bitmap
     }
 
     /**
@@ -1952,7 +1965,13 @@ internal class SceneCompositorGL(
             )
             GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, style, 0)
             checkGl("video style upload")
-            slot.bitmap = style
+            // J5: the style underlay is upload-once, never re-read —
+            // free the CPU copy (release path stays null-safe).
+            try {
+                style.recycle()
+            } catch (_: Exception) {
+            }
+            slot.bitmap = null
             // OES video texture + SurfaceTexture + Surface. Created on
             // the GL thread with this context current, consumed on
             // the same thread — no attach/detach dance needed.
@@ -2336,6 +2355,19 @@ internal class SceneCompositorGL(
             val log = GLES20.glGetProgramInfoLog(programId)
             GLES20.glDeleteProgram(programId)
             throw RuntimeException("Could not link compositor program: $log")
+        }
+        // J5: shaders are linked binaries now — detach + delete so every
+        // rebuild (overlay/video programs per scene switch) leaks nothing.
+        // Exception-isolated: cleanup must never fail a good link.
+        try {
+            GLES20.glDetachShader(programId, vertex)
+            GLES20.glDetachShader(programId, fragment)
+        } catch (_: Exception) {
+        }
+        try {
+            GLES20.glDeleteShader(vertex)
+            GLES20.glDeleteShader(fragment)
+        } catch (_: Exception) {
         }
         return programId
     }

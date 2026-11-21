@@ -67,6 +67,9 @@ class StreamingLifecycleStructureTest {
     private fun imageLoader(): String =
         source("java/com/jubersaleem/mobilegamingstreamer/scene/SceneImageLoader.kt")
 
+    private fun videoPlayer(): String =
+        source("java/com/jubersaleem/mobilegamingstreamer/scene/SceneVideoPlayer.kt")
+
     /** Body of the first function whose declaration contains [marker]. */
     private fun functionBody(src: String, marker: String): String {
         val decl = src.indexOf(marker)
@@ -353,7 +356,9 @@ class StreamingLifecycleStructureTest {
         val refresh = functionBody(gl, "fun refreshTextSlotLocked")
         assertTrue(refresh.contains("slot.lastContent == content"))
         assertTrue(refresh.contains("eraseColor"))
-        assertTrue(refresh.contains("texImage2D"))
+        // J5: same erase + re-upload contract, via a sub-upload (same
+        // bitmap, fixed dims — no storage realloc per widget tick).
+        assertTrue(refresh.contains("texSubImage2D"))
         assertTrue(refresh.contains("slot.lastContent = content"))
     }
 
@@ -486,5 +491,75 @@ class StreamingLifecycleStructureTest {
         assertFalse(onStop.contains("requestRelease"))
         assertFalse(onStop.contains("performTeardown"))
         assertFalse(onStop.contains("teardown()"))
+    }
+
+    @Test
+    fun sceneSwitchNeverTouchesStreamingTransport() {
+        // J5 isolation: the live-switch path rebuilds overlays in place
+        // or swaps the video source through the library — it never
+        // prepares/releases the encoder, RTMP, audio, or projection.
+        // (Untestable by instantiation: the service is Android-only.)
+        val body = functionBody(service(), "fun updateScene")
+        assertTrue(body.contains("SceneSwitchPlanner.resolve"))
+        assertTrue(body.contains("swapVideoSource("))
+        assertFalse(body.contains("prepareVideo("))
+        assertFalse(body.contains("startStream("))
+        assertFalse(body.contains("stopStream("))
+        assertFalse(body.contains("prepareAudio("))
+        assertFalse(body.contains("startAudio("))
+        assertFalse(body.contains("stopAudio("))
+        assertFalse(body.contains("releaseProjection("))
+        assertFalse(body.contains("stopBroadcast("))
+        assertFalse(body.contains("startBroadcast("))
+        // Source swaps funnel through the retaining helper, never raw.
+        assertFalse(body.contains("changeVideoSource("))
+    }
+
+    @Test
+    fun playerCallbacksAreIdentityGuarded() {
+        // J5: callbacks from a retired player (rebuild won the race)
+        // must be ignored — an old decoder steers nothing.
+        val listener = functionBody(compositorGl(), "fun playerListener")
+        assertEquals(2, listener.split("!== player").size - 1)
+    }
+
+    @Test
+    fun linkedShadersAreDeleted() {
+        // J5: shaders detach + delete after a successful link — every
+        // scene switch rebuilds programs, so leaked shaders accumulate.
+        val body = functionBody(compositorGl(), "fun buildProgramFor")
+        assertTrue(body.contains("glDetachShader(programId, vertex)"))
+        assertTrue(body.contains("glDetachShader(programId, fragment)"))
+        assertTrue(body.contains("glDeleteShader(vertex)"))
+        assertTrue(body.contains("glDeleteShader(fragment)"))
+    }
+
+    @Test
+    fun dynamicRefreshUsesSubUpload() {
+        // J5: the widget tick re-uploads the SAME bitmap object (fixed
+        // dims) — a sub-upload updates texels without reallocating
+        // texture storage every tick.
+        val body = functionBody(compositorGl(), "fun refreshTextSlotLocked")
+        assertTrue(body.contains("texSubImage2D("))
+        assertFalse(body.contains("texImage2D("))
+    }
+
+    @Test
+    fun slotBitmapsFreedDeterministically() {
+        // J5: (a) pre-prepare resume is a no-op (start() in the wrong
+        // state would wrongly fail the slot); (b) static slots recycle
+        // their CPU bitmap right after upload (only CLOCK/TIMER ever
+        // re-read it); video style underlays likewise; (c) a failed
+        // image compose returns src to the build recycle set.
+        val resume = functionBody(videoPlayer(), "fun resume")
+        assertTrue(resume.contains("if (prepared)"))
+        val build = functionBody(compositorGl(), "fun buildSlotsLocked")
+        assertTrue(build.contains("bitmap.recycle()"))
+        assertTrue(build.contains("slot.bitmap = null"))
+        val video = functionBody(compositorGl(), "fun buildVideoSlotLocked")
+        assertTrue(video.contains("style.recycle()"))
+        assertTrue(video.contains("slot.bitmap = null"))
+        val compose = functionBody(compositorGl(), "fun composeImageBitmapLocked")
+        assertTrue(compose.contains("decodedPending.add(src)"))
     }
 }

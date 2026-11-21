@@ -122,7 +122,10 @@ internal class SceneVideoPlayer(
     fun resume() {
         postOp { mp, listener ->
             try {
-                mp.start()
+                // J5: pre-prepare resume is a no-op (prepare auto-starts
+                // on completion) — start() in the wrong state would throw
+                // and wrongly fail the slot through the error path.
+                if (prepared) mp.start()
             } catch (t: Throwable) {
                 reportError(listener, MediaPlayer.MEDIA_ERROR_UNKNOWN, 0)
                 Log.w(TAG, "video resume failed", t)
