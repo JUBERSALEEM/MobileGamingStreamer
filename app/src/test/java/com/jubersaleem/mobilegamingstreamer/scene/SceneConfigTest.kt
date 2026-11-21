@@ -54,7 +54,8 @@ class SceneConfigTest {
     @Test
     fun decodeNeverThrowsOnGarbage() {
         val garbage = listOf(
-            null, "", "   ", "v4\nscene:a\tb", "v1", "v1\nbogus", "v2", "v2\nbogus", "v3", "v3\nbogus",
+            null, "", "   ", "v5\nscene:a\tb", "v1", "v1\nbogus", "v2", "v2\nbogus", "v3", "v3\nbogus",
+            "v4", "v4\nbogus",
             "v1\nscene:onlyonefield", "v1\nscene:\t", "===",
             "\n===\n", "v1\nscene:a\tb\\"
         )
@@ -256,7 +257,7 @@ class SceneConfigTest {
     fun imageLayerRoundTripPreservesKindAndUri() {
         val original = scene(layers = listOf(layer(id = "t"), imageLayer()))
         val encoded = SceneConfigCodec.encodeScene(original)
-        assertTrue(encoded.startsWith("v3\n"))
+        assertTrue(encoded.startsWith("v4\n"))
         assertEquals(original, SceneConfigCodec.decodeScene(encoded))
     }
 
@@ -333,7 +334,7 @@ class SceneConfigTest {
     fun styledRoundTripPreservesStyle() {
         val original = scene(layers = listOf(styledLayer(), imageLayer(id = "img")))
         val encoded = SceneConfigCodec.encodeScene(original)
-        assertTrue(encoded.startsWith("v3\n"))
+        assertTrue(encoded.startsWith("v4\n"))
         assertEquals(original, SceneConfigCodec.decodeScene(encoded))
     }
 
@@ -433,7 +434,7 @@ class SceneConfigTest {
             )
         )
         val encoded = SceneConfigCodec.encodeScene(original)
-        assertTrue(encoded.startsWith("v3\n"))
+        assertTrue(encoded.startsWith("v4\n"))
         val decoded = SceneConfigCodec.decodeScene(encoded)!!
         assertEquals(original, decoded)
         // Widgets stream without stored content.
@@ -483,6 +484,95 @@ class SceneConfigTest {
                 "i", "", SceneOverlayAnchor.TOP_LEFT, 1, 8, 500, 1f, true,
                 SceneLayerKind.IMAGE, null
             ) == null
+        )
+    }
+
+    // ---- Phase I orientation + codec v4 ----
+
+    @Test
+    fun orientationRoundTripBothWays() {
+        for (orientation in SceneDesignOrientation.values()) {
+            val original = scene().copy(orientation = orientation)
+            val encoded = SceneConfigCodec.encodeScene(original)
+            assertTrue(encoded.startsWith("v4\n"))
+            assertEquals(original, SceneConfigCodec.decodeScene(encoded))
+        }
+    }
+
+    @Test
+    fun legacyVersionsTakeLandscapeDefault() {
+        val v1 = SceneConfigCodec.decodeScene(
+            "v1\nscene:s\tS\nlayer:t\tHi\tTOP_LEFT\t1\t8\t1920\t1\ttrue"
+        )!!
+        assertEquals(SceneDesignOrientation.LANDSCAPE, v1.orientation)
+        val v2 = SceneConfigCodec.decodeScene(
+            "v2\nscene:s\tS\nlayer:t\tHi\tTOP_LEFT\t1\t8\t1920\t1\ttrue\tTEXT\t"
+        )!!
+        assertEquals(SceneDesignOrientation.LANDSCAPE, v2.orientation)
+        val v3line = "layer:t\tHi\tTOP_LEFT\t1\t8\t1920\t1\ttrue\tTEXT\t\t" +
+            "FFFFFFFF\t\t0\tFFFFFFFF\t0\t0\t99000000"
+        val v3 = SceneConfigCodec.decodeScene("v3\nscene:s\tS\n" + v3line)!!
+        assertEquals(SceneDesignOrientation.LANDSCAPE, v3.orientation)
+        // Geometry identical to pre-Phase-I decode: same layers.
+        assertEquals(listOf("t"), v3.layers.map { it.id })
+    }
+
+    @Test
+    fun corruptOrientationRepairsToDefault() {
+        // Unknown token: cosmetic repair, scene + layers survive.
+        val repaired = SceneConfigCodec.decodeScene("v4\nscene:s\tS\tSQUARE")!!
+        assertEquals(SceneDesignOrientation.LANDSCAPE, repaired.orientation)
+        assertEquals("s", repaired.id)
+        // Missing field tolerated the same way.
+        val missing = SceneConfigCodec.decodeScene("v4\nscene:s\tS")!!
+        assertEquals(SceneDesignOrientation.LANDSCAPE, missing.orientation)
+        // Structural header faults still drop the scene.
+        assertTrue(SceneConfigCodec.decodeScene("v4\nscene:s\tS\tPORTRAIT\textra") == null)
+        assertTrue(SceneConfigCodec.decodeScene("v4\nscene:\t\tPORTRAIT") == null)
+    }
+
+    @Test
+    fun decodedOrientationIsLenient() {
+        assertEquals(
+            SceneDesignOrientation.PORTRAIT,
+            SceneConfigCodec.decodedOrientation("v4\nscene:s\tS\tPORTRAIT")
+        )
+        assertEquals(
+            SceneDesignOrientation.LANDSCAPE,
+            SceneConfigCodec.decodedOrientation("v4\nscene:s\tS\tLANDSCAPE")
+        )
+        assertEquals(SceneDesignOrientation.LANDSCAPE, SceneConfigCodec.decodedOrientation(null))
+        assertEquals(SceneDesignOrientation.LANDSCAPE, SceneConfigCodec.decodedOrientation("garbage"))
+    }
+
+    @Test
+    fun repeatedOrientationTogglesPreserveScene() {
+        val original = scene()
+        var current = original
+        repeat(6) {
+            current = current.copy(
+                orientation = if (current.orientation == SceneDesignOrientation.PORTRAIT) {
+                    SceneDesignOrientation.LANDSCAPE
+                } else {
+                    SceneDesignOrientation.PORTRAIT
+                }
+            )
+            // Only the orientation field moves; geometry untouched.
+            assertEquals(original.layers, current.layers)
+            assertEquals(original, current.copy(orientation = original.orientation))
+        }
+        // ...and the toggled scene still round-trips exactly.
+        assertEquals(current, SceneConfigCodec.decodeScene(SceneConfigCodec.encodeScene(current)))
+    }
+
+    @Test
+    fun portraitSceneIsStreamable() {
+        val portrait = scene().copy(orientation = SceneDesignOrientation.PORTRAIT)
+        val encoding = SceneConfigCodec.encodeScene(portrait)
+        assertTrue(SceneConfigCodec.streamableSpecs(encoding).isNotEmpty())
+        assertEquals(
+            encoding,
+            SceneConfigCodec.activeSceneEncoding(listOf(portrait), portrait.id)
         )
     }
 

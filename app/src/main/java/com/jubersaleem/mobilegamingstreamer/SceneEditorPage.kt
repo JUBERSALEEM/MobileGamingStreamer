@@ -57,7 +57,9 @@ import com.jubersaleem.mobilegamingstreamer.scene.BORDER_COLOR_DEFAULT
 import com.jubersaleem.mobilegamingstreamer.scene.SHADOW_COLOR_DEFAULT
 import com.jubersaleem.mobilegamingstreamer.scene.TEXT_COLOR_DEFAULT
 import com.jubersaleem.mobilegamingstreamer.scene.SceneImageLayer
+import com.jubersaleem.mobilegamingstreamer.scene.SceneCanvasProfile
 import com.jubersaleem.mobilegamingstreamer.scene.SceneClockWidgets
+import com.jubersaleem.mobilegamingstreamer.scene.SceneDesignOrientation
 import com.jubersaleem.mobilegamingstreamer.scene.SceneImageLoader
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerKind
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerStyle
@@ -71,10 +73,6 @@ import com.jubersaleem.mobilegamingstreamer.scene.StreamSceneLayer
 import java.time.ZoneId
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
-
-/** 1080p reference canvas for the editor preview (labeled in the UI). */
-internal const val SCENE_PREVIEW_WIDTH_PX = 1920
-internal const val SCENE_PREVIEW_HEIGHT_PX = 1080
 
 /** UI slider bounds (the pure codec/H4 validation backstop stays authoritative). */
 internal const val SCENE_IMAGE_DEFAULT_MAX_WIDTH_PX = 640
@@ -130,6 +128,8 @@ fun SceneEditorPage(
     onDuplicateScene: (String) -> Unit,
     onDeleteScene: (String) -> Unit,
     onRenameScene: (String, String) -> Unit,
+    onSceneOrientation: (String, SceneDesignOrientation) -> Unit,
+    streamOrientation: String,
     onAddLayer: (String) -> Unit,
     onAddImageLayer: (String) -> Unit,
     onAddClockLayer: (String) -> Unit,
@@ -211,6 +211,8 @@ fun SceneEditorPage(
                 onDuplicateScene = onDuplicateScene,
                 onDeleteScene = onDeleteScene,
                 onRenameScene = onRenameScene,
+                onSceneOrientation = onSceneOrientation,
+                streamOrientation = streamOrientation,
                 onAddLayer = onAddLayer,
                 onAddImageLayer = onAddImageLayer,
                 onAddClockLayer = onAddClockLayer,
@@ -255,6 +257,8 @@ private fun SceneCard(
     onDuplicateScene: (String) -> Unit,
     onDeleteScene: (String) -> Unit,
     onRenameScene: (String, String) -> Unit,
+    onSceneOrientation: (String, SceneDesignOrientation) -> Unit,
+    streamOrientation: String,
     onAddLayer: (String) -> Unit,
     onAddImageLayer: (String) -> Unit,
     onAddClockLayer: (String) -> Unit,
@@ -306,7 +310,8 @@ private fun SceneCard(
                         )
                     }
                     Text(
-                        text = "${scene.layers.size} layers • $visibleCount visible",
+                        text = "${scene.layers.size} layers • $visibleCount visible • " +
+                            if (scene.orientation == SceneDesignOrientation.PORTRAIT) "Portrait" else "Landscape",
                         color = p.muted,
                         fontSize = 11.sp
                     )
@@ -316,7 +321,19 @@ private fun SceneCard(
                 }
             }
             if (isEditing) {
-                ScenePreviewCanvas(scene = scene)
+                ClayOptionGroup(
+                    title = "Canvas",
+                    options = listOf("Landscape", "Portrait"),
+                    selected = if (scene.orientation == SceneDesignOrientation.PORTRAIT) "Portrait" else "Landscape",
+                    onSelect = { label ->
+                        onSceneOrientation(
+                            scene.id,
+                            if (label == "Portrait") SceneDesignOrientation.PORTRAIT
+                            else SceneDesignOrientation.LANDSCAPE
+                        )
+                    }
+                )
+                ScenePreviewCanvas(scene = scene, streamOrientation = streamOrientation)
                 LayerListEditor(
                     scene = scene,
                     expandedLayers = expandedLayers,
@@ -836,13 +853,16 @@ private fun LayerSlider(
  * ghost outlines (never streamed). Always labeled PREVIEW — NOT LIVE.
  */
 @Composable
-private fun ScenePreviewCanvas(scene: StreamScene) {
+private fun ScenePreviewCanvas(scene: StreamScene, streamOrientation: String) {
     val p = LocalMgsPalette.current
     val measurePaint = remember { Paint().apply { isAntiAlias = true } }
     val drawPaint = remember { Paint().apply { isAntiAlias = true } }
     val previewResolver = LocalContext.current.contentResolver
     val badgePaint = remember { Paint().apply { isAntiAlias = true; textAlign = Paint.Align.CENTER } }
-    val textSize = SceneTextLayerLayout.textSizePxFor(SCENE_PREVIEW_HEIGHT_PX).toFloat()
+    val refCanvas = remember(scene.orientation) { SceneCanvasProfile.referenceCanvas(scene.orientation) }
+    val refWidthPx = refCanvas.widthPx
+    val refHeightPx = refCanvas.heightPx
+    val textSize = SceneTextLayerLayout.textSizePxFor(refHeightPx).toFloat()
     val measured = remember(scene) {
         measurePaint.textSize = textSize
         scene.layers.mapNotNull { layer ->
@@ -852,7 +872,7 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
                 val dims = SceneImageLoader.decodeBounds(previewResolver, uri) ?: return@mapNotNull null
                 val size = SceneImageLayer.measuredSize(
                     dims.widthPx, dims.heightPx, spec.maxWidthPx,
-                    SCENE_PREVIEW_HEIGHT_PX - spec.marginPx * 2
+                    refHeightPx - spec.marginPx * 2
                 ) ?: return@mapNotNull null
                 val styled = SceneLayerStyle.styledSize(
                     size, spec.borderWidthPx, spec.shadowOffsetPx
@@ -901,8 +921,8 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
     val droppedCount = enabledCount - measured.count { it.first.enabled }
     val boxes = remember(measured) {
         ScenePreviewBoxes.layout(
-            SCENE_PREVIEW_WIDTH_PX,
-            SCENE_PREVIEW_HEIGHT_PX,
+            refWidthPx,
+            refHeightPx,
             measured.map { SceneOverlayLayerInput(it.first, it.second) }
         )
     }
@@ -924,11 +944,26 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
             else SceneImageLoader.loadThumbnailBitmap(previewResolver, uri, 512)?.asImageBitmap()
         }
     }
+    // Phase I: honest mismatch note when the explicit stream output
+    // differs from the scene canvas (AUTO follows the device: no claim).
+    val mismatchHint = remember(scene.orientation, streamOrientation) {
+        when {
+            streamOrientation != "PORTRAIT" && streamOrientation != "LANDSCAPE" -> null
+            (streamOrientation == "PORTRAIT") ==
+                (scene.orientation == SceneDesignOrientation.PORTRAIT) -> null
+            scene.orientation == SceneDesignOrientation.PORTRAIT ->
+                "Scene is portrait but stream output is landscape — layers are capped to fit."
+            else -> "Scene is landscape but stream output is portrait — layers are capped to fit."
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        mismatchHint?.let {
+            Text(text = it, color = p.muted, fontSize = 11.sp)
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(16f / 9f)
+                .aspectRatio(if (scene.orientation == SceneDesignOrientation.PORTRAIT) 9f / 16f else 16f / 9f)
                 .clip(RoundedCornerShape(18.dp))
                 .background(Color(0xFF101018))
                 .border(1.dp, p.clayEdge.copy(alpha = 0.6f), RoundedCornerShape(18.dp))
@@ -952,7 +987,7 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
             }
             if (boxes != null) {
                 Canvas(modifier = Modifier.matchParentSize()) {
-                    val scale = size.width / SCENE_PREVIEW_WIDTH_PX.toFloat()
+                    val scale = size.width / refWidthPx.toFloat()
                     for (box in boxes) {
                         val left = box.left * size.width
                         val top = box.top * size.height

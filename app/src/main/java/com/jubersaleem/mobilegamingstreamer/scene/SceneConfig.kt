@@ -100,11 +100,14 @@ data class StreamSceneLayer(
     )
 }
 
-/** One named user scene: an ordered stack of text layers. Public: see [StreamSceneLayer]. */
+/** One named user scene: an ordered stack of layers on one design canvas.
+ * Public: see [StreamSceneLayer]. Phase I: [orientation] selects the
+ * design canvas (default LANDSCAPE preserves H1–H10 behavior). */
 data class StreamScene(
     val id: String,
     val name: String,
-    val layers: List<StreamSceneLayer>
+    val layers: List<StreamSceneLayer>,
+    val orientation: SceneDesignOrientation = SceneDesignOrientation.LANDSCAPE
 ) {
     /** Display order: list order (kept z-normalized by the editor). */
     fun layersInDisplayOrder(): List<StreamSceneLayer> = layers
@@ -127,8 +130,8 @@ data class StreamScene(
 }
 
 /**
- * Versioned text encoding for scenes and the scene store. Format v3:
- * `scene:<id>\\t<name>` header line, then one `layer:` line per layer
+ * Versioned text encoding for scenes and the scene store. Format v4:
+ * `scene:<id>\\t<name>\\t<ORIENTATION>` header line, then one `layer:` line per layer
  * with 17 tab-separated fields
  * (id, text, ANCHOR, z, margin, maxWidth, alpha, enabled, KIND,
  * imageUri, textColor, backgroundColor, borderWidth, borderColor,
@@ -136,13 +139,16 @@ data class StreamScene(
  * lone `===` line. Tabs, newlines, and backslashes inside free text
  * are backslash-escaped, so the framing can never be confused by user
  * content. Colors are 8-hex ARGB (empty = null background). Decoding
- * accepts v1 (8-field text-only), v2 (10-field text/image), and v3;
- * encoding always writes v3.
+ * accepts v1 (8-field text-only), v2 (10-field text/image), v3, and
+ * v4 (v3 layers; v1–v3 scenes take the LANDSCAPE default, v4 carries
+ * the Phase I design orientation in the header); encoding always
+ * writes v4.
  */
 internal object SceneConfigCodec {
-    const val VERSION = "v3"
+    const val VERSION = "v4"
     private const val VERSION_V1 = "v1"
     private const val VERSION_V2 = "v2"
+    private const val VERSION_V3 = "v3"
     private const val SCENE_PREFIX = "scene:"
     private const val LAYER_PREFIX = "layer:"
     private const val BLOCK_SEPARATOR = "\n===\n"
@@ -200,7 +206,10 @@ internal object SceneConfigCodec {
     }
 
     fun encodeScene(scene: StreamScene): String {
-        val lines = mutableListOf(SCENE_PREFIX + escape(scene.id) + "\t" + escape(repairedName(scene.name)))
+        val lines = mutableListOf(
+            SCENE_PREFIX + escape(scene.id) + "\t" + escape(repairedName(scene.name)) +
+                "\t" + scene.orientation.name
+        )
         for (layer in scene.layers.take(MAX_STATIC_OVERLAY_LAYERS)) {
             lines.add(
                 LAYER_PREFIX + escape(layer.id) + "\t" + escape(layer.text) + "\t" +
@@ -222,15 +231,29 @@ internal object SceneConfigCodec {
         val version = when (lines[0]) {
             VERSION_V1 -> 1
             VERSION_V2 -> 2
-            VERSION -> 3
+            VERSION_V3 -> 3
+            VERSION -> 4
             else -> return null
         }
         if (lines.size < 2 || !lines[1].startsWith(SCENE_PREFIX)) return null
         val header = lines[1].removePrefix(SCENE_PREFIX).split("\t")
-        if (header.size != 2) return null
+        val headerOk = if (version < 4) header.size == 2 else header.size == 2 || header.size == 3
+        if (!headerOk) return null
         val id = unescape(header[0]) ?: return null
         if (id.isBlank()) return null
         val name = repairedName(unescape(header[1]) ?: return null)
+        // Phase I: v1–v3 predate orientation (default); v4 carries it,
+        // with a missing/unknown token repaired to the default — a
+        // cosmetic label never drops a scene.
+        val orientation = if (version < 4 || header.size < 3) {
+            SceneDesignOrientation.LANDSCAPE
+        } else {
+            try {
+                SceneDesignOrientation.valueOf(header[2])
+            } catch (_: IllegalArgumentException) {
+                SceneDesignOrientation.LANDSCAPE
+            }
+        }
         val layers = mutableListOf<StreamSceneLayer>()
         val seenLayerIds = mutableSetOf<String>()
         for (line in lines.drop(2)) {
@@ -240,7 +263,7 @@ internal object SceneConfigCodec {
             if (!seenLayerIds.add(layer.id)) continue
             if (layers.size < MAX_STATIC_OVERLAY_LAYERS) layers.add(layer)
         }
-        return StreamScene(id = id, name = name, layers = layers)
+        return StreamScene(id = id, name = name, layers = layers, orientation = orientation)
     }
 
     fun encodeStore(scenes: List<StreamScene>): String =
@@ -264,6 +287,14 @@ internal object SceneConfigCodec {
      */
     fun streamableSpecs(encodedScene: String?): List<SceneOverlaySpec> =
         decodeScene(encodedScene)?.streamableSpecs().orEmpty()
+
+    /**
+     * Phase I: design orientation of an encoded scene extra (service
+     * path). Lenient: null/unknown decode to the default — orientation
+     * is a cosmetic label, never a stream gate.
+     */
+    fun decodedOrientation(encodedScene: String?): SceneDesignOrientation =
+        decodeScene(encodedScene)?.orientation ?: SceneDesignOrientation.LANDSCAPE
 
     /**
      * Encoded active scene for the GO LIVE intent (activity path): the

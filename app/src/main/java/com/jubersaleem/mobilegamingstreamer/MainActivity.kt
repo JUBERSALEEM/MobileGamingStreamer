@@ -360,6 +360,9 @@ class MainActivity : ComponentActivity() {
                         onConfirmDeleteScene = { confirmDeleteScene() },
                         onDismissDeleteScene = { sceneDeleteTargetId = null },
                         onRenameScene = { id, name -> renameScene(id, name) },
+                        onSceneOrientation = { id, canvas ->
+                            updateScene(id) { it.copy(orientation = canvas) }
+                        },
                         onAddLayer = { id -> addLayer(id) },
                         onAddImageLayer = { id -> launchImagePicker(id, null) },
                         onAddClockLayer = { id -> addClockLayer(id) },

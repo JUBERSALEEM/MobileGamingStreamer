@@ -589,7 +589,8 @@ class RtmpBroadcastService : Service() {
                 " selected=" + if (useSceneSource) "SceneSource compositor passthrough"
                 else "ScreenSource direct passthrough" +
                 if (sceneFallbackDone) " (scene fallback retry)" else "" +
-                if (!explicitSceneExtra && sceneSpecs.isNotEmpty()) " scene=${sceneSpecs.size} layers" else "" +
+                if (!explicitSceneExtra && sceneSpecs.isNotEmpty()) " scene=${sceneSpecs.size} layers " +
+                    SceneConfigCodec.decodedOrientation(intent.getStringExtra(EXTRA_SCENE_CONFIG)) else "" +
                 if (!explicitSceneExtra && sceneConfigPresent && sceneSpecs.isEmpty()) " scene invalid, defaulting" else "" +
                 if (useSceneSource && !sceneText.isNullOrBlank()) " text=${sceneText.length} chars" else "" +
                 if (useSceneSource && !sceneText2.isNullOrBlank()) " text2=${sceneText2.length} chars" else "")

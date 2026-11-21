@@ -448,6 +448,26 @@ class StreamingLifecycleStructureTest {
     }
 
     @Test
+    fun sceneOrientationSelectorThreaded() {
+        // Phase I (UI-only; behavior is covered by pure tests): the
+        // canvas selector, 9:16 portrait preview, and profile-driven
+        // reference dims are wired activity -> shell -> editor.
+        val editor = sceneEditor()
+        assertTrue(editor.contains("title = \"Canvas\""))
+        assertTrue(editor.contains("9f / 16f"))
+        assertTrue(editor.contains("SceneCanvasProfile.referenceCanvas"))
+        assertTrue(editor.contains("onSceneOrientation"))
+        assertTrue(activity().contains("onSceneOrientation"))
+    }
+
+    @Test
+    fun serviceLogsSceneOrientation() {
+        // Phase I: start path logs the design orientation beside the
+        // layer count (sanitized: enum + counts only).
+        assertTrue(service().contains("decodedOrientation"))
+    }
+
+    @Test
     fun projectionRevocationFlipsGuardWithoutStopping() {
         // Revocation flips the frame guard; teardown authority stays with
         // the service/library stop path — the source never stops anything.

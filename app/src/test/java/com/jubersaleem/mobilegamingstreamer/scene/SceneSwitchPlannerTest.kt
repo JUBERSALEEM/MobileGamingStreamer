@@ -102,4 +102,26 @@ class SceneSwitchPlannerTest {
             SceneSwitchPlanner.resolve(SwitchCurrent.SceneConfig(sceneA), emptyScene)
         )
     }
+
+    @Test
+    fun portraitEncodingsSwitchNormally() {
+        // Phase I: v4 portrait encodings flow through the matrix like
+        // any scene — orientation never gates a switch.
+        val portrait = SceneConfigCodec.encodeScene(
+            SceneConfigCodec.defaultScene().copy(orientation = SceneDesignOrientation.PORTRAIT)
+        )
+        val landscape = SceneConfigCodec.encodeScene(SceneConfigCodec.defaultScene())
+        assertEquals(
+            SwitchAction.IN_PLACE,
+            SceneSwitchPlanner.resolve(SwitchCurrent.SceneConfig(landscape), portrait)
+        )
+        assertEquals(
+            SwitchAction.NOOP,
+            SceneSwitchPlanner.resolve(SwitchCurrent.SceneConfig(portrait), portrait)
+        )
+        assertEquals(
+            SwitchAction.SWAP_TO_SCENE,
+            SceneSwitchPlanner.resolve(SwitchCurrent.Screen, portrait)
+        )
+    }
 }
