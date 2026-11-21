@@ -2,6 +2,7 @@ package com.jubersaleem.mobilegamingstreamer
 
 import android.graphics.Paint
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -34,15 +35,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_STATIC_OVERLAY_LAYERS
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_TEXT_LAYER_CHARS
+import com.jubersaleem.mobilegamingstreamer.scene.SceneImageLayer
+import com.jubersaleem.mobilegamingstreamer.scene.SceneImageLoader
+import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerKind
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayLayerInput
 import com.jubersaleem.mobilegamingstreamer.scene.ScenePreviewBoxes
@@ -57,6 +65,7 @@ internal const val SCENE_PREVIEW_WIDTH_PX = 1920
 internal const val SCENE_PREVIEW_HEIGHT_PX = 1080
 
 /** UI slider bounds (the pure codec/H4 validation backstop stays authoritative). */
+internal const val SCENE_IMAGE_DEFAULT_MAX_WIDTH_PX = 640
 internal const val SCENE_LAYER_MAX_MARGIN_UI_PX = 256
 internal const val SCENE_LAYER_MIN_MAX_WIDTH_UI_PX = 320
 internal const val SCENE_LAYER_MAX_MAX_WIDTH_UI_PX = 1920
@@ -88,7 +97,9 @@ fun SceneEditorPage(
     onDeleteScene: (String) -> Unit,
     onRenameScene: (String, String) -> Unit,
     onAddLayer: (String) -> Unit,
+    onAddImageLayer: (String) -> Unit,
     onRemoveLayer: (String, String) -> Unit,
+    onReplaceImageLayer: (String, String) -> Unit,
     onMoveLayer: (String, String, Boolean) -> Unit,
     onToggleLayer: (String, String) -> Unit,
     onLayerText: (String, String, String) -> Unit,
@@ -158,7 +169,9 @@ fun SceneEditorPage(
                 onDeleteScene = onDeleteScene,
                 onRenameScene = onRenameScene,
                 onAddLayer = onAddLayer,
+                onAddImageLayer = onAddImageLayer,
                 onRemoveLayer = onRemoveLayer,
+                onReplaceImageLayer = onReplaceImageLayer,
                 onMoveLayer = onMoveLayer,
                 onToggleLayer = onToggleLayer,
                 onLayerText = onLayerText,
@@ -191,7 +204,9 @@ private fun SceneCard(
     onDeleteScene: (String) -> Unit,
     onRenameScene: (String, String) -> Unit,
     onAddLayer: (String) -> Unit,
+    onAddImageLayer: (String) -> Unit,
     onRemoveLayer: (String, String) -> Unit,
+    onReplaceImageLayer: (String, String) -> Unit,
     onMoveLayer: (String, String, Boolean) -> Unit,
     onToggleLayer: (String, String) -> Unit,
     onLayerText: (String, String, String) -> Unit,
@@ -247,7 +262,9 @@ private fun SceneCard(
                     onToggleExpand = onToggleExpand,
                     layerKey = layerKey,
                     onAddLayer = onAddLayer,
+                    onAddImageLayer = onAddImageLayer,
                     onRemoveLayer = onRemoveLayer,
+                    onReplaceImageLayer = onReplaceImageLayer,
                     onMoveLayer = onMoveLayer,
                     onToggleLayer = onToggleLayer,
                     onLayerText = onLayerText,
@@ -300,7 +317,9 @@ private fun LayerListEditor(
     onToggleExpand: (String) -> Unit,
     layerKey: (String, String) -> String,
     onAddLayer: (String) -> Unit,
+    onAddImageLayer: (String) -> Unit,
     onRemoveLayer: (String, String) -> Unit,
+    onReplaceImageLayer: (String, String) -> Unit,
     onMoveLayer: (String, String, Boolean) -> Unit,
     onToggleLayer: (String, String) -> Unit,
     onLayerText: (String, String, String) -> Unit,
@@ -324,13 +343,22 @@ private fun LayerListEditor(
                 letterSpacing = 1.1.sp,
                 modifier = Modifier.weight(1f)
             )
-            ClayButton(
-                label = "ADD LAYER",
-                onClick = { onAddLayer(scene.id) },
-                enabled = !atCap,
-                style = ClayButtonStyle.Raised,
-                icon = Icons.Rounded.Add
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ClayButton(
+                    label = "ADD TEXT",
+                    onClick = { onAddLayer(scene.id) },
+                    enabled = !atCap,
+                    style = ClayButtonStyle.Raised,
+                    icon = Icons.Rounded.Add
+                )
+                ClayButton(
+                    label = "ADD IMAGE",
+                    onClick = { onAddImageLayer(scene.id) },
+                    enabled = !atCap,
+                    style = ClayButtonStyle.Raised,
+                    icon = Icons.Rounded.Add
+                )
+            }
         }
         if (atCap) {
             Text(
@@ -355,6 +383,7 @@ private fun LayerListEditor(
                 canMoveFront = displayIndex > 0,
                 canMoveBack = displayIndex < frontFirst.size - 1,
                 onRemoveLayer = onRemoveLayer,
+                onReplaceImageLayer = onReplaceImageLayer,
                 onMoveLayer = onMoveLayer,
                 onToggleLayer = onToggleLayer,
                 onLayerText = onLayerText,
@@ -376,6 +405,7 @@ private fun LayerRow(
     canMoveFront: Boolean,
     canMoveBack: Boolean,
     onRemoveLayer: (String, String) -> Unit,
+    onReplaceImageLayer: (String, String) -> Unit,
     onMoveLayer: (String, String, Boolean) -> Unit,
     onToggleLayer: (String, String) -> Unit,
     onLayerText: (String, String, String) -> Unit,
@@ -404,7 +434,8 @@ private fun LayerRow(
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (layer.text.isBlank()) "(empty text)" else layer.text,
+                    text = if (layer.kind == SceneLayerKind.IMAGE) "Image layer"
+                    else if (layer.text.isBlank()) "(empty text)" else layer.text,
                     color = if (layer.enabled) p.text else p.muted,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
@@ -443,11 +474,18 @@ private fun LayerRow(
             )
         }
         if (expanded) {
-            ClayTextField(
-                value = layer.text,
-                onValueChange = { onLayerText(sceneId, layer.id, it) },
-                label = "Overlay text (max $MAX_TEXT_LAYER_CHARS chars)"
-            )
+            if (layer.kind == SceneLayerKind.IMAGE) {
+                ImageLayerThumbnail(
+                    imageUri = layer.imageUri,
+                    onReplace = { onReplaceImageLayer(sceneId, layer.id) }
+                )
+            } else {
+                ClayTextField(
+                    value = layer.text,
+                    onValueChange = { onLayerText(sceneId, layer.id, it) },
+                    label = "Overlay text (max $MAX_TEXT_LAYER_CHARS chars)"
+                )
+            }
             ClayOptionGroup(
                 title = "Position",
                 options = anchorLabels.values.toList(),
@@ -488,6 +526,52 @@ private fun LayerRow(
                 onChange = { onLayerAlpha(sceneId, layer.id, it) }
             )
         }
+    }
+}
+
+@Composable
+private fun ImageLayerThumbnail(imageUri: String?, onReplace: () -> Unit) {
+    val p = LocalMgsPalette.current
+    val context = LocalContext.current
+    val thumb = remember(imageUri) {
+        if (imageUri == null) null
+        else SceneImageLoader.loadThumbnailBitmap(context.contentResolver, imageUri, 256)?.asImageBitmap()
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        if (thumb != null) {
+            Image(
+                bitmap = thumb,
+                contentDescription = "Image layer thumbnail",
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, p.clayEdge.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(p.warning.copy(alpha = 0.14f))
+                    .border(1.dp, p.warning.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Image unavailable",
+                    color = p.text,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+        ClayButton(
+            label = "REPLACE",
+            onClick = onReplace,
+            style = ClayButtonStyle.Raised,
+            icon = Icons.Rounded.Edit
+        )
     }
 }
 
@@ -539,15 +623,26 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
     val p = LocalMgsPalette.current
     val measurePaint = remember { Paint().apply { isAntiAlias = true } }
     val drawPaint = remember { Paint().apply { isAntiAlias = true } }
+    val previewResolver = LocalContext.current.contentResolver
     val badgePaint = remember { Paint().apply { isAntiAlias = true; textAlign = Paint.Align.CENTER } }
     val textSize = SceneTextLayerLayout.textSizePxFor(SCENE_PREVIEW_HEIGHT_PX).toFloat()
     val measured = remember(scene) {
         measurePaint.textSize = textSize
         scene.layers.mapNotNull { layer ->
             val spec = layer.toOverlaySpec() ?: return@mapNotNull null
-            val bounds = android.graphics.Rect()
-            measurePaint.getTextBounds(layer.text, 0, layer.text.length, bounds)
-            Triple(spec, SceneSizePx(bounds.width(), bounds.height()), layer.text)
+            if (spec.kind == SceneLayerKind.IMAGE) {
+                val uri = spec.imageUri ?: return@mapNotNull null
+                val dims = SceneImageLoader.decodeBounds(previewResolver, uri) ?: return@mapNotNull null
+                val size = SceneImageLayer.measuredSize(
+                    dims.widthPx, dims.heightPx, spec.maxWidthPx,
+                    SCENE_PREVIEW_HEIGHT_PX - spec.marginPx * 2
+                ) ?: return@mapNotNull null
+                Triple(spec, size, "")
+            } else {
+                val bounds = android.graphics.Rect()
+                measurePaint.getTextBounds(layer.text, 0, layer.text.length, bounds)
+                Triple(spec, SceneSizePx(bounds.width(), bounds.height()), layer.text)
+            }
         }
     }
     val enabledCount = scene.layers.count { it.enabled }
@@ -560,6 +655,14 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
         )
     }
     val textById = remember(measured) { measured.associate { it.first.id to it.third } }
+    val kindById = remember(measured) { measured.associate { it.first.id to it.first.kind } }
+    val imageById = remember(measured) {
+        measured.filter { it.first.kind == SceneLayerKind.IMAGE }.associate { triple ->
+            val uri = triple.first.imageUri
+            triple.first.id to if (uri == null) null
+            else SceneImageLoader.loadThumbnailBitmap(previewResolver, uri, 512)?.asImageBitmap()
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(
             modifier = Modifier
@@ -607,12 +710,27 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
                                 size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
                                 style = Stroke(width = 2f)
                             )
-                            drawPaint.color = android.graphics.Color.WHITE
-                            drawPaint.alpha = (box.alpha * 255f).roundToInt().coerceIn(0, 255)
-                            drawPaint.textSize = textSize * scale
-                            drawContext.canvas.nativeCanvas.drawText(
-                                glyphs, left, bottom - drawPaint.descent(), drawPaint
-                            )
+                            if (kindById[box.id] == SceneLayerKind.IMAGE) {
+                                val image = imageById[box.id]
+                                if (image != null) {
+                                    drawImage(
+                                        image = image,
+                                        dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+                                        dstSize = IntSize(
+                                            (right - left).roundToInt().coerceAtLeast(1),
+                                            (bottom - top).roundToInt().coerceAtLeast(1)
+                                        ),
+                                        alpha = box.alpha
+                                    )
+                                }
+                            } else {
+                                drawPaint.color = android.graphics.Color.WHITE
+                                drawPaint.alpha = (box.alpha * 255f).roundToInt().coerceIn(0, 255)
+                                drawPaint.textSize = textSize * scale
+                                drawContext.canvas.nativeCanvas.drawText(
+                                    glyphs, left, bottom - drawPaint.descent(), drawPaint
+                                )
+                            }
                         } else {
                             drawRect(
                                 color = Color.White.copy(alpha = 0.25f),
@@ -653,7 +771,7 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
         }
         if (droppedCount > 0) {
             Text(
-                text = "$droppedCount layer(s) hidden: empty or invalid text is never streamed.",
+                text = "$droppedCount layer(s) hidden: empty, invalid, or unloadable layers are never streamed.",
                 color = p.warning,
                 fontSize = 11.sp
             )

@@ -73,7 +73,8 @@ private data class MeasuredOverlay(
     val content: String,
     val measured: SceneSizePx,
     val offsetLeft: Int,
-    val offsetTop: Int
+    val offsetTop: Int,
+    val decodedBitmap: Bitmap? = null
 )
 
 internal class SceneCompositorGL(
@@ -82,7 +83,8 @@ internal class SceneCompositorGL(
     private val layout: SceneSourceLayout,
     private val textContent: String?,
     private val subtextContent: String?,
-    private val sceneLayers: List<SceneOverlaySpec>?
+    private val sceneLayers: List<SceneOverlaySpec>?,
+    private val imageProvider: ((String) -> Bitmap?)? = null
 ) : SurfaceTexture.OnFrameAvailableListener {
 
     private var workerThread: HandlerThread? = null
@@ -552,68 +554,147 @@ internal class SceneCompositorGL(
         }
         if (paint.textSize <= 0f) throw RuntimeException("overlay text size invalid for height=$outH")
         val bounds = Rect()
-        val measured = requests.mapIndexed { index, spec ->
-            val content = contents[index]
-            paint.getTextBounds(content, 0, content.length, bounds)
-            MeasuredOverlay(
-                spec = spec,
-                content = content,
-                measured = SceneSizePx(bounds.width(), bounds.height()),
-                offsetLeft = bounds.left,
-                offsetTop = bounds.top
+        val decodedPending = mutableListOf<Bitmap>()
+        try {
+            val measured = requests.mapIndexedNotNull { index, spec ->
+                if (spec.kind == SceneLayerKind.IMAGE) {
+                    measureImageLocked(spec, outH, decodedPending)
+                } else {
+                    val content = contents[index]
+                    paint.getTextBounds(content, 0, content.length, bounds)
+                    MeasuredOverlay(
+                        spec = spec,
+                        content = content,
+                        measured = SceneSizePx(bounds.width(), bounds.height()),
+                        offsetLeft = bounds.left,
+                        offsetTop = bounds.top
+                    )
+                }
+            }
+            val entries = SceneOverlayStack.resolve(
+                SceneCanvas(outW, outH),
+                measured.map { SceneOverlayLayerInput(it.spec, it.measured) }
+            ) ?: throw RuntimeException("overlay stack invalid for ${outW}x${outH}")
+            if (entries.isEmpty()) return // Defensive: requests non-empty and all enabled.
+            overlayProgram = buildProgramFor(
+                OVERLAY_VERTEX_SHADER.trimIndent(), OVERLAY_FRAGMENT_SHADER.trimIndent()
             )
+            overlayPositionHandle = GLES20.glGetAttribLocation(overlayProgram, "aPosition")
+            overlayCoordHandle = GLES20.glGetAttribLocation(overlayProgram, "aTextureCoord")
+            uSamplerHandle = GLES20.glGetUniformLocation(overlayProgram, "uSampler")
+            uAlphaHandle = GLES20.glGetUniformLocation(overlayProgram, "uAlpha")
+            val byId = measured.associateBy { it.spec.id }
+            val textures = IntArray(1)
+            for ((slotIndex, entry) in entries.withIndex()) {
+                val layer = byId.getValue(entry.id)
+                val rect = entry.rectPx
+                val slot = overlaySlots[slotIndex]
+                // Count first: if any step below throws, teardown deletes and
+                // recycles exactly the slots claimed so far — no leak, no
+                // half-built slot on the frame path.
+                overlaySlotCount = slotIndex + 1
+                val bitmap = if (layer.decodedBitmap != null) {
+                    scaleImageForSlotLocked(layer.decodedBitmap, rect, decodedPending)
+                } else {
+                    Bitmap.createBitmap(rect.width, rect.height, Bitmap.Config.ARGB_8888).also { fresh ->
+                        Canvas(fresh).drawText(
+                            layer.content, -layer.offsetLeft.toFloat(), -layer.offsetTop.toFloat(), paint
+                        )
+                    }
+                }
+                slot.bitmap = bitmap
+                GLES20.glGenTextures(1, textures, 0)
+                checkGl("glGenTextures(overlay)")
+                slot.textureId = textures[0]
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, slot.textureId)
+                GLES20.glTexParameteri(
+                    GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR
+                )
+                GLES20.glTexParameteri(
+                    GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR
+                )
+                GLES20.glTexParameteri(
+                    GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE
+                )
+                GLES20.glTexParameteri(
+                    GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE
+                )
+                GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+                checkGl("overlay texture upload")
+                slot.quadBuffer = floatBufferOf(entry.ndcQuad)
+                slot.alpha = entry.alpha
+                // Sanitized: layer id + kind/length only, never content.
+                val detail = if (layer.spec.kind == SceneLayerKind.IMAGE) "image" else "${layer.content.length} chars"
+                Log.i(TAG, "overlay ready: ${entry.id} $detail " +
+                    "${rect.width}x${rect.height}")
+            }
+        } finally {
+            for (pending in decodedPending) {
+                try {
+                    pending.recycle()
+                } catch (_: Throwable) {
+                }
+            }
+            decodedPending.clear()
         }
-        val entries = SceneOverlayStack.resolve(
-            SceneCanvas(outW, outH),
-            measured.map { SceneOverlayLayerInput(it.spec, it.measured) }
-        ) ?: throw RuntimeException("overlay stack invalid for ${outW}x${outH}")
-        if (entries.isEmpty()) return // Defensive: requests non-empty and all enabled.
-        overlayProgram = buildProgramFor(
-            OVERLAY_VERTEX_SHADER.trimIndent(), OVERLAY_FRAGMENT_SHADER.trimIndent()
+    }
+
+    /**
+     * H6 image measurement (GL thread, overlay build only, never per
+     * frame): decode once via the provider, aspect-fit to the spec
+     * bounds. Null = skip loudly; the decoded bitmap (if any) stays in
+     * [decodedPending] for the build's finally-recycle.
+     */
+    private fun measureImageLocked(
+        spec: SceneOverlaySpec,
+        outH: Int,
+        decodedPending: MutableList<Bitmap>
+    ): MeasuredOverlay? {
+        val uri = spec.imageUri
+        if (uri == null) {
+            Log.w(TAG, "overlay image layer without uri, skipping: ${spec.id}")
+            return null
+        }
+        val bitmap = try {
+            imageProvider?.invoke(uri)
+        } catch (_: Throwable) {
+            null
+        }
+        if (bitmap == null) {
+            Log.w(TAG, "overlay image unavailable, skipping: ${spec.id}")
+            return null
+        }
+        decodedPending.add(bitmap)
+        val size = SceneImageLayer.measuredSize(
+            bitmap.width, bitmap.height, spec.maxWidthPx, outH - spec.marginPx * 2
         )
-        overlayPositionHandle = GLES20.glGetAttribLocation(overlayProgram, "aPosition")
-        overlayCoordHandle = GLES20.glGetAttribLocation(overlayProgram, "aTextureCoord")
-        uSamplerHandle = GLES20.glGetUniformLocation(overlayProgram, "uSampler")
-        uAlphaHandle = GLES20.glGetUniformLocation(overlayProgram, "uAlpha")
-        val byId = measured.associateBy { it.spec.id }
-        val textures = IntArray(1)
-        for ((slotIndex, entry) in entries.withIndex()) {
-            val layer = byId.getValue(entry.id)
-            val rect = entry.rectPx
-            val slot = overlaySlots[slotIndex]
-            // Count first: if any step below throws, teardown deletes and
-            // recycles exactly the slots claimed so far — no leak, no
-            // half-built slot on the frame path.
-            overlaySlotCount = slotIndex + 1
-            val bitmap = Bitmap.createBitmap(rect.width, rect.height, Bitmap.Config.ARGB_8888)
-            Canvas(bitmap).drawText(
-                layer.content, -layer.offsetLeft.toFloat(), -layer.offsetTop.toFloat(), paint
-            )
-            slot.bitmap = bitmap
-            GLES20.glGenTextures(1, textures, 0)
-            checkGl("glGenTextures(overlay)")
-            slot.textureId = textures[0]
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, slot.textureId)
-            GLES20.glTexParameteri(
-                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR
-            )
-            GLES20.glTexParameteri(
-                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR
-            )
-            GLES20.glTexParameteri(
-                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE
-            )
-            GLES20.glTexParameteri(
-                GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE
-            )
-            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
-            checkGl("overlay texture upload")
-            slot.quadBuffer = floatBufferOf(entry.ndcQuad)
-            slot.alpha = entry.alpha
-            // Sanitized: layer id + text length only, never content.
-            Log.i(TAG, "overlay ready: ${entry.id} ${layer.content.length} chars " +
-                "${rect.width}x${rect.height}")
+        if (size == null) {
+            Log.w(TAG, "overlay image unmeasurable, skipping: ${spec.id}")
+            return null
         }
+        return MeasuredOverlay(spec, "", size, 0, 0, bitmap)
+    }
+
+    /**
+     * Scales a decoded image to the resolved rect exactly. Ownership of
+     * [src] transfers to the slot bitmap: the pre-scale original is
+     * recycled unless the scaler reused it (never double-owned), and it
+     * always leaves [decodedPending].
+     */
+    private fun scaleImageForSlotLocked(
+        src: Bitmap,
+        rect: SceneRectPx,
+        decodedPending: MutableList<Bitmap>
+    ): Bitmap {
+        decodedPending.remove(src)
+        val scaled = Bitmap.createScaledBitmap(src, rect.width, rect.height, true)
+        if (scaled !== src) {
+            try {
+                src.recycle()
+            } catch (_: Throwable) {
+            }
+        }
+        return scaled
     }
 
     /**

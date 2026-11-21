@@ -46,6 +46,12 @@ class StreamingLifecycleStructureTest {
     private fun sceneEditor(): String =
         source("java/com/jubersaleem/mobilegamingstreamer/SceneEditorPage.kt")
 
+    private fun compositorGl(): String =
+        source("java/com/jubersaleem/mobilegamingstreamer/scene/SceneCompositorGL.kt")
+
+    private fun imageLoader(): String =
+        source("java/com/jubersaleem/mobilegamingstreamer/scene/SceneImageLoader.kt")
+
     /** Body of the first function whose declaration contains [marker]. */
     private fun functionBody(src: String, marker: String): String {
         val decl = src.indexOf(marker)
@@ -208,6 +214,35 @@ class StreamingLifecycleStructureTest {
         assertTrue(editor.contains("layer.marginPx.toFloat().coerceIn(0f, SCENE_LAYER_MAX_MARGIN_UI_PX.toFloat())"))
         assertTrue(editor.contains("layer.maxWidthPx.toFloat().coerceIn("))
         assertTrue(editor.contains("layer.alpha.coerceIn(0f, 1f)"))
+    }
+
+    @Test
+    fun imageLayersDecodeOnceAtBuildNeverPerFrame() {
+        // H6: the provider decodes during overlay build only; the
+        // per-frame draw path performs no decode, scale, or load.
+        val gl = compositorGl()
+        assertTrue(gl.contains("imageProvider?.invoke(uri)"))
+        assertTrue(gl.contains("measureImageLocked"))
+        val draw = functionBody(gl, "private fun drawOverlaySlotLocked(slot: OverlaySlot)")
+        assertTrue(!draw.contains("decode"))
+        assertTrue(!draw.contains("imageProvider"))
+        assertTrue(!draw.contains("createScaledBitmap"))
+        assertTrue(!draw.contains("SceneImageLoader"))
+    }
+
+    @Test
+    fun sceneSourceWiresNonThrowingImageProvider() {
+        val src = sceneSource()
+        assertTrue(src.contains("SceneImageLoader.decodeBitmap(appContext.contentResolver, uri)"))
+        assertTrue(src.contains("val imageProvider: (String) -> Bitmap?"))
+    }
+
+    @Test
+    fun imageLoaderNeverThrowsAndDownsamples() {
+        val loader = imageLoader()
+        assertTrue(loader.contains("catch (_: Throwable)"))
+        assertTrue(loader.contains("inSampleSize"))
+        assertTrue(loader.contains("MAX_IMAGE_BITMAP_PX"))
     }
 
     @Test

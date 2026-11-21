@@ -1,6 +1,7 @@
 package com.jubersaleem.mobilegamingstreamer.scene
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -50,8 +51,11 @@ class SceneSource(
     private val sceneConfig: String? = null
 ) : VideoSource() {
 
-    // Mirrors ScreenSource: dpi snapshot from context, context not retained.
+    // Mirrors ScreenSource: dpi snapshot from context. Only the application
+    // context is retained (process-lifetime, leak-safe) for H6 image
+    // decoding; the caller's context is never kept.
     private val densityDpi = context.resources.displayMetrics.densityDpi
+    private val appContext = context.applicationContext
     private val controller = SceneCompositorController()
     private var layout: SceneSourceLayout? = null
     private var compositor: SceneCompositorGL? = null
@@ -86,9 +90,20 @@ class SceneSource(
             // (service-selected only when non-empty; decode is
             // deterministic so this agrees with the service decision).
             val editorSpecs = SceneConfigCodec.streamableSpecs(sceneConfig)
+            // H6 image loading: decode-once provider (GL thread, overlay
+            // build only, never per frame). Never throws: a null return
+            // drops the layer loudly inside the compositor.
+            val imageProvider: (String) -> Bitmap? = { uri ->
+                try {
+                    SceneImageLoader.decodeBitmap(appContext.contentResolver, uri)
+                } catch (_: Throwable) {
+                    null
+                }
+            }
             val gl = SceneCompositorGL(
                 controller, output, activeLayout, textContent, subtextContent,
-                if (editorSpecs.isEmpty()) null else editorSpecs
+                if (editorSpecs.isEmpty()) null else editorSpecs,
+                imageProvider
             )
             compositor = gl
             val input = gl.start() // Latch-inits EGL + input endpoint; throws on failure.

@@ -45,7 +45,9 @@ internal data class SceneOverlaySpec(
     val marginPx: Int,
     val maxWidthPx: Int,
     val alpha: Float,
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    val kind: SceneLayerKind = SceneLayerKind.TEXT,
+    val imageUri: String? = null
 ) {
     companion object {
         fun of(
@@ -56,18 +58,25 @@ internal data class SceneOverlaySpec(
             marginPx: Int,
             maxWidthPx: Int,
             alpha: Float,
-            enabled: Boolean = true
+            enabled: Boolean = true,
+            kind: SceneLayerKind = SceneLayerKind.TEXT,
+            imageUri: String? = null
         ): SceneOverlaySpec? {
             if (id.isBlank()) return null
-            if (text.isBlank()) return null
-            if (text.length > MAX_TEXT_LAYER_CHARS) return null
+            if (kind == SceneLayerKind.TEXT) {
+                if (text.isBlank()) return null
+                if (text.length > MAX_TEXT_LAYER_CHARS) return null
+            } else {
+                if (!isValidImageUri(imageUri)) return null
+            }
             if (zOrder < 0) return null
             if (marginPx < 0) return null
             if (maxWidthPx <= 0) return null
             if (alpha.isNaN()) return null
             return SceneOverlaySpec(
-                id, text, anchor, zOrder, marginPx, maxWidthPx,
-                alpha.coerceIn(0f, 1f), enabled
+                id, if (kind == SceneLayerKind.TEXT) text else "", anchor, zOrder, marginPx, maxWidthPx,
+                alpha.coerceIn(0f, 1f), enabled, kind,
+                if (kind == SceneLayerKind.IMAGE) imageUri else null
             )
         }
     }
@@ -91,8 +100,10 @@ internal data class SceneOverlayDrawEntry(
 /** Deterministic overlay-stack resolution. All pure. */
 internal object SceneOverlayStack {
     /**
-     * Destination rect for one overlay on [canvas]. `TOP_LEFT` delegates to
-     * the H3 placement (identical output); other anchors reuse the same
+     * Destination rect for one overlay on [canvas]. Text `TOP_LEFT` delegates
+     * to the H3 placement (identical output); image top-left uses the
+     * generic branch (arithmetically identical for top-left, pinned by
+     * test); other anchors reuse the same
      * width/height capping, then place against the canvas-inset edges (or
      * centered with floored bias: a leftover pixel goes right/bottom,
      * matching [SceneLayoutCalculator]). Null when the canvas or
@@ -109,7 +120,7 @@ internal object SceneOverlayStack {
         measuredPx: SceneSizePx,
         spec: SceneOverlaySpec
     ): SceneRectPx? {
-        if (spec.anchor == SceneOverlayAnchor.TOP_LEFT) {
+        if (spec.anchor == SceneOverlayAnchor.TOP_LEFT && spec.kind == SceneLayerKind.TEXT) {
             val textSpec = SceneTextLayerSpec.of(
                 text = spec.text,
                 marginPx = spec.marginPx,

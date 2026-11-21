@@ -295,4 +295,21 @@ class SceneOverlayStackTest {
             composition.visibleLayersInDrawOrder.map { it.id }
         )
     }
+
+    @Test
+    fun imageTopLeftMatchesH3LayoutExactly() {
+        // H6: image top-left uses the generic branch; it must equal the
+        // H3-delegated text placement for identical inputs.
+        val canvas = SceneCanvas(1920, 1080)
+        val measured = SceneSizePx(200, 40)
+        val text = SceneOverlaySpec.of("t", "MGS", SceneOverlayAnchor.TOP_LEFT, 1, 48, 1920, 1f)!!
+        val image = SceneOverlaySpec.of(
+            "img", "", SceneOverlayAnchor.TOP_LEFT, 1, 48, 1920, 1f, true,
+            SceneLayerKind.IMAGE, "content://media/ok"
+        )!!
+        assertEquals(
+            SceneOverlayStack.placeRect(canvas, measured, text),
+            SceneOverlayStack.placeRect(canvas, measured, image)
+        )
+    }
 }

@@ -27,6 +27,7 @@ import com.jubersaleem.mobilegamingstreamer.scene.MAX_STATIC_OVERLAY_LAYERS
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_STORED_SCENES
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_TEXT_LAYER_CHARS
 import com.jubersaleem.mobilegamingstreamer.scene.SceneConfigCodec
+import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerKind
 import com.jubersaleem.mobilegamingstreamer.scene.SceneOverlayAnchor
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTextLayerLayout
 import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
@@ -65,6 +66,11 @@ class MainActivity : ComponentActivity() {
     private var editingSceneId by mutableStateOf<String?>(null)
     private var sceneDeleteTargetId by mutableStateOf<String?>(null)
     private var sceneError by mutableStateOf<String?>(null)
+    private var pendingImageSceneId: String? = null
+    private var pendingImageReplaceLayerId: String? = null
+    private val imagePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        onImagePicked(uri)
+    }
 
     private val broadcastStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -342,6 +348,8 @@ class MainActivity : ComponentActivity() {
                         onDismissDeleteScene = { sceneDeleteTargetId = null },
                         onRenameScene = { id, name -> renameScene(id, name) },
                         onAddLayer = { id -> addLayer(id) },
+                        onAddImageLayer = { id -> launchImagePicker(id, null) },
+                        onReplaceImageLayer = { sceneId, layerId -> launchImagePicker(sceneId, layerId) },
                         onRemoveLayer = { sceneId, layerId -> removeLayer(sceneId, layerId) },
                         onMoveLayer = { sceneId, layerId, towardFront ->
                             moveLayer(sceneId, layerId, towardFront)
@@ -503,6 +511,56 @@ class MainActivity : ComponentActivity() {
                     "New text",
                     SceneConfigCodec.freshLayerId(current),
                     current.layers.size + 1
+                )
+            )
+        }
+        sceneError = null
+    }
+
+    private fun launchImagePicker(sceneId: String, replaceLayerId: String?) {
+        pendingImageSceneId = sceneId
+        pendingImageReplaceLayerId = replaceLayerId
+        imagePicker.launch(arrayOf("image/*"))
+    }
+
+    private fun onImagePicked(uri: Uri?) {
+        val sceneId = pendingImageSceneId
+        pendingImageSceneId = null
+        val replaceLayerId = pendingImageReplaceLayerId
+        pendingImageReplaceLayerId = null
+        if (uri == null || sceneId == null) return
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: SecurityException) {
+            sceneError = "Couldn't keep access to that image. Pick it again."
+            return
+        }
+        if (replaceLayerId != null) {
+            updateLayer(sceneId, replaceLayerId) { it.copy(imageUri = uri.toString()) }
+        } else {
+            addImageLayer(sceneId, uri.toString())
+        }
+        sceneError = null
+    }
+
+    private fun addImageLayer(sceneId: String, imageUri: String) {
+        val scene = scenes.firstOrNull { it.id == sceneId } ?: return
+        if (scene.layers.size >= MAX_STATIC_OVERLAY_LAYERS) {
+            sceneError = "Layer limit reached ($MAX_STATIC_OVERLAY_LAYERS per scene)."
+            return
+        }
+        updateScene(sceneId) { current ->
+            current.copy(
+                layers = current.layers + StreamSceneLayer(
+                    id = SceneConfigCodec.freshLayerId(current),
+                    text = "",
+                    anchor = SceneOverlayAnchor.TOP_LEFT,
+                    zOrder = current.layers.size + 1,
+                    marginPx = SceneTextLayerLayout.marginPxFor(1080),
+                    maxWidthPx = SCENE_IMAGE_DEFAULT_MAX_WIDTH_PX,
+                    alpha = 1f,
+                    kind = SceneLayerKind.IMAGE,
+                    imageUri = imageUri
                 )
             )
         }

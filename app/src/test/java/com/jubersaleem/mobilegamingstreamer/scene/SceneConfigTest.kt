@@ -54,7 +54,7 @@ class SceneConfigTest {
     @Test
     fun decodeNeverThrowsOnGarbage() {
         val garbage = listOf(
-            null, "", "   ", "v2\nscene:a\tb", "v1", "v1\nbogus",
+            null, "", "   ", "v3\nscene:a\tb", "v1", "v1\nbogus", "v2", "v2\nbogus",
             "v1\nscene:onlyonefield", "v1\nscene:\t", "===",
             "\n===\n", "v1\nscene:a\tb\\"
         )
@@ -239,6 +239,85 @@ class SceneConfigTest {
         assertTrue(SceneConfigCodec.activeSceneEncoding(scenes, "off") == null)
         assertTrue(SceneConfigCodec.activeSceneEncoding(scenes, "missing") == null)
         assertTrue(SceneConfigCodec.activeSceneEncoding(scenes, null) == null)
+    }
+
+    // ---- H6 image layers + codec v2 ----
+
+    private fun imageLayer(
+        id: String = "logo",
+        uri: String? = "content://media/logo",
+        enabled: Boolean = true
+    ) = StreamSceneLayer(
+        id, "", SceneOverlayAnchor.BOTTOM_RIGHT, 2, 27, 640, 0.8f, enabled,
+        SceneLayerKind.IMAGE, uri
+    )
+
+    @Test
+    fun imageLayerRoundTripPreservesKindAndUri() {
+        val original = scene(layers = listOf(layer(id = "t"), imageLayer()))
+        val encoded = SceneConfigCodec.encodeScene(original)
+        assertTrue(encoded.startsWith("v2\n"))
+        assertEquals(original, SceneConfigCodec.decodeScene(encoded))
+    }
+
+    @Test
+    fun v1StoresDecodeAsTextLayers() {
+        // H5 backward compatibility: v1 lines carry no kind/uri fields.
+        val decoded = SceneConfigCodec.decodeScene(
+            "v1\nscene:s1\tS\nlayer:t\tHi\tTOP_LEFT\t1\t8\t1920\t1\ttrue"
+        )!!
+        assertEquals(1, decoded.layers.size)
+        assertEquals(SceneLayerKind.TEXT, decoded.layers[0].kind)
+        assertTrue(decoded.layers[0].imageUri == null)
+        assertEquals("Hi", decoded.layers[0].text)
+    }
+
+    @Test
+    fun mixedVersionStoreDecodes() {
+        val v1block = "v1\nscene:old\tOld\nlayer:t\tHi\tTOP_LEFT\t1\t8\t1920\t1\ttrue"
+        val v2block = SceneConfigCodec.encodeScene(scene(id = "new"))
+        val decoded = SceneConfigCodec.decodeStore("$v1block\n===\n$v2block")
+        assertEquals(listOf("old", "new"), decoded.map { it.id })
+        assertEquals(SceneLayerKind.TEXT, decoded[0].layers[0].kind)
+    }
+
+    @Test
+    fun badKindOrUriDropsImageLayer() {
+        val encoded = "v2\nscene:s1\tS\n" + listOf(
+            "layer:good\t\tBOTTOM_RIGHT\t1\t8\t640\t1\ttrue\tIMAGE\tcontent://media/ok",
+            "layer:badkind\t\tTOP_LEFT\t2\t8\t640\t1\ttrue\tVIDEO\tcontent://media/ok",
+            "layer:badscheme\t\tTOP_LEFT\t3\t8\t640\t1\ttrue\tIMAGE\thttp://evil/x.png",
+            "layer:emptyuri\t\tTOP_LEFT\t4\t8\t640\t1\ttrue\tIMAGE\t",
+            "layer:toolong\t\tTOP_LEFT\t5\t8\t640\t1\ttrue\tIMAGE\tcontent://" + "x".repeat(MAX_IMAGE_URI_CHARS),
+            "layer:textblank\t\tTOP_LEFT\t6\t8\t640\t1\ttrue\tTEXT\t"
+        ).joinToString("\n")
+        val decoded = SceneConfigCodec.decodeScene(encoded)!!
+        assertEquals(listOf("good"), decoded.layers.map { it.id })
+    }
+
+    @Test
+    fun imageLayersAreStreamableWhenUriValid() {
+        val specs = scene(
+            layers = listOf(
+                imageLayer(id = "img"),
+                imageLayer(id = "bad", uri = "notauri"),
+                imageLayer(id = "off", enabled = false)
+            )
+        ).streamableSpecs()
+        assertEquals(listOf("img"), specs.map { it.id })
+        assertEquals(SceneLayerKind.IMAGE, specs[0].kind)
+    }
+
+    @Test
+    fun imageUriSchemeAllowlist() {
+        assertTrue(isValidImageUri("content://media/logo"))
+        assertTrue(isValidImageUri("file:///sdcard/logo.png"))
+        assertTrue(isValidImageUri("android.resource://com.example/123"))
+        assertTrue(isValidImageUri("CONTENT://upper/case"))
+        assertTrue(!isValidImageUri("https://example.com/x.png"))
+        assertTrue(!isValidImageUri("notauri"))
+        assertTrue(!isValidImageUri(""))
+        assertTrue(!isValidImageUri(null))
     }
 
     @Test
