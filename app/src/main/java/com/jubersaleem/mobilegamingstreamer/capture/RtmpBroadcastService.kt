@@ -623,7 +623,6 @@ class RtmpBroadcastService : Service() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         recoveryDriver.onDestroyed()
-        healthMonitor.onStopped()
         if (commandReceiverRegistered) {
             try { unregisterReceiver(commandReceiver) } catch (_: IllegalArgumentException) { }
             commandReceiverRegistered = false
@@ -636,7 +635,13 @@ class RtmpBroadcastService : Service() {
         activeMicSource = AudioRouteLabels.SOURCE_NONE
         activeHeadset = false
         releaseProjection()
+        // Publish before halting so the destruction event preserves the
+        // terminal verdict already published by stopBroadcast/onDisconnect
+        // (or the last live state when the system kills an active session)
+        // instead of UNKNOWN. Same message scope as before; only the health
+        // extra keeps its terminal value.
         publishState(false, "Broadcast service stopped", 0L)
+        healthMonitor.onStopped()
         super.onDestroy()
     }
 

@@ -34,6 +34,8 @@ import kotlin.math.max
  *   allow it.
  * - Missing metrics are conservative: a session that never showed progress
  *   reports UNKNOWN, never STALLED.
+ * - Halting freezes the terminal verdict for the final status event instead
+ *   of clearing it; sampling stays dead until a new session resets.
  *
  * Main-thread confined, like the sampling tick that feeds it; no locking is
  * required. Holds only scalar state (no per-tick allocations beyond the
@@ -111,10 +113,14 @@ class StreamHealthMonitor {
         state = StreamHealth.UNKNOWN
     }
 
-    /** Halt monitoring for teardown. Idempotent; samples after this are ignored. */
+    /**
+     * Halt monitoring for teardown. Idempotent; samples after this are
+     * ignored. The terminal verdict is retained (not cleared to UNKNOWN) so
+     * the final status event published during teardown keeps it; only
+     * [startSession] resets for a fresh session.
+     */
     fun onStopped() {
         halted = true
-        state = StreamHealth.UNKNOWN
     }
 
     /**
@@ -126,7 +132,9 @@ class StreamHealthMonitor {
      * false delta afterwards.
      */
     fun onSample(sample: StreamHealthSample): StreamHealth {
-        if (halted) return StreamHealth.UNKNOWN
+        // Halted: echo the frozen terminal verdict; nothing is counted,
+        // baselined or transitioned.
+        if (halted) return state
         val now = sample.nowMs
         if (now < sessionStartMs) return state
         if (samplesAccepted > 0 && now <= lastSampleMs) return state

@@ -12,7 +12,7 @@ package com.jubersaleem.mobilegamingstreamer.capture
  * Pure Kotlin with no Android dependencies.
  */
 enum class StreamHealth {
-    /** Insufficient reliable samples (startup, grace windows, missing metrics, halted). */
+    /** Insufficient reliable samples (startup, grace windows, missing metrics). */
     UNKNOWN,
 
     /** Transmission is progressing with no sustained concerning metrics. */

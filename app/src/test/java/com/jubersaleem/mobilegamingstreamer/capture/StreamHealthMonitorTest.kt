@@ -385,13 +385,46 @@ class StreamHealthMonitorTest {
         h.tick()
         assertEquals(StreamHealth.HEALTHY, h.tick())
         h.monitor.onStopped()
-        assertEquals(StreamHealth.UNKNOWN, h.monitor.state)
-        h.tick()
-        h.tick()
-        assertEquals(StreamHealth.UNKNOWN, h.monitor.state)
+        // The halt freezes the terminal verdict for the final status event
+        // instead of clearing it; sampling stays dead.
+        assertEquals(StreamHealth.HEALTHY, h.monitor.state)
+        assertEquals(StreamHealth.HEALTHY, h.tick())
+        assertEquals(StreamHealth.HEALTHY, h.tick())
+        assertEquals(StreamHealth.HEALTHY, h.monitor.state)
         assertEquals(3, h.monitor.samplesAccepted)
         h.monitor.onStopped()
+        assertEquals(StreamHealth.HEALTHY, h.monitor.state)
+    }
+
+    @Test
+    fun terminalVerdictSurvivesHaltAndDestruction() {
+        val h = Harness()
+        h.start()
+        h.tick()
+        h.tick()
+        assertEquals(StreamHealth.HEALTHY, h.tick())
+        repeat(4) { h.outageTick() }
+        assertEquals(StreamHealth.STALLED, h.monitor.state)
+        // stopBroadcast publishes the terminal event, then halts: the STALLED
+        // verdict is retained for that event.
+        h.monitor.onStopped()
+        assertEquals(StreamHealth.STALLED, h.monitor.state)
+        // Stray samples after the halt are ignored: no resurrection, no
+        // counting, no transitions; the frozen verdict echoes back.
+        h.outageTick()
+        assertEquals(StreamHealth.STALLED, h.tick())
+        assertEquals(StreamHealth.STALLED, h.monitor.state)
+        assertEquals(7, h.monitor.samplesAccepted)
+        assertEquals(0L, h.monitor.sessionDroppedVideo)
+        // onDestroy halts again (idempotent cleanup): the verdict still
+        // stands for the final destruction event instead of UNKNOWN.
+        h.monitor.onStopped()
+        assertEquals(StreamHealth.STALLED, h.monitor.state)
+        // A fresh session still starts clean at UNKNOWN.
+        h.start()
         assertEquals(StreamHealth.UNKNOWN, h.monitor.state)
+        assertEquals(0, h.monitor.samplesAccepted)
+        assertEquals(StreamHealth.UNKNOWN, h.tick())
     }
 
     @Test
