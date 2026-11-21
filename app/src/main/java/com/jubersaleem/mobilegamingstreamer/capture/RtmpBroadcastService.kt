@@ -471,7 +471,7 @@ class RtmpBroadcastService : Service() {
             Log.i(TAG, "Video source: " + if (useSceneSource) "SceneSource compositor passthrough"
                 else "ScreenSource direct passthrough")
             val videoSource: VideoSource = if (useSceneSource) {
-                SceneSource(mediaProjection, dpi)
+                SceneSource(this, mediaProjection)
             } else {
                 ScreenSource(this, mediaProjection)
             }

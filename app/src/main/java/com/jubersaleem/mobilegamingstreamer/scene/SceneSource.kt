@@ -1,5 +1,6 @@
 package com.jubersaleem.mobilegamingstreamer.scene
 
+import android.content.Context
 import android.graphics.SurfaceTexture
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -42,10 +43,12 @@ import com.pedro.encoder.input.sources.video.VideoSource
  * MediaProjection session stays service-owned and is never stopped here.
  */
 class SceneSource(
-    private val mediaProjection: MediaProjection,
-    private val densityDpi: Int
+    context: Context,
+    private val mediaProjection: MediaProjection
 ) : VideoSource() {
 
+    // Mirrors ScreenSource: dpi snapshot from context, context not retained.
+    private val densityDpi = context.resources.displayMetrics.densityDpi
     private val controller = SceneCompositorController()
     private var layout: SceneSourceLayout? = null
     private var compositor: SceneCompositorGL? = null
