@@ -47,6 +47,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
@@ -55,6 +58,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_STATIC_OVERLAY_LAYERS
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_TEXT_LAYER_CHARS
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_TRANSITION_DURATION_MS
+import com.jubersaleem.mobilegamingstreamer.scene.MIN_TRANSITION_DURATION_MS
 import com.jubersaleem.mobilegamingstreamer.scene.BORDER_COLOR_DEFAULT
 import com.jubersaleem.mobilegamingstreamer.scene.SHADOW_COLOR_DEFAULT
 import com.jubersaleem.mobilegamingstreamer.scene.TEXT_COLOR_DEFAULT
