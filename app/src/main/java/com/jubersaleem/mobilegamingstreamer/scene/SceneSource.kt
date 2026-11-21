@@ -88,7 +88,7 @@ class SceneSource(
             val editorSpecs = SceneConfigCodec.streamableSpecs(sceneConfig)
             val gl = SceneCompositorGL(
                 controller, output, activeLayout, textContent, subtextContent,
-                editorSpecs.ifEmpty { null }
+                if (editorSpecs.isEmpty()) null else editorSpecs
             )
             compositor = gl
             val input = gl.start() // Latch-inits EGL + input endpoint; throws on failure.

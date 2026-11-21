@@ -28,8 +28,10 @@ internal const val DEFAULT_LAYER_ID = "text"
 internal const val DEFAULT_LAYER_TEXT = "MGS • LIVE"
 internal const val REPAIRED_SCENE_NAME = "Untitled scene"
 
-/** One editable text layer of a user scene (H5 content is text only). */
-internal data class StreamSceneLayer(
+/** One editable text layer of a user scene (H5 content is text only). Public:
+ * UI state crosses public composable boundaries; H4 validation stays
+ * authoritative via [toOverlaySpec]. */
+data class StreamSceneLayer(
     val id: String,
     val text: String,
     val anchor: SceneOverlayAnchor,
@@ -44,7 +46,7 @@ internal data class StreamSceneLayer(
      * validation stays authoritative: the editor and the service map
      * through this, never around it.
      */
-    fun toOverlaySpec(): SceneOverlaySpec? = SceneOverlaySpec.of(
+    internal fun toOverlaySpec(): SceneOverlaySpec? = SceneOverlaySpec.of(
         id = id,
         text = text,
         anchor = anchor,
@@ -56,8 +58,8 @@ internal data class StreamSceneLayer(
     )
 }
 
-/** One named user scene: an ordered stack of text layers. */
-internal data class StreamScene(
+/** One named user scene: an ordered stack of text layers. Public: see [StreamSceneLayer]. */
+data class StreamScene(
     val id: String,
     val name: String,
     val layers: List<StreamSceneLayer>
@@ -78,7 +80,7 @@ internal data class StreamScene(
      * "no scene to stream" — the service then keeps the ScreenSource
      * default. Invalid layers are dropped (never crash, never half-spec).
      */
-    fun streamableSpecs(): List<SceneOverlaySpec> =
+    internal fun streamableSpecs(): List<SceneOverlaySpec> =
         layers.filter { it.enabled }.mapNotNull { it.toOverlaySpec() }
 }
 

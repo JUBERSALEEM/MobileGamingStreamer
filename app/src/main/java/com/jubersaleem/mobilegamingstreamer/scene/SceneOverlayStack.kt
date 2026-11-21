@@ -21,8 +21,9 @@ package com.jubersaleem.mobilegamingstreamer.scene
  */
 internal const val MAX_STATIC_OVERLAY_LAYERS = 4
 
-/** Corner/center anchors for static overlay placement. */
-internal enum class SceneOverlayAnchor {
+/** Corner/center anchors for static overlay placement. Public: user-facing
+ * editor configuration crosses public composable boundaries. */
+enum class SceneOverlayAnchor {
     TOP_LEFT,
     TOP_RIGHT,
     BOTTOM_LEFT,
