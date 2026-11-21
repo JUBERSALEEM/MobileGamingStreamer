@@ -38,18 +38,29 @@ sealed interface BitrateRouting {
  * short-circuiting (the driver decides), and [onAuthError] takes no
  * `stopping` flag because the service stop it requests is idempotent.
  *
+ * Every stale-token rejection increments [staleDropped] (observational only;
+ * same-session stopping guards never count). The terminal diagnostic report
+ * reads it as evidence of cross-session isolation in production.
+ *
  * Pure Kotlin with no Android dependencies; covered by JVM unit tests with
  * deterministic fakes and fixed clocks.
  */
 class StreamCallbackRouter(private val driver: StreamRecoveryDriver) {
     private val gate = StreamSessionGate()
 
+    /** Stale-token rejections since the current session began. */
+    var staleDropped = 0
+        private set
+
     /**
      * Starts a new session, invalidating every previously issued token.
      * Returns the token the new session's callbacks must capture. Must run
      * before any previous-session resource is released.
      */
-    fun beginSession(): Long = gate.beginSession()
+    fun beginSession(): Long {
+        staleDropped = 0
+        return gate.beginSession()
+    }
 
     /** Terminal invalidation (service destruction): no outstanding token stays valid. */
     fun invalidate() {
@@ -61,7 +72,10 @@ class StreamCallbackRouter(private val driver: StreamRecoveryDriver) {
      * publish the connecting line.
      */
     fun onConnectionStarted(token: Long, stopping: Boolean): Boolean {
-        if (!gate.isCurrent(token)) return false
+        if (!gate.isCurrent(token)) {
+            staleDropped++
+            return false
+        }
         if (stopping) return false
         return true
     }
@@ -73,7 +87,10 @@ class StreamCallbackRouter(private val driver: StreamRecoveryDriver) {
      * expired and no pending backoff is cancelled.
      */
     fun onConnectionSuccess(token: Long, stopping: Boolean, nowMs: Long): SuccessOutcome? {
-        if (!gate.isCurrent(token)) return null
+        if (!gate.isCurrent(token)) {
+            staleDropped++
+            return null
+        }
         if (stopping) return null
         return driver.onConnectionSuccess(nowMs)
     }
@@ -92,7 +109,10 @@ class StreamCallbackRouter(private val driver: StreamRecoveryDriver) {
         hasProjection: Boolean,
         nowMs: Long
     ): RecoveryEffect? {
-        if (!gate.isCurrent(token)) return null
+        if (!gate.isCurrent(token)) {
+            staleDropped++
+            return null
+        }
         return driver.onConnectionFailed(reason, stopping, hasStream, hasProjection, nowMs)
     }
 
@@ -102,7 +122,10 @@ class StreamCallbackRouter(private val driver: StreamRecoveryDriver) {
      * terminal state).
      */
     fun onDisconnect(token: Long, stopping: Boolean): Boolean {
-        if (!gate.isCurrent(token)) return false
+        if (!gate.isCurrent(token)) {
+            staleDropped++
+            return false
+        }
         if (stopping) return false
         return true
     }
@@ -112,14 +135,23 @@ class StreamCallbackRouter(private val driver: StreamRecoveryDriver) {
      * authentication failure. Takes no stopping flag: the requested stop is
      * idempotent, so a current-session callback always routes to it.
      */
-    fun onAuthError(token: Long): Boolean = gate.isCurrent(token)
+    fun onAuthError(token: Long): Boolean {
+        if (!gate.isCurrent(token)) {
+            staleDropped++
+            return false
+        }
+        return true
+    }
 
     /**
      * Route `onAuthSuccess`. Returns true when the service must publish the
      * key-accepted line.
      */
     fun onAuthSuccess(token: Long, stopping: Boolean): Boolean {
-        if (!gate.isCurrent(token)) return false
+        if (!gate.isCurrent(token)) {
+            staleDropped++
+            return false
+        }
         if (stopping) return false
         return true
     }
@@ -135,7 +167,10 @@ class StreamCallbackRouter(private val driver: StreamRecoveryDriver) {
         stopping: Boolean,
         streamingConfirmed: Boolean
     ): BitrateRouting {
-        if (!gate.isCurrent(token)) return BitrateRouting.None
+        if (!gate.isCurrent(token)) {
+            staleDropped++
+            return BitrateRouting.None
+        }
         if (stopping) return BitrateRouting.None
         if (driver.state.phase == StreamPhase.RECONNECTING) return BitrateRouting.None
         if (bitrate <= 0L) return BitrateRouting.Zero
@@ -149,6 +184,10 @@ class StreamCallbackRouter(private val driver: StreamRecoveryDriver) {
      */
     fun onProjectionStop(token: Long, hasDisplay: Boolean): Boolean {
         if (!hasDisplay) return false
-        return gate.isCurrent(token)
+        if (!gate.isCurrent(token)) {
+            staleDropped++
+            return false
+        }
+        return true
     }
 }

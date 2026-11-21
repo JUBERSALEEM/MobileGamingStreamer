@@ -269,4 +269,49 @@ class StreamCallbackRouterTest {
         assertFalse(h.router.onAuthSuccess(tokenA, stopping = false))
         assertFalse(h.router.onAuthSuccess(tokenB, stopping = true))
     }
+
+    /** Every stale-token rejection is counted; current and stopping guards never count. */
+    @Test
+    fun staleRejectionsCounted() {
+        val h = Harness()
+        val tokenA = h.startSession()
+        val tokenB = h.startSession()
+        assertEquals(0, h.router.staleDropped)
+        h.router.onConnectionStarted(tokenA, stopping = false)
+        h.router.onConnectionSuccess(tokenA, stopping = false, nowMs = NOW)
+        h.router.onConnectionFailed(tokenA, "boom", stopping = false, hasStream = true, hasProjection = true, nowMs = NOW)
+        h.router.onDisconnect(tokenA, stopping = false)
+        h.router.onAuthError(tokenA)
+        h.router.onAuthSuccess(tokenA, stopping = false)
+        h.router.onNewBitrate(tokenA, BITRATE, stopping = false, streamingConfirmed = false)
+        h.router.onProjectionStop(tokenA, hasDisplay = true)
+        assertEquals(8, h.router.staleDropped)
+        // Current-session and stopping outcomes leave the counter untouched.
+        h.router.onConnectionStarted(tokenB, stopping = false)
+        h.router.onConnectionStarted(tokenB, stopping = true)
+        h.router.onDisconnect(tokenB, stopping = true)
+        h.router.onProjectionStop(tokenB, hasDisplay = false)
+        assertEquals(8, h.router.staleDropped)
+    }
+
+    @Test
+    fun staleCounterResetsOnNewSession() {
+        val h = Harness()
+        val tokenA = h.startSession()
+        h.startSession()
+        h.router.onDisconnect(tokenA, stopping = false)
+        assertEquals(1, h.router.staleDropped)
+        h.startSession()
+        assertEquals(0, h.router.staleDropped)
+    }
+
+    /** Destruction keeps the count so the terminal report can read it. */
+    @Test
+    fun staleCounterSurvivesInvalidate() {
+        val h = Harness()
+        val token = h.startSession()
+        h.router.invalidate()
+        h.router.onDisconnect(token, stopping = false)
+        assertEquals(1, h.router.staleDropped)
+    }
 }

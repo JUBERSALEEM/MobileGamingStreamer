@@ -60,9 +60,16 @@ class RtmpBroadcastService : Service() {
     // RootEncoder's retry API. Capture, encoders, mixer and the
     // MediaProjection session are never touched on this path.
     private val reconnectRunnable: Runnable = Runnable {
+        val attemptsBefore = recoveryDriver.state.attemptsUsed
         when (val effect = recoveryDriver.onRetryTimerFired(stopping, display != null, SystemClock.elapsedRealtime())) {
             is RecoveryEffect.Stop -> stopBroadcast(effect.message)
-            else -> { }
+            // A consumed attempt increments the counter; a stale fire leaves
+            // it untouched, so only a real retry is recorded.
+            else -> if (recoveryDriver.state.attemptsUsed > attemptsBefore) {
+                diagnostics.record(diagnosticToken, DiagnosticEventId.RETRY_FIRED,
+                    "attempt ${recoveryDriver.state.attemptsUsed} of ${StreamConnectionPolicy.MAX_ATTEMPTS}",
+                    SystemClock.elapsedRealtime())
+            }
         }
     }
     // Explicit types break the declaration-inference cycle between the
@@ -85,6 +92,11 @@ class RtmpBroadcastService : Service() {
     // driver call, effect selection) runs here so JVM tests execute the real
     // routing; the service only captures tokens and executes effects.
     private val callbackRouter = StreamCallbackRouter(recoveryDriver)
+    // Session diagnostics (Phase F). Strictly observational: recording never
+    // gates or alters a streaming decision, and every record carries the
+    // session token so stale posts cannot contaminate the active session.
+    private val diagnostics = StreamSessionDiagnostics()
+    private var diagnosticToken = -1L
     private val sessionHeartbeat = object : Runnable {
         override fun run() {
             if (display != null) {
@@ -214,6 +226,8 @@ class RtmpBroadcastService : Service() {
         handler.removeCallbacks(sessionHeartbeat)
         recoveryDriver.startSession()
         healthMonitor.startSession(SystemClock.elapsedRealtime())
+        diagnosticToken = sessionToken
+        diagnostics.startSession(sessionToken, SystemClock.elapsedRealtime())
         lastWatchdogDiagnosisId = null
         // Suppress callbacks from a previous stream while its resources are released.
         stopping = true
@@ -274,12 +288,18 @@ class RtmpBroadcastService : Service() {
                                 handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
                             }
                             update("Reconnected • Waiting for video frames")
+                            diagnostics.record(diagnosticToken, DiagnosticEventId.RECOVERY_SUCCEEDED,
+                                "socket re-established within the deadline", SystemClock.elapsedRealtime())
                         }
                         SuccessOutcome.CONNECTED -> update("RTMP connected • Waiting for video frames")
                         // Strict deadline: a late success revives nothing. The
                         // stop path below tears down even the late-connected
                         // socket; no LIVE is published and no budget is reset.
-                        SuccessOutcome.EXPIRED -> stopBroadcast(StreamConnectionPolicy.exhaustedMessage())
+                        SuccessOutcome.EXPIRED -> {
+                            diagnostics.record(diagnosticToken, DiagnosticEventId.RECOVERY_EXPIRED,
+                                "success arrived after the deadline", SystemClock.elapsedRealtime())
+                            stopBroadcast(StreamConnectionPolicy.exhaustedMessage())
+                        }
                         SuccessOutcome.IGNORED -> { }
                     }
                 }
@@ -288,7 +308,9 @@ class RtmpBroadcastService : Service() {
                         sessionToken, reason, stopping, display != null, activeProjection != null,
                         SystemClock.elapsedRealtime()
                     ) ?: return
-                    Log.e(TAG, "RTMP connection failed: $reason")
+                    Log.e(TAG, "RTMP connection failed: " + sanitizeDiagnosticText(reason))
+                    diagnostics.record(diagnosticToken, DiagnosticEventId.CONNECTION_FAILED,
+                        reason, SystemClock.elapsedRealtime())
                     when (effect) {
                         is RecoveryEffect.Publish -> {
                             lastBitrate = 0L
@@ -297,6 +319,14 @@ class RtmpBroadcastService : Service() {
                             handler.removeCallbacks(streamHealthWatchdog)
                             handler.postDelayed(streamHealthWatchdog, STREAM_HEALTH_CHECK_INTERVAL_MS)
                             update(effect.message, 0L)
+                            // The scheduled attempt is attemptsUsed + 1 by
+                            // policy construction (the counter increments only
+                            // when the backoff fires), with the matching delay.
+                            val attempt = recoveryDriver.state.attemptsUsed + 1
+                            diagnostics.record(diagnosticToken, DiagnosticEventId.RETRY_SCHEDULED,
+                                "attempt $attempt of ${StreamConnectionPolicy.MAX_ATTEMPTS} " +
+                                    "in ${StreamConnectionPolicy.retryDelayMs(attempt)}ms",
+                                SystemClock.elapsedRealtime())
                         }
                         is RecoveryEffect.Stop -> stopBroadcast(effect.message)
                         RecoveryEffect.None -> { }
@@ -320,7 +350,11 @@ class RtmpBroadcastService : Service() {
                         Log.w(TAG, "Error releasing disconnected stream", error)
                     }
                     releaseProjection()
-                    publishState(false, "Broadcast disconnected. Tap GO LIVE to start a fresh capture session.", 0L)
+                    val terminalMessage = "Broadcast disconnected. Tap GO LIVE to start a fresh capture session."
+                    diagnostics.record(diagnosticToken, DiagnosticEventId.STREAM_STOPPED,
+                        terminalMessage, SystemClock.elapsedRealtime())
+                    logTerminalReport(terminalMessage)
+                    publishState(false, terminalMessage, 0L)
                     // Halt only after the final status event so it preserves
                     // the terminal health verdict instead of UNKNOWN.
                     healthMonitor.onStopped()
@@ -329,6 +363,8 @@ class RtmpBroadcastService : Service() {
                 }
                 override fun onAuthError() {
                     if (!callbackRouter.onAuthError(sessionToken)) return
+                    diagnostics.record(diagnosticToken, DiagnosticEventId.AUTH_FAILED,
+                        "server rejected the stream key", SystemClock.elapsedRealtime())
                     stopBroadcast("Stream authentication failed. Check the stream key.")
                 }
                 override fun onAuthSuccess() {
@@ -356,6 +392,8 @@ class RtmpBroadcastService : Service() {
                             if (firstConfirmation) {
                                 handler.removeCallbacks(streamHealthWatchdog)
                                 handler.postDelayed(streamHealthWatchdog, STREAM_HEALTH_CHECK_INTERVAL_MS)
+                                diagnostics.record(diagnosticToken, DiagnosticEventId.STREAM_CONFIRMED,
+                                    "first outgoing video frames", SystemClock.elapsedRealtime())
                             }
                             update("LIVE • ${routing.bitrate / 1000} kbps", routing.bitrate)
                             if (firstConfirmation && Settings.canDrawOverlays(this@RtmpBroadcastService) &&
@@ -489,6 +527,9 @@ class RtmpBroadcastService : Service() {
             // bounds always agree even if a callback arrives unexpectedly.
             stream.getStreamClient().setReTries(StreamConnectionPolicy.MAX_ATTEMPTS)
             stream.startStream(streamUrl)
+            diagnostics.record(diagnosticToken, DiagnosticEventId.SESSION_STARTED,
+                "$activeProfileLabel • ${if (portrait) "portrait" else "landscape"} • $audioMode",
+                SystemClock.elapsedRealtime())
             handler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
             Log.i(TAG, "RTMP broadcast requested: $activeProfileLabel, orientation=${if (portrait) "PORTRAIT" else "LANDSCAPE"}, audio=$audioMode, dpi=$dpi")
         } catch (error: Exception) {
@@ -528,7 +569,11 @@ class RtmpBroadcastService : Service() {
             return
         }
         val next = healthMonitor.onSample(sample)
-        if (next != previous) Log.i(TAG, "Stream health: $previous -> $next")
+        if (next != previous) {
+            Log.i(TAG, "Stream health: $previous -> $next")
+            diagnostics.record(diagnosticToken, DiagnosticEventId.HEALTH_TRANSITION,
+                "$previous -> $next", SystemClock.elapsedRealtime())
+        }
     }
 
     private fun stopBroadcast(message: String = "Broadcast stopped") {
@@ -549,6 +594,9 @@ class RtmpBroadcastService : Service() {
             Log.w(TAG, "Error while releasing RTMP stream", error)
         }
         releaseProjection()
+        diagnostics.record(diagnosticToken, DiagnosticEventId.STREAM_STOPPED,
+            message, SystemClock.elapsedRealtime())
+        logTerminalReport(message)
         publishState(false, message, 0L)
         // Halt only after the final status event so it preserves the
         // terminal health verdict (e.g. STALLED) instead of UNKNOWN.
@@ -702,9 +750,34 @@ class RtmpBroadcastService : Service() {
         // (or the last live state when the system kills an active session)
         // instead of UNKNOWN. Same message scope as before; only the health
         // extra keeps its terminal value.
-        publishState(false, "Broadcast service stopped", 0L)
+        val destroyMessage = "Broadcast service stopped"
+        diagnostics.record(diagnosticToken, DiagnosticEventId.SERVICE_DESTROYED,
+            destroyMessage, SystemClock.elapsedRealtime())
+        logTerminalReport(destroyMessage)
+        publishState(false, destroyMessage, 0L)
         healthMonitor.onStopped()
         super.onDestroy()
+    }
+
+    /**
+     * Log the concise terminal session report. Observational only: runs
+     * after the teardown above, and a reporting failure can never affect
+     * the terminal state already being published.
+     */
+    private fun logTerminalReport(reason: String) {
+        if (!diagnostics.hasSession) return
+        try {
+            Log.i(TAG, "Session report:\n" + diagnostics.terminalReport(
+                reason = reason,
+                endMs = SystemClock.elapsedRealtime(),
+                phase = recoveryDriver.state.phase,
+                health = healthMonitor.state,
+                attemptsUsed = recoveryDriver.state.attemptsUsed,
+                staleDropped = callbackRouter.staleDropped
+            ))
+        } catch (_: Exception) {
+            // Diagnostics must never break teardown.
+        }
     }
 
     companion object {
