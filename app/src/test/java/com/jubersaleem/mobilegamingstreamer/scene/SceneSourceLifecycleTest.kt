@@ -8,7 +8,7 @@ import org.junit.Test
 /**
  * Deterministic tests for the H0 source lifecycle machine. Every test drives
  * the real [SceneSourceLifecycle] — no Android resources, no threads, no
- * sleeps. The [exhaustiveTransitionTable] sweep pins all 25 cells of the
+ * sleeps. The [exhaustiveTransitionTable] sweep pins all 30 cells of the
  * state/event matrix documented on the machine.
  */
 class SceneSourceLifecycleTest {
@@ -141,6 +141,10 @@ class SceneSourceLifecycleTest {
         failed.start()
         failed.onStartFailure()
         assertFalse(failed.onStartFailure())
+        // REVOKED: bound to a dead token, not starting.
+        val revoked = lifecycleIn(SceneSourceState.REVOKED)
+        assertFalse(revoked.onStartFailure())
+        assertEquals(SceneSourceState.REVOKED, revoked.state)
         // RELEASED: gone.
         val released = SceneSourceLifecycle()
         released.release()
@@ -175,23 +179,40 @@ class SceneSourceLifecycleTest {
     }
 
     @Test
-    fun revocationFromStartedStopsAndAllowsRestart() {
+    fun revocationFromStartedRevokesAndBlocksRestart() {
         val lifecycle = SceneSourceLifecycle()
         lifecycle.start()
         assertTrue(lifecycle.onProjectionRevoked())
-        assertEquals(SceneSourceState.STOPPED, lifecycle.state)
-        assertTrue(lifecycle.start())
-        assertEquals(SceneSourceState.STARTED, lifecycle.state)
+        assertEquals(SceneSourceState.REVOKED, lifecycle.state)
+        // A revoked instance must never restart: recovery is release and
+        // recreate with a fresh projection.
+        assertFalse(lifecycle.start())
+        assertFalse(lifecycle.start())
+        assertEquals(SceneSourceState.REVOKED, lifecycle.state)
     }
 
     @Test
-    fun revocationFromStoppedIdempotent() {
+    fun revocationFromStoppedRevokes() {
+        // A stopped instance is still bound to its (now dead) projection
+        // session: staying STOPPED would allow start() to re-acquire with a
+        // dead token, so revocation moves it to REVOKED too.
         val lifecycle = SceneSourceLifecycle()
         lifecycle.start()
         lifecycle.stop()
         assertTrue(lifecycle.onProjectionRevoked())
+        assertEquals(SceneSourceState.REVOKED, lifecycle.state)
+        assertFalse(lifecycle.start())
+        assertEquals(SceneSourceState.REVOKED, lifecycle.state)
+    }
+
+    @Test
+    fun repeatedRevocationIdempotent() {
+        val lifecycle = SceneSourceLifecycle()
+        lifecycle.start()
         assertTrue(lifecycle.onProjectionRevoked())
-        assertEquals(SceneSourceState.STOPPED, lifecycle.state)
+        assertTrue(lifecycle.onProjectionRevoked())
+        assertTrue(lifecycle.onProjectionRevoked())
+        assertEquals(SceneSourceState.REVOKED, lifecycle.state)
     }
 
     @Test
@@ -206,6 +227,20 @@ class SceneSourceLifecycleTest {
         released.release()
         assertFalse(released.onProjectionRevoked())
         assertEquals(SceneSourceState.RELEASED, released.state)
+    }
+
+    @Test
+    fun stopAfterRevocationRejected() {
+        val lifecycle = lifecycleIn(SceneSourceState.REVOKED)
+        assertFalse(lifecycle.stop())
+        assertEquals(SceneSourceState.REVOKED, lifecycle.state)
+    }
+
+    @Test
+    fun releaseFromRevoked() {
+        val lifecycle = lifecycleIn(SceneSourceState.REVOKED)
+        assertTrue(lifecycle.release())
+        assertEquals(SceneSourceState.RELEASED, lifecycle.state)
     }
 
     /**
@@ -228,14 +263,14 @@ class SceneSourceLifecycleTest {
                 "stop" to Cell(true, SceneSourceState.STOPPED),
                 "release" to Cell(true, SceneSourceState.RELEASED),
                 "failure" to Cell(true, SceneSourceState.FAILED),
-                "revoked" to Cell(true, SceneSourceState.STOPPED)
+                "revoked" to Cell(true, SceneSourceState.REVOKED)
             ),
             SceneSourceState.STOPPED to mapOf(
                 "start" to Cell(true, SceneSourceState.STARTED),
                 "stop" to Cell(true, SceneSourceState.STOPPED),
                 "release" to Cell(true, SceneSourceState.RELEASED),
                 "failure" to Cell(false, SceneSourceState.STOPPED),
-                "revoked" to Cell(true, SceneSourceState.STOPPED)
+                "revoked" to Cell(true, SceneSourceState.REVOKED)
             ),
             SceneSourceState.FAILED to mapOf(
                 "start" to Cell(false, SceneSourceState.FAILED),
@@ -243,6 +278,13 @@ class SceneSourceLifecycleTest {
                 "release" to Cell(true, SceneSourceState.RELEASED),
                 "failure" to Cell(false, SceneSourceState.FAILED),
                 "revoked" to Cell(false, SceneSourceState.FAILED)
+            ),
+            SceneSourceState.REVOKED to mapOf(
+                "start" to Cell(false, SceneSourceState.REVOKED),
+                "stop" to Cell(false, SceneSourceState.REVOKED),
+                "release" to Cell(true, SceneSourceState.RELEASED),
+                "failure" to Cell(false, SceneSourceState.REVOKED),
+                "revoked" to Cell(true, SceneSourceState.REVOKED)
             ),
             SceneSourceState.RELEASED to mapOf(
                 "start" to Cell(false, SceneSourceState.RELEASED),
@@ -281,6 +323,10 @@ class SceneSourceLifecycleTest {
             SceneSourceState.FAILED -> {
                 lifecycle.start()
                 lifecycle.onStartFailure()
+            }
+            SceneSourceState.REVOKED -> {
+                lifecycle.start()
+                lifecycle.onProjectionRevoked()
             }
             SceneSourceState.RELEASED -> lifecycle.release()
         }
