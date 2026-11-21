@@ -90,6 +90,9 @@ jobs:
       - name: Run unit tests and Android lint
         run: gradle :app:testDebugUnitTest :app:lintDebug --no-daemon
 
+      - name: Verify unit tests executed
+        run: python3 scripts/check_test_results.py app/build/test-results/testDebugUnitTest
+
       - name: Build Android release APK
         run: gradle :app:assembleRelease --no-daemon
 
