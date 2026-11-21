@@ -2,12 +2,19 @@ package com.jubersaleem.mobilegamingstreamer.scene
 
 /**
  * Lifecycle states for a future scene source (H1 custom VideoSource).
- * CREATED: constructed, never started. STARTED: producing (or attempting to
- * produce). STOPPED: cleanly stopped, restartable. FAILED: startup failed;
- * release and recreate — never restart. REVOKED: the projection session died
- * (revocation); the instance is bound to a dead token, so it is terminal
- * except for release — never restartable. RELEASED: terminal; the source is
- * gone.
+ * CREATED: constructed with its projection session, never started. STARTED:
+ * producing (or attempting to produce). STOPPED: cleanly stopped, restartable.
+ * FAILED: startup failed; release and recreate — never restart. REVOKED: the
+ * projection session died (revocation); the instance is bound to a dead token,
+ * so it is terminal except for release — never restartable. RELEASED:
+ * terminal; the source is gone.
+ *
+ * CREATED-is-bound is established by the inspected architecture, not assumed:
+ * the VideoSource seam binds the MediaProjection at construction
+ * (ScreenSource's constructor parameter, stored into the static holder in its
+ * init block — exact RootEncoder 2.8.1 source), and the service builds the
+ * projection before constructing the source. A revoked-but-never-started
+ * instance therefore holds a dead token and must never start.
  */
 internal enum class SceneSourceState {
     CREATED,
@@ -32,17 +39,21 @@ internal enum class SceneSourceState {
  * | stop()               | false, CREATED | true, STOPPED  | true, STOPPED  | false, FAILED  | false, REVOKED | false    |
  * | release()            | true, RELEASED | true, RELEASED | true, RELEASED | true, RELEASED | true, RELEASED | true (*) |
  * | onStartFailure()     | false, CREATED | true, FAILED   | false, STOPPED | false, FAILED  | false, REVOKED | false    |
- * | onProjectionRevoked()| false, CREATED | true, REVOKED  | true, REVOKED  | false, FAILED  | true, REVOKED  | false    |
+ * | onProjectionRevoked()| true, REVOKED  | true, REVOKED  | true, REVOKED  | false, FAILED  | true, REVOKED  | false    |
  *
  * (*) release() from RELEASED stays RELEASED and returns true (idempotent).
  *
  * Deliberate decisions, pinned by tests:
  * - Restart from STOPPED is allowed (clean stop leaves nothing poisoned).
- * - Revocation is NOT an ordinary stop: it moves STARTED and STOPPED to the
- *   distinct REVOKED state. A revoked instance is bound to a dead projection
- *   token, so start() from REVOKED is rejected — recovery requires release
- *   and a fresh instance with a fresh projection (matching the service,
- *   which tears down and rebuilds the whole session on revocation).
+ * - Revocation is NOT an ordinary stop: it moves CREATED, STARTED and STOPPED
+ *   to the distinct REVOKED state. A revoked instance is bound to a dead
+ *   projection token, so start() from REVOKED is rejected — recovery requires
+ *   release and a fresh instance with a fresh projection (matching the
+ *   service, which tears down and rebuilds the whole session on revocation,
+ *   even if revocation arrives before anything started).
+ * - A CREATED instance is revoked too, not left startable: construction binds
+ *   the projection (see the enum KDoc), so a revoked CREATED holds a dead
+ *   token and start() would acquire against it.
  * - A STOPPED instance is revoked too, not left STOPPED: leaving it STOPPED
  *   would allow start() to re-acquire with the dead token.
  * - Repeated revocation is idempotent (true, stays REVOKED): re-delivery of
@@ -138,19 +149,18 @@ internal class SceneSourceLifecycle {
     }
 
     /**
-     * External projection-revocation event: STARTED/STOPPED -> REVOKED. The
-     * instance is bound to a dead projection token and can never start
-     * again; release and recreate with a fresh projection. Idempotent on
-     * REVOKED; false (no change) from CREATED, FAILED or RELEASED.
+     * External projection-revocation event: CREATED/STARTED/STOPPED -> REVOKED.
+     * The instance is bound to a dead projection token and can never start;
+     * release and recreate with a fresh projection. Idempotent on REVOKED;
+     * false (no change) from FAILED or RELEASED.
      */
     fun onProjectionRevoked(): Boolean {
         return when (state) {
-            SceneSourceState.STARTED, SceneSourceState.STOPPED -> {
+            SceneSourceState.CREATED, SceneSourceState.STARTED, SceneSourceState.STOPPED -> {
                 state = SceneSourceState.REVOKED
                 true
             }
             SceneSourceState.REVOKED -> true
-            SceneSourceState.CREATED,
             SceneSourceState.FAILED,
             SceneSourceState.RELEASED -> false
         }

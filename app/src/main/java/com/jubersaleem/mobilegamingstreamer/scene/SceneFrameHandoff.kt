@@ -10,8 +10,9 @@ package com.jubersaleem.mobilegamingstreamer.scene
  * teardown. These primitives fix those semantics in unit-tested code now, so
  * the H2 Android/GL adapter implements policy instead of inventing it:
  * - [SceneFrameMetadata]: frame identity (sequence + capture timestamp).
- * - [SceneFrameWindow]: bounded in-flight slots with drop-newest backpressure
- *   and exact accepted/dropped accounting.
+ * - [SceneFrameWindow]: bounded in-flight slots with drop-newest backpressure,
+ *   exact accepted/dropped accounting, and single-use completion handles.
+ * - [SceneFrameCompletion]: unforgeable, owner-bound, single-use slot token.
  * - [SceneReleaseGuard]: exactly-once teardown execution.
  *
  * Deliberately NOT here: frame payloads (pixels/textures/buffers need Android
@@ -32,23 +33,64 @@ internal data class SceneFrameMetadata(val sequence: Long, val timestampNs: Long
     val isValid: Boolean get() = sequence >= 0L && timestampNs >= 0L
 }
 
-/** Outcome of offering one frame to a [SceneFrameWindow]. */
-internal enum class SceneFrameOfferResult {
-    ACCEPTED,
-    DROPPED
+/**
+ * Single-use completion handle for one accepted frame. Each accepted offer
+ * mints exactly one handle; each handle releases its slot at most once.
+ *
+ * Accidental reuse is prevented structurally, not by convention:
+ * - Unforgeable: the constructor is private; only [SceneFrameWindow.offer]
+ *   mints handles, and dropped offers receive null instead of a handle.
+ * - Owner-bound: a handle releases a slot only when presented to the window
+ *   that minted it (referential check — a foreign handle is inert).
+ * - Single-use: a consumed flag makes double completion return false without
+ *   touching capacity, so completing one frame can never release another's.
+ * - No integer ids: there is no id space to wrap, collide, or ABA-reuse, and
+ *   no window-side per-frame registry — a handle's one Boolean lives exactly
+ *   as long as the caller-held handle itself, so no state lingers after
+ *   completion and nothing is retained per frame by the window.
+ */
+internal class SceneFrameCompletion private constructor(
+    private val owner: SceneFrameWindow
+) {
+    private var consumed = false
+
+    /**
+     * Releases this handle's slot iff [window] is the minting owner and this
+     * handle is unconsumed. Marks consumed on success. Never throws.
+     */
+    internal fun consumeBy(window: SceneFrameWindow): Boolean {
+        if (window !== owner || consumed) return false
+        consumed = true
+        return true
+    }
+
+    companion object {
+        internal fun mint(owner: SceneFrameWindow): SceneFrameCompletion =
+            SceneFrameCompletion(owner)
+    }
 }
 
 /**
  * Bounded in-flight frame slots with deterministic drop-newest backpressure.
  *
  * Policy, pinned by tests:
- * - An invalid frame is DROPPED and counted without consuming a slot:
+ * - [offer] returns a [SceneFrameCompletion] for an accepted frame, null for
+ *   a dropped one. Dropped offers never receive handles.
+ * - An invalid frame is dropped and counted without consuming a slot:
  *   corrupt or undated frames never occupy handoff capacity.
- * - A valid frame with a free slot is ACCEPTED (slot consumed).
- * - A valid frame with no free slot is DROPPED and counted (drop-newest:
+ * - A valid frame with a free slot is accepted (slot consumed, handle minted).
+ * - A valid frame with no free slot is dropped and counted (drop-newest:
  *   the in-flight frames the consumer may be reading are never evicted).
- * - [complete] releases one slot; completing with zero in-flight is a caller
- *   bug (returns false, no state change).
+ * - [complete] releases exactly one slot and returns true only for a live
+ *   (unconsumed, owner-minted) handle. Null, foreign, or already-consumed
+ *   handles return false with no state change — duplicate, unknown, or
+ *   invalid completions can never release another frame's slot, and
+ *   rejections never pollute the accepted/dropped counts.
+ *
+ * Structural invariant: each live handle owns exactly one in-flight slot
+ * (mint and slot-consumption are paired in [offer]; consumption and
+ * slot-release are paired in [complete]), so the counter can neither exceed
+ * capacity nor drop below zero through this API — no defensive guard needed.
  *
  * Drop-oldest is deliberately NOT offered: evicting an in-flight frame needs
  * consumer cooperation (eviction signaling), which does not exist at H1. If
@@ -75,26 +117,32 @@ internal class SceneFrameWindow(capacity: Int) {
     var droppedCount: Long = 0L
         private set
 
-    fun offer(frame: SceneFrameMetadata): SceneFrameOfferResult {
+    /**
+     * Offers one frame. Returns a completion handle when accepted, null when
+     * dropped (invalid frame or window full); every drop is counted.
+     */
+    fun offer(frame: SceneFrameMetadata): SceneFrameCompletion? {
         if (!frame.isValid) {
             droppedCount += 1
-            return SceneFrameOfferResult.DROPPED
+            return null
         }
         if (inFlight >= capacity) {
             droppedCount += 1
-            return SceneFrameOfferResult.DROPPED
+            return null
         }
         inFlight += 1
         acceptedCount += 1
-        return SceneFrameOfferResult.ACCEPTED
+        return SceneFrameCompletion.mint(this)
     }
 
     /**
-     * Releases one in-flight slot. True on release; false (no state change)
-     * when nothing is in flight.
+     * Releases the slot owned by [handle]. True on release; false (no state
+     * change, counts untouched) for null, foreign, or already-consumed
+     * handles.
      */
-    fun complete(): Boolean {
-        if (inFlight <= 0) return false
+    fun complete(handle: SceneFrameCompletion?): Boolean {
+        if (handle == null) return false
+        if (!handle.consumeBy(this)) return false
         inFlight -= 1
         return true
     }

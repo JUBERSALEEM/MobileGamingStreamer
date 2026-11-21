@@ -2,6 +2,8 @@ package com.jubersaleem.mobilegamingstreamer.scene
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -57,21 +59,23 @@ class SceneFrameHandoffTest {
     }
 
     @Test
-    fun windowAcceptsUpToCapacity() {
+    fun windowAcceptsUpToCapacityReturnsHandles() {
         val window = SceneFrameWindow(2)
-        assertEquals(SceneFrameOfferResult.ACCEPTED, window.offer(SceneFrameMetadata(1L, 10L)))
-        assertEquals(SceneFrameOfferResult.ACCEPTED, window.offer(SceneFrameMetadata(2L, 20L)))
+        val first = window.offer(SceneFrameMetadata(1L, 10L))
+        val second = window.offer(SceneFrameMetadata(2L, 20L))
+        assertNotNull(first)
+        assertNotNull(second)
         assertEquals(2, window.inFlight)
         assertEquals(2L, window.acceptedCount)
         assertEquals(0L, window.droppedCount)
     }
 
     @Test
-    fun windowDropsWhenFull() {
+    fun windowDropsWhenFullReturnsNull() {
         val window = SceneFrameWindow(1)
-        assertEquals(SceneFrameOfferResult.ACCEPTED, window.offer(SceneFrameMetadata(1L, 10L)))
-        assertEquals(SceneFrameOfferResult.DROPPED, window.offer(SceneFrameMetadata(2L, 20L)))
-        assertEquals(SceneFrameOfferResult.DROPPED, window.offer(SceneFrameMetadata(3L, 30L)))
+        assertNotNull(window.offer(SceneFrameMetadata(1L, 10L)))
+        assertNull(window.offer(SceneFrameMetadata(2L, 20L)))
+        assertNull(window.offer(SceneFrameMetadata(3L, 30L)))
         assertEquals(1, window.inFlight)
         assertEquals(1L, window.acceptedCount)
         assertEquals(2L, window.droppedCount)
@@ -80,49 +84,158 @@ class SceneFrameHandoffTest {
     @Test
     fun windowDropsInvalidFrameWithoutConsumingSlot() {
         val window = SceneFrameWindow(1)
-        assertEquals(SceneFrameOfferResult.DROPPED, window.offer(SceneFrameMetadata(-1L, 10L)))
+        assertNull(window.offer(SceneFrameMetadata(-1L, 10L)))
         assertEquals(0, window.inFlight)
         assertEquals(0L, window.acceptedCount)
         assertEquals(1L, window.droppedCount)
         // The slot is still free for a valid frame.
-        assertEquals(SceneFrameOfferResult.ACCEPTED, window.offer(SceneFrameMetadata(1L, 10L)))
+        assertNotNull(window.offer(SceneFrameMetadata(1L, 10L)))
         assertEquals(1, window.inFlight)
     }
 
+    // ---- Completion handles ----
+
     @Test
-    fun windowCompleteReleasesSlot() {
-        val window = SceneFrameWindow(1)
-        window.offer(SceneFrameMetadata(1L, 10L))
-        assertTrue(window.complete())
+    fun windowHandlesUsableIndependentlyOutOfOrder() {
+        val window = SceneFrameWindow(2)
+        val first = window.offer(SceneFrameMetadata(1L, 10L))!!
+        val second = window.offer(SceneFrameMetadata(2L, 20L))!!
+        assertTrue(window.complete(second))
+        assertEquals(1, window.inFlight)
+        assertTrue(window.complete(first))
         assertEquals(0, window.inFlight)
-        assertEquals(SceneFrameOfferResult.ACCEPTED, window.offer(SceneFrameMetadata(2L, 20L)))
         assertEquals(2L, window.acceptedCount)
         assertEquals(0L, window.droppedCount)
     }
 
     @Test
-    fun windowCompleteOnEmptyFalse() {
+    fun windowCompleteReleasesExactlyOneSlot() {
         val window = SceneFrameWindow(2)
-        assertFalse(window.complete())
+        val first = window.offer(SceneFrameMetadata(1L, 10L))!!
+        val second = window.offer(SceneFrameMetadata(2L, 20L))!!
+        assertTrue(window.complete(first))
+        assertEquals(1, window.inFlight)
+        // Exactly one slot freed: one re-offer fits, the next does not.
+        assertNotNull(window.offer(SceneFrameMetadata(3L, 30L)))
+        assertNull(window.offer(SceneFrameMetadata(4L, 40L)))
+        assertEquals(2, window.inFlight)
+        assertTrue(window.complete(second))
+        assertEquals(1, window.inFlight)
+    }
+
+    @Test
+    fun windowDoubleCompleteReleasesOnce() {
+        val window = SceneFrameWindow(2)
+        val first = window.offer(SceneFrameMetadata(1L, 10L))!!
+        val second = window.offer(SceneFrameMetadata(2L, 20L))!!
+        assertTrue(window.complete(first))
+        // Second completion of the same handle must not release another slot.
+        assertFalse(window.complete(first))
+        assertFalse(window.complete(first))
+        assertEquals(1, window.inFlight)
+        // The other frame's slot is intact and still completes exactly once.
+        assertTrue(window.complete(second))
+        assertEquals(0, window.inFlight)
+        assertEquals(2L, window.acceptedCount)
+        assertEquals(0L, window.droppedCount)
+    }
+
+    @Test
+    fun windowRejectsForeignHandle() {
+        val window = SceneFrameWindow(1)
+        val other = SceneFrameWindow(1)
+        val foreign = other.offer(SceneFrameMetadata(100L, 1L))!!
+        assertFalse(window.complete(foreign))
+        // Neither window changed: no slot moved, counts untouched.
         assertEquals(0, window.inFlight)
         assertEquals(0L, window.acceptedCount)
         assertEquals(0L, window.droppedCount)
-        window.offer(SceneFrameMetadata(1L, 10L))
-        assertTrue(window.complete())
-        assertFalse(window.complete())
+        assertEquals(1, other.inFlight)
+        assertEquals(1L, other.acceptedCount)
+        assertEquals(0L, other.droppedCount)
+        // The foreign handle still belongs to its owner.
+        assertTrue(other.complete(foreign))
+        assertEquals(0, other.inFlight)
+    }
+
+    @Test
+    fun windowRejectsNullCompletion() {
+        val window = SceneFrameWindow(1)
+        assertFalse(window.complete(null))
+        assertEquals(0, window.inFlight)
+        assertEquals(0L, window.acceptedCount)
+        assertEquals(0L, window.droppedCount)
+        val handle = window.offer(SceneFrameMetadata(1L, 10L))!!
+        assertFalse(window.complete(null))
+        assertEquals(1, window.inFlight)
+        assertTrue(window.complete(handle))
+        assertEquals(0, window.inFlight)
+    }
+
+    @Test
+    fun windowCapacityNeverExceeded() {
+        val window = SceneFrameWindow(3)
+        fun checkBound(tag: String) {
+            assertTrue(tag, window.inFlight >= 0)
+            assertTrue(tag, window.inFlight <= 3)
+        }
+        // Over-offer: exactly capacity handles, no more slots.
+        val first = (1L..6L).map { window.offer(SceneFrameMetadata(it, it * 10L)) }
+        checkBound("over-offer")
+        assertEquals(3, first.count { it != null })
+        var nonNullOffers = 3
+        var nullOffers = 3
+        first.filterNotNull().forEachIndexed { index, handle ->
+            assertTrue("complete#$index", window.complete(handle))
+            checkBound("complete#$index")
+        }
+        assertEquals(0, window.inFlight)
+        // Interleaved offers, completions, and rejections: bound holds.
+        val other = SceneFrameWindow(1)
+        val foreign = other.offer(SceneFrameMetadata(100L, 1L))!!
+        val live = mutableListOf<SceneFrameCompletion>()
+        repeat(20) { step ->
+            val offered = window.offer(SceneFrameMetadata(1000L + step, step.toLong()))
+            if (offered != null) {
+                live.add(offered)
+                nonNullOffers += 1
+            } else {
+                nullOffers += 1
+            }
+            checkBound("offer#$step")
+            if (step % 3 == 0 && live.isNotEmpty()) {
+                assertTrue("step#$step", window.complete(live.removeAt(0)))
+                checkBound("complete#$step")
+            }
+            if (step % 5 == 0) {
+                val droppedBefore = window.droppedCount
+                assertFalse("foreign#$step", window.complete(foreign))
+                assertFalse("null#$step", window.complete(null))
+                // Rejections never pollute accounting.
+                assertEquals(droppedBefore, window.droppedCount)
+                checkBound("reject#$step")
+            }
+        }
+        assertEquals(nonNullOffers.toLong(), window.acceptedCount)
+        assertEquals(nullOffers.toLong(), window.droppedCount)
+        // Drain: every live handle completes exactly once.
+        live.forEach { assertTrue(window.complete(it)) }
+        assertEquals(0, window.inFlight)
+        live.forEach { assertFalse(window.complete(it)) }
         assertEquals(0, window.inFlight)
     }
 
     @Test
     fun windowMixedSequenceCountsExact() {
         val window = SceneFrameWindow(2)
-        window.offer(SceneFrameMetadata(1L, 10L)) // accepted (1 in flight)
-        window.offer(SceneFrameMetadata(2L, 20L)) // accepted (2 in flight)
-        window.offer(SceneFrameMetadata(3L, 30L)) // dropped (full)
-        window.offer(SceneFrameMetadata(-9L, 40L)) // dropped (invalid)
-        assertTrue(window.complete()) // 1 in flight
-        window.offer(SceneFrameMetadata(4L, 50L)) // accepted (2 in flight)
-        window.offer(SceneFrameMetadata(5L, 60L)) // dropped (full)
+        val first = window.offer(SceneFrameMetadata(1L, 10L)) // accepted
+        assertNotNull(first)
+        assertNotNull(window.offer(SceneFrameMetadata(2L, 20L))) // accepted
+        assertNull(window.offer(SceneFrameMetadata(3L, 30L))) // dropped (full)
+        assertNull(window.offer(SceneFrameMetadata(-9L, 40L))) // dropped (invalid)
+        assertTrue(window.complete(first)) // 1 in flight
+        assertNotNull(window.offer(SceneFrameMetadata(4L, 50L))) // accepted
+        assertNull(window.offer(SceneFrameMetadata(5L, 60L))) // dropped (full)
         assertEquals(2, window.inFlight)
         assertEquals(3L, window.acceptedCount)
         assertEquals(3L, window.droppedCount)
@@ -132,10 +245,15 @@ class SceneFrameHandoffTest {
     fun windowDeterministic() {
         fun runScript(): SceneFrameWindow {
             val window = SceneFrameWindow(3)
-            for (seq in 1L..10L) window.offer(SceneFrameMetadata(seq, seq * 10L))
-            repeat(2) { window.complete() }
-            window.offer(SceneFrameMetadata(11L, 110L))
-            window.offer(SceneFrameMetadata(-1L, 120L))
+            val live = mutableListOf<SceneFrameCompletion>()
+            for (seq in 1L..10L) {
+                val handle = window.offer(SceneFrameMetadata(seq, seq * 10L))
+                if (handle != null) live.add(handle)
+            }
+            assertTrue(window.complete(live[0]))
+            assertTrue(window.complete(live[1]))
+            assertTrue(window.offer(SceneFrameMetadata(11L, 110L)) != null)
+            assertTrue(window.offer(SceneFrameMetadata(-1L, 120L)) == null)
             return window
         }
         val first = runScript()
@@ -146,6 +264,17 @@ class SceneFrameHandoffTest {
         assertEquals(2, first.inFlight)
         assertEquals(4L, first.acceptedCount)
         assertEquals(8L, first.droppedCount)
+    }
+
+    @Test
+    fun windowInvalidMetadataNeverConsumesCapacity() {
+        val window = SceneFrameWindow(2)
+        repeat(5) { step ->
+            assertNull(window.offer(SceneFrameMetadata(-1L - step, step.toLong())))
+        }
+        assertEquals(0, window.inFlight)
+        assertEquals(0L, window.acceptedCount)
+        assertEquals(5L, window.droppedCount)
     }
 
     // ---- Release guard ----

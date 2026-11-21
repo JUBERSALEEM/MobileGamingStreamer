@@ -179,6 +179,21 @@ class SceneSourceLifecycleTest {
     }
 
     @Test
+    fun revocationFromCreatedRevokesAndBlocksStart() {
+        // CREATED is already bound to its projection session (bound at
+        // construction per the VideoSource seam), so a revoked CREATED holds
+        // a dead token and must never start.
+        val lifecycle = SceneSourceLifecycle()
+        assertTrue(lifecycle.onProjectionRevoked())
+        assertEquals(SceneSourceState.REVOKED, lifecycle.state)
+        // Repeated revocation stays idempotent on this path too.
+        assertTrue(lifecycle.onProjectionRevoked())
+        assertFalse(lifecycle.start())
+        assertFalse(lifecycle.start())
+        assertEquals(SceneSourceState.REVOKED, lifecycle.state)
+    }
+
+    @Test
     fun revocationFromStartedRevokesAndBlocksRestart() {
         val lifecycle = SceneSourceLifecycle()
         lifecycle.start()
@@ -216,8 +231,7 @@ class SceneSourceLifecycleTest {
     }
 
     @Test
-    fun revocationFromCreatedFailedReleasedRejected() {
-        assertFalse(SceneSourceLifecycle().onProjectionRevoked())
+    fun revocationFromFailedReleasedRejected() {
         val failed = SceneSourceLifecycle()
         failed.start()
         failed.onStartFailure()
@@ -241,6 +255,9 @@ class SceneSourceLifecycleTest {
         val lifecycle = lifecycleIn(SceneSourceState.REVOKED)
         assertTrue(lifecycle.release())
         assertEquals(SceneSourceState.RELEASED, lifecycle.state)
+        // Release stays idempotent on the revoked path.
+        assertTrue(lifecycle.release())
+        assertEquals(SceneSourceState.RELEASED, lifecycle.state)
     }
 
     /**
@@ -256,7 +273,7 @@ class SceneSourceLifecycleTest {
                 "stop" to Cell(false, SceneSourceState.CREATED),
                 "release" to Cell(true, SceneSourceState.RELEASED),
                 "failure" to Cell(false, SceneSourceState.CREATED),
-                "revoked" to Cell(false, SceneSourceState.CREATED)
+                "revoked" to Cell(true, SceneSourceState.REVOKED)
             ),
             SceneSourceState.STARTED to mapOf(
                 "start" to Cell(false, SceneSourceState.STARTED),
