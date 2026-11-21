@@ -36,6 +36,9 @@ import com.pedro.encoder.input.sources.audio.MicrophoneSource
 import com.jubersaleem.mobilegamingstreamer.capture.VideoSourceFallbackPolicy
 import com.jubersaleem.mobilegamingstreamer.scene.SceneConfigCodec
 import com.jubersaleem.mobilegamingstreamer.scene.SceneSource
+import com.jubersaleem.mobilegamingstreamer.scene.SceneSwitchPlanner
+import com.jubersaleem.mobilegamingstreamer.scene.SwitchAction
+import com.jubersaleem.mobilegamingstreamer.scene.SwitchCurrent
 import com.pedro.encoder.input.sources.video.ScreenSource
 import com.pedro.encoder.input.sources.video.VideoSource
 import com.pedro.library.generic.GenericStream
@@ -43,6 +46,7 @@ import com.pedro.library.generic.GenericStream
 /** RTMP broadcast service with microphone audio and screen video. */
 class RtmpBroadcastService : Service() {
     private var display: GenericStream? = null
+    private var activeVideoSource: VideoSource? = null
     private var activeAudioSource: AudioSource? = null
     private var activeMicSource: Int = AudioRouteLabels.SOURCE_NONE
     private var activeHeadset: Boolean = false
@@ -180,6 +184,7 @@ class RtmpBroadcastService : Service() {
                 ACTION_STOP -> stopBroadcast()
                 ACTION_SET_BITRATE -> setBitrate(intent)
                 ACTION_SET_STREAM_AUDIO_MUTED -> setStreamAudioMuted(intent.getBooleanExtra(EXTRA_STREAM_AUDIO_MUTED, false))
+                ACTION_UPDATE_SCENE -> updateScene(intent?.getStringExtra(EXTRA_SCENE_CONFIG), null)
             }
         }
     }
@@ -191,6 +196,7 @@ class RtmpBroadcastService : Service() {
             addAction(ACTION_STOP)
             addAction(ACTION_SET_BITRATE)
             addAction(ACTION_SET_STREAM_AUDIO_MUTED)
+            addAction(ACTION_UPDATE_SCENE)
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(commandReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         else registerReceiver(commandReceiver, filter)
@@ -205,6 +211,7 @@ class RtmpBroadcastService : Service() {
             ACTION_STOP -> stopBroadcast()
             ACTION_SET_BITRATE -> intent?.let { setBitrate(it) }
             ACTION_SET_STREAM_AUDIO_MUTED -> intent?.let { setStreamAudioMuted(it.getBooleanExtra(EXTRA_STREAM_AUDIO_MUTED, false)) }
+            ACTION_UPDATE_SCENE -> updateScene(intent?.getStringExtra(EXTRA_SCENE_CONFIG), startId)
         }
         return START_NOT_STICKY
     }
@@ -217,6 +224,84 @@ class RtmpBroadcastService : Service() {
             update("LIVE • Target bitrate " + (requested / 1000) + " kbps")
         } else {
             publishState(false, BroadcastStatusMessages.NO_ACTIVE_STREAM, 0L)
+        }
+    }
+
+    /**
+     * H8 live scene switch (main thread — commands already serialize).
+     * [newConfig] is the requested scene encoding, absent/null = "no
+     * scene". The planner decides; this executes: IN_PLACE rebuilds
+     * overlays inside the running scene source, swaps go through the
+     * library `changeVideoSource` (its failure path restarts the old
+     * source automatically — verified in RootEncoder 2.8.1
+     * `StreamBase`). Capture, the encoder, RTMP, and audio are never
+     * touched here: no `prepare`, no `release`, no projection handling.
+     * [startId] is the `onStartCommand` id when delivered via
+     * `startService` (null from the command receiver): with no session
+     * the service stops itself instead of idling.
+     */
+    private fun updateScene(newConfig: String?, startId: Int?) {
+        val active = display
+        if (active == null) {
+            publishState(false, BroadcastStatusMessages.NO_ACTIVE_STREAM, 0L)
+            if (startId != null) stopSelf(startId)
+            return
+        }
+        val current = when (val source = activeVideoSource) {
+            is SceneSource -> {
+                val applied = source.currentSceneConfig
+                if (applied != null) SwitchCurrent.SceneConfig(applied) else SwitchCurrent.SceneLegacy
+            }
+            else -> SwitchCurrent.Screen
+        }
+        when (SceneSwitchPlanner.resolve(current, newConfig)) {
+            SwitchAction.NOOP -> { }
+            SwitchAction.IN_PLACE -> {
+                val source = activeVideoSource as? SceneSource
+                if (source != null && source.updateScene(newConfig)) {
+                    update(BroadcastStatusMessages.SCENE_SWITCHED)
+                } else {
+                    update(BroadcastStatusMessages.SCENE_SWITCH_FAILED)
+                }
+            }
+            SwitchAction.SWAP_TO_SCENE -> {
+                val projection = activeProjection
+                if (projection == null) {
+                    update(BroadcastStatusMessages.SCENE_SWITCH_FAILED)
+                    return
+                }
+                swapVideoSource(active, SceneSource(this, projection, sceneConfig = newConfig))
+            }
+            SwitchAction.SWAP_TO_SCREEN -> {
+                val projection = activeProjection
+                if (projection == null) {
+                    update(BroadcastStatusMessages.SCENE_SWITCH_FAILED)
+                    return
+                }
+                swapVideoSource(active, ScreenSource(this, projection))
+            }
+        }
+    }
+
+    /**
+     * Library source swap with retention. On success the new source is
+     * retained (the old one was released by the library); on throw the
+     * library already rolled back to the old running source, so only
+     * the unused replacement is released and the retained source stays
+     * untouched. Never throws outward.
+     */
+    private fun swapVideoSource(active: GenericStream, replacement: VideoSource) {
+        try {
+            active.changeVideoSource(replacement)
+            activeVideoSource = replacement
+            update(BroadcastStatusMessages.SCENE_SWITCHED)
+        } catch (_: Exception) {
+            try {
+                replacement.release()
+            } catch (_: Exception) {
+            }
+            Log.w(TAG, "live scene swap failed; previous source retained")
+            update(BroadcastStatusMessages.SCENE_SWITCH_FAILED)
         }
     }
 
@@ -248,6 +333,7 @@ class RtmpBroadcastService : Service() {
         display?.let { previous ->
             try { previous.release() } catch (_: Exception) { }
             display = null
+            activeVideoSource = null
         }
         releaseProjection()
         stopping = false
@@ -351,6 +437,7 @@ class RtmpBroadcastService : Service() {
                     lastBitrate = 0L
                     val disconnected = display
                     display = null
+                    activeVideoSource = null
                     activeAudioSource = null
                     activeMicSource = AudioRouteLabels.SOURCE_NONE
                     activeHeadset = false
@@ -547,6 +634,7 @@ class RtmpBroadcastService : Service() {
             // Keep static-screen fallback frames on the same cadence as the selected stream profile.
             stream.getGlInterface().setForceRender(true, activeProfile.fps)
             display = stream
+            activeVideoSource = videoSource
             stream.setFpsListener { outputFps ->
                 handler.post {
                     // Encoder-output cadence for health sampling, tracked in
@@ -653,6 +741,7 @@ class RtmpBroadcastService : Service() {
         lastBitrate = 0L
         val active = display
         display = null
+        activeVideoSource = null
         activeAudioSource = null
         activeMicSource = AudioRouteLabels.SOURCE_NONE
         activeHeadset = false
@@ -806,6 +895,7 @@ class RtmpBroadcastService : Service() {
         lastBitrate = 0L
         try { display?.release() } catch (_: Exception) { }
         display = null
+        activeVideoSource = null
         activeAudioSource = null
         activeMicSource = AudioRouteLabels.SOURCE_NONE
         activeHeadset = false
@@ -858,6 +948,7 @@ class RtmpBroadcastService : Service() {
         const val ACTION_STOP = "com.jubersaleem.mobilegamingstreamer.action.STOP_RTMP"
         const val ACTION_SET_BITRATE = "com.jubersaleem.mobilegamingstreamer.action.SET_BITRATE"
         const val ACTION_SET_STREAM_AUDIO_MUTED = "com.jubersaleem.mobilegamingstreamer.action.SET_STREAM_AUDIO_MUTED"
+        const val ACTION_UPDATE_SCENE = "com.jubersaleem.mobilegamingstreamer.action.UPDATE_SCENE"
         const val EXTRA_STREAM_AUDIO_MUTED = "stream_audio_muted"
         const val KEY_STREAM_AUDIO_MUTED = "stream_audio_muted"
 
@@ -871,6 +962,12 @@ class RtmpBroadcastService : Service() {
         fun requestStreamAudioMuted(context: Context, muted: Boolean) {
             context.sendBroadcast(Intent(ACTION_SET_STREAM_AUDIO_MUTED).setPackage(context.packageName)
                 .putExtra(EXTRA_STREAM_AUDIO_MUTED, muted))
+        }
+        /** H8 push: absent extra = "no scene" (swap home to passthrough). */
+        fun requestSceneUpdate(context: Context, sceneConfig: String?) {
+            val update = Intent(ACTION_UPDATE_SCENE).setPackage(context.packageName)
+            if (sceneConfig != null) update.putExtra(EXTRA_SCENE_CONFIG, sceneConfig)
+            context.sendBroadcast(update)
         }
         const val EXTRA_BITRATE = "video_bitrate"
         const val EXTRA_RESULT_CODE = "result_code"

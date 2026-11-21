@@ -67,6 +67,8 @@ object BroadcastStatusMessages {
     const val CONNECTED_WAITING = "Connected • Waiting for outgoing video"
     const val STOPPED = "Broadcast stopped"
     const val SERVICE_STOPPED = "Broadcast service stopped"
+    const val SCENE_SWITCHED = "Scene switched"
+    const val SCENE_SWITCH_FAILED = "Scene switch failed • Keeping current video"
     const val UNABLE_TO_START_PREFIX = "Unable to start: "
 
     /** Transitional encoder-ready line with the active profile label. */

@@ -34,7 +34,8 @@ class StudioStatusTest {
             BroadcastStatusMessages.AUTH_FAILED,
             BroadcastStatusMessages.INVALID_SETUP,
             BroadcastStatusMessages.UNABLE_TO_START_PREFIX + "encoder error",
-            BroadcastStatusMessages.STALL_STOP
+            BroadcastStatusMessages.STALL_STOP,
+            BroadcastStatusMessages.SCENE_SWITCH_FAILED
         ).forEach { message ->
             assertEquals(message, BroadcastStatusKind.ERROR, classifyBroadcastStatus(message, active = false, starting = false))
         }
@@ -48,6 +49,7 @@ class StudioStatusTest {
         listOf(
             "Ready to stream",
             BroadcastStatusMessages.STOPPED,
+            BroadcastStatusMessages.SCENE_SWITCHED,
             "Capture stopped",
             "Broadcast setup ready",
             "Previous broadcast ended unexpectedly"

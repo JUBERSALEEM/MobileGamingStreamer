@@ -1,5 +1,6 @@
 package com.jubersaleem.mobilegamingstreamer.capture
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -260,6 +261,68 @@ class StreamingLifecycleStructureTest {
         assertTrue(act.contains("width.coerceIn(0, MAX_STYLE_BORDER_PX)"))
         assertTrue(act.contains("radius.coerceIn(0, MAX_STYLE_RADIUS_PX)"))
         assertTrue(act.contains("offset.coerceIn(0, MAX_STYLE_SHADOW_PX)"))
+    }
+
+    @Test
+    fun liveSwitchRetainsAndDispatchesVideoSource() {
+        // H8: the service retains the running video source beside the
+        // stream (set together, nulled at all four display-null sites),
+        // plans through the pure matrix, and swaps via the library.
+        val svc = service()
+        assertTrue(svc.contains("activeVideoSource = videoSource"))
+        assertEquals(4, svc.split("activeVideoSource = null").size - 1)
+        assertTrue(svc.contains("ACTION_UPDATE_SCENE"))
+        assertTrue(svc.contains("SceneSwitchPlanner.resolve"))
+        val swap = functionBody(svc, "fun swapVideoSource")
+        assertTrue(swap.contains("changeVideoSource(replacement)"))
+        assertTrue(swap.contains("activeVideoSource = replacement"))
+        assertTrue(swap.contains("replacement.release()"))
+    }
+
+    @Test
+    fun sceneSourceUpdateRebuildsWithRollback() {
+        // H8: only live config-started sources update in place, through
+        // the GL rebuild; failure best-effort restores the last stack.
+        val src = sceneSource()
+        assertTrue(src.contains("fun updateScene"))
+        assertTrue(src.contains("controller.state != SceneSourceState.STARTED"))
+        assertTrue(src.contains("gl.rebuildOverlays(specs)"))
+        assertTrue(src.contains("gl.rebuildOverlays(previous)"))
+    }
+
+    @Test
+    fun rebuildReleasesBeforeBuilding() {
+        // H8: rebuild = release + build on the GL thread; the public
+        // entry maps build throws to false, never outward.
+        val gl = compositorGl()
+        val core = functionBody(gl, "fun rebuildOverlaysLocked")
+        val release = core.indexOf("releaseOverlaySlotsLocked()")
+        val build = core.indexOf("buildSlotsLocked(")
+        assertTrue(release >= 0 && build > release)
+        val entry = functionBody(gl, "fun rebuildOverlays(")
+        assertTrue(entry.contains("rebuildOverlaysLocked(specs)"))
+        assertTrue(entry.contains("catch (_: Throwable)"))
+    }
+
+    @Test
+    fun imageLayersSurviveBuildFilter() {
+        // H6 GL init dropped every image layer through a text.isBlank()
+        // gate (image specs carry empty text by construction); the H8
+        // shared build filters TEXT blankness only.
+        val gl = compositorGl()
+        assertFalse(gl.contains("spec.text.isBlank()) continue"))
+        val build = functionBody(gl, "fun buildSlotsLocked")
+        assertTrue(build.contains("it.kind != SceneLayerKind.TEXT || it.text.isNotBlank()"))
+    }
+
+    @Test
+    fun useWhileStreamingPushesSceneUpdate() {
+        // H8: USE persists and, while streaming, pushes the fresh active
+        // encoding (or none) to the service update action.
+        val body = functionBody(activity(), "onActiveScene")
+        assertTrue(body.contains("requestSceneUpdate"))
+        assertTrue(body.contains("broadcastActive || broadcastStarting"))
+        assertTrue(body.contains("activeSceneEncoding(scenes, activeSceneId)"))
     }
 
     @Test

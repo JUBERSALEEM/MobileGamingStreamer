@@ -216,6 +216,28 @@ internal class SceneCompositorGL(
         glHandler = null
     }
 
+    /**
+     * H8 live rebuild: replaces the overlay stack with [specs] on the
+     * running GL thread. Any thread; rendezvous with timeout. Returns
+     * false (never throws) when the thread is gone, the rendezvous
+     * times out, or the build fails — frames and rebuilds share the GL
+     * handler queue, so no frame can draw a half-built stack. On build
+     * failure the old slots are already released (clean passthrough);
+     * the caller best-effort restores the previous stack.
+     */
+    fun rebuildOverlays(specs: List<SceneOverlaySpec>): Boolean {
+        var ok = false
+        val ran = runOnGlThread(GL_TEARDOWN_TIMEOUT_MS) {
+            ok = try {
+                rebuildOverlaysLocked(specs)
+                true
+            } catch (_: Throwable) {
+                false
+            }
+        }
+        return ran && ok
+    }
+
     /** Exposes the GL handler for VD/projection callbacks (cf. ScreenSource). */
     val handlerForCallbacks: Handler?
         get() = glHandler
@@ -406,26 +428,7 @@ internal class SceneCompositorGL(
         // Overlay slots die first (reverse of creation), inside the same
         // EGL step that owns the OES program — see the teardown-order
         // contract pinned in SceneCompositorControllerTest.
-        for (index in 0 until overlaySlotCount) {
-            val slot = overlaySlots[index]
-            try {
-                if (slot.textureId != 0) GLES20.glDeleteTextures(1, intArrayOf(slot.textureId), 0)
-            } catch (_: Exception) {
-            }
-            slot.textureId = 0
-            try {
-                slot.bitmap?.recycle()
-            } catch (_: Exception) {
-            }
-            slot.bitmap = null
-            slot.quadBuffer = null
-        }
-        overlaySlotCount = 0
-        try {
-            if (overlayProgram != 0) GLES20.glDeleteProgram(overlayProgram)
-        } catch (_: Exception) {
-        }
-        overlayProgram = 0
+        releaseOverlaySlotsLocked()
         try {
             if (program != 0) GLES20.glDeleteProgram(program)
         } catch (_: Exception) {
@@ -500,22 +503,30 @@ internal class SceneCompositorGL(
     }
 
     /**
-     * H4 overlay-stack setup (GL thread, inside init latch): build specs
-     * from requested content, measure, resolve the stack, then raster once
-     * and upload once per layer and build the shared blend program. No-op
-     * when no overlay was requested (passthrough). Throws loudly on any
-     * failure — a half-built stack never reaches the frame path.
+     * H4 overlay-stack setup (GL thread, inside init latch): builds the
+     * requested specs (H5 editor list or the legacy fixed two-string
+     * mapping) then delegates to [buildSlotsLocked]. No-op when no
+     * overlay was requested (passthrough). Throws loudly on any failure
+     * — a half-built stack never reaches the frame path.
      */
     private fun initOverlayStackLocked() {
+        val editorSpecs = sceneLayers
+        if (editorSpecs != null) {
+            // H5 scene path: validated specs from the editor
+            // (service-mapped through H4 `of()`); filtering, resolve,
+            // and upload all live in buildSlotsLocked, shared with H8
+            // live rebuild.
+            buildSlotsLocked(editorSpecs)
+            return
+        }
+        // Legacy H4 path (fixed two-string mapping): primary text
+        // top-left above passthrough, second text bottom-left above that.
         val outW = layout.outputWidth
         val outH = layout.outputHeight
         val margin = SceneTextLayerLayout.marginPxFor(outH)
-        val textSizePx = SceneTextLayerLayout.textSizePxFor(outH)
         val requests = mutableListOf<SceneOverlaySpec>()
-        val contents = mutableListOf<String>()
         fun request(id: String, content: String?, anchor: SceneOverlayAnchor, z: Int) {
             if (content.isNullOrBlank()) return
-            contents.add(content)
             requests.add(
                 SceneOverlaySpec.of(
                     id = id,
@@ -528,24 +539,67 @@ internal class SceneCompositorGL(
                 ) ?: throw RuntimeException("overlay spec invalid: $id")
             )
         }
-        // H5 scene path: validated specs from the editor (service-mapped
-        // through H4 `of()`); disabled or blank layers are skipped, and
-        // `resolve` re-checks the cap, duplicates, and room at runtime, so
-        // a corrupt list fails loudly into the existing start-failure path.
-        // Legacy H4 path (fixed two-string mapping) is untouched.
-        val editorSpecs = sceneLayers
-        if (editorSpecs != null) {
-            for (spec in editorSpecs) {
-                if (!spec.enabled || spec.text.isBlank()) continue
-                contents.add(spec.text)
-                requests.add(spec)
+        request(TEXT_LAYER_ID, textContent, SceneOverlayAnchor.TOP_LEFT, 1)
+        request(SUBTEXT_LAYER_ID, subtextContent, SceneOverlayAnchor.BOTTOM_LEFT, 2)
+        if (requests.isEmpty()) return
+        buildSlotsLocked(requests)
+    }
+
+    /**
+     * H8 live rebuild core (GL thread only): drops every overlay slot,
+     * then builds [specs] from scratch. Frames and rebuilds share the
+     * GL handler queue, so no frame can draw a half-built stack. Throws
+     * on build failure — the caller maps this to false, leaving clean
+     * passthrough (slots already released) until the next rebuild.
+     */
+    private fun rebuildOverlaysLocked(specs: List<SceneOverlaySpec>) {
+        releaseOverlaySlotsLocked()
+        buildSlotsLocked(specs)
+    }
+
+    /**
+     * Deletes overlay textures/bitmaps and the shared blend program
+     * (GL thread only). Best-effort and exception-isolated: shared by
+     * EGL teardown and H8 live rebuild.
+     */
+    private fun releaseOverlaySlotsLocked() {
+        for (index in 0 until overlaySlotCount) {
+            val slot = overlaySlots[index]
+            try {
+                if (slot.textureId != 0) GLES20.glDeleteTextures(1, intArrayOf(slot.textureId), 0)
+            } catch (_: Exception) {
             }
-        } else {
-            // Fixed H4 mapping: primary text top-left above passthrough,
-            // second text bottom-left above that.
-            request(TEXT_LAYER_ID, textContent, SceneOverlayAnchor.TOP_LEFT, 1)
-            request(SUBTEXT_LAYER_ID, subtextContent, SceneOverlayAnchor.BOTTOM_LEFT, 2)
+            slot.textureId = 0
+            try {
+                slot.bitmap?.recycle()
+            } catch (_: Exception) {
+            }
+            slot.bitmap = null
+            slot.quadBuffer = null
         }
+        overlaySlotCount = 0
+        try {
+            if (overlayProgram != 0) GLES20.glDeleteProgram(overlayProgram)
+        } catch (_: Exception) {
+        }
+        overlayProgram = 0
+    }
+
+    /**
+     * Measures, resolves, rasters once and uploads once per layer, and
+     * builds the shared blend program (GL thread only). Disabled layers
+     * occupy no slot; blank TEXT layers carry no glyphs and are
+     * skipped. IMAGE layers carry empty text by construction and are
+     * never filtered here — a `text.isBlank()` gate would drop every
+     * image (the H6 GL path always skipped images through exactly that
+     * gate; fixed here for both init and rebuild). No-op when nothing
+     * remains (passthrough). Throws loudly on any failure.
+     */
+    private fun buildSlotsLocked(specs: List<SceneOverlaySpec>) {
+        val outW = layout.outputWidth
+        val outH = layout.outputHeight
+        val textSizePx = SceneTextLayerLayout.textSizePxFor(outH)
+        val requests = specs.filter { it.enabled && (it.kind != SceneLayerKind.TEXT || it.text.isNotBlank()) }
         if (requests.isEmpty()) return
         val paint = Paint().apply {
             isAntiAlias = true
@@ -556,11 +610,11 @@ internal class SceneCompositorGL(
         val bounds = Rect()
         val decodedPending = mutableListOf<Bitmap>()
         try {
-            val measured = requests.mapIndexedNotNull { index, spec ->
+            val measured = requests.mapNotNull { spec ->
                 if (spec.kind == SceneLayerKind.IMAGE) {
                     measureImageLocked(spec, outH, decodedPending)
                 } else {
-                    val content = contents[index]
+                    val content = spec.text
                     paint.getTextBounds(content, 0, content.length, bounds)
                     val styled = SceneLayerStyle.styledSize(
                         SceneSizePx(bounds.width(), bounds.height()),

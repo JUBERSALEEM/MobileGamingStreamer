@@ -343,6 +343,16 @@ class MainActivity : ComponentActivity() {
                             activeSceneId = id
                             editingSceneId = id
                             persistScenes()
+                            // H8 live switch: USE while streaming also
+                            // pushes the fresh active encoding (or none).
+                            // Courtesy gate — the service no-session
+                            // guard is authoritative.
+                            if (broadcastActive || broadcastStarting) {
+                                RtmpBroadcastService.requestSceneUpdate(
+                                    this@MainActivity,
+                                    SceneConfigCodec.activeSceneEncoding(scenes, activeSceneId)
+                                )
+                            }
                         },
                         onEditScene = { id -> editingSceneId = id },
                         onDuplicateScene = { id -> duplicateScene(id) },

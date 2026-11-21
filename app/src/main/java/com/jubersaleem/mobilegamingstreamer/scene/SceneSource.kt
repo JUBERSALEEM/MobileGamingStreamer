@@ -62,6 +62,14 @@ class SceneSource(
     private var virtualDisplay: VirtualDisplay? = null
     private var outputSurface: Surface? = null
     private var projectionCallback: MediaProjection.Callback? = null
+    // H8 live-switch state: only config-started sources update in place.
+    // `currentSceneConfig` is the last applied encoding (service compares
+    // through the planner); `lastSpecs` is the last good overlay list for
+    // best-effort rollback.
+    var currentSceneConfig: String? = null
+        private set
+    private var configStarted = false
+    private var lastSpecs: List<SceneOverlaySpec> = emptyList()
 
     override fun create(width: Int, height: Int, fps: Int, rotation: Int): Boolean {
         if (width <= 0 || height <= 0) {
@@ -124,6 +132,11 @@ class SceneSource(
                 input, null, gl.handlerForCallbacks
             ) ?: throw IllegalArgumentException("Failed to create scene virtual display")
             virtualDisplay = display
+            if (sceneConfig != null && editorSpecs.isNotEmpty()) {
+                configStarted = true
+                currentSceneConfig = sceneConfig
+                lastSpecs = editorSpecs
+            }
             // Sanitized: text length only, never content.
             Log.i(TAG, "started: ${activeLayout.displayWidth}x${activeLayout.displayHeight} dpi=$densityDpi" +
                 if (textContent.isNullOrBlank()) "" else " text=${textContent.length} chars" +
@@ -136,6 +149,34 @@ class SceneSource(
             teardown()
             throw error
         }
+    }
+
+    /**
+     * H8 in-place scene update: rebuilds overlays inside the running
+     * source (capture/encoder/RTMP/audio untouched). Service calls this
+     * only for the planner's IN_PLACE action; every gate below also
+     * rejects defensively. Returns false (never throws) when this
+     * source was not config-started, is not live, carries no live GL
+     * endpoint, or the new config has no streamable layer. On rebuild
+     * failure the previous stack is best-effort restored; if that also
+     * fails the source stays live on clean passthrough — never a
+     * half-built stack, never a dead source.
+     */
+    fun updateScene(newConfig: String?): Boolean {
+        if (!configStarted) return false
+        if (controller.state != SceneSourceState.STARTED) return false
+        val specs = SceneConfigCodec.streamableSpecs(newConfig)
+        if (specs.isEmpty()) return false
+        val gl = compositor ?: return false
+        if (gl.rebuildOverlays(specs)) {
+            currentSceneConfig = newConfig
+            lastSpecs = specs
+            Log.i(TAG, "scene updated: ${specs.size} layers")
+            return true
+        }
+        val previous = lastSpecs
+        if (previous.isNotEmpty()) gl.rebuildOverlays(previous)
+        return false
     }
 
     override fun stop() {
