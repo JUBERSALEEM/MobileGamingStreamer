@@ -51,9 +51,11 @@ validation.
 - Service: parses `scene_config` via the pure codec, maps through
   `SceneOverlaySpec.of` (H4 stays authoritative), drops invalid
   layers; empty → ScreenSource default + log; non-empty → SceneSource
-  with `sceneLayers`. Fallback retry preserves via `Intent(intent)`.
-- `SceneSource`/`SceneCompositorGL`: new optional `sceneLayers` path;
-  legacy two-string path untouched. GL measures each spec's text,
+  with the encoded config string (see note). Fallback retry strips
+  the config via `Intent(intent)` + `removeExtra`.
+- `SceneSource` takes the encoded config string, `SceneCompositorGL`
+  takes the decoded `sceneLayers` list; legacy two-string path
+  untouched. GL measures each spec's text,
   resolves via `SceneOverlayStack` (cap/dup/room re-checked at
   runtime), per-slot alpha honored (H4 uniform, previously fixed 1.0
   only for lack of config). Sanitized logs (counts/lengths only).
@@ -99,7 +101,7 @@ dependencies, C++/NDK.
    LIVE delivery.
 8. EDIT `capture/RtmpBroadcastService.kt` — `EXTRA_SCENE_CONFIG` read,
    validate, select source, sanitized log.
-9. EDIT `scene/SceneSource.kt` — `sceneLayers` param + forward + log.
+9. EDIT `scene/SceneSource.kt` — `sceneConfig` string param + decode + forward + log.
 10. EDIT `scene/SceneCompositorGL.kt` — spec-list init path (legacy
     two-string path untouched).
 11. NEW `scene/SceneConfigTest.kt` + `scene/ScenePreviewBoxesTest.kt`;
