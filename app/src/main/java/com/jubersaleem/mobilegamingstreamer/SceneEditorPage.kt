@@ -743,7 +743,7 @@ private fun ScaleModeRow(selected: SceneScaleMode, onSelect: (SceneScaleMode) ->
             ClayButton(
                 label = mode.name,
                 onClick = { onSelect(mode) },
-                style = if (mode == selected) ClayButtonStyle.Pressed else ClayButtonStyle.Raised
+                style = if (mode == selected) ClayButtonStyle.Inset else ClayButtonStyle.Raised
             )
         }
     }
@@ -837,7 +837,6 @@ private fun formatBytes(bytes: Long): String {
     val mb = kb / 1024.0
     if (mb < 1024) return "%.1f MB".format(mb)
     return "%.2f GB".format(mb / 1024.0)
-}
 }
 
 @Composable
