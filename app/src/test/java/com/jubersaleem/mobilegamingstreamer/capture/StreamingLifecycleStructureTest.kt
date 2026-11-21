@@ -33,6 +33,20 @@ class StreamingLifecycleStructureTest {
         return file.readText()
     }
 
+    /**
+     * Module-level files (Gradle runs with the module dir as CWD, the
+     * local harness from the repo root). Never silently passes.
+     */
+    private fun moduleFile(name: String): String {
+        val candidates = listOf(File("app/$name"), File(name))
+        val file = candidates.firstOrNull { it.isFile }
+            ?: throw AssertionError(
+                "lifecycle structure test cannot find $name " +
+                    "(tried ${candidates.joinToString()}); never silently pass"
+            )
+        return file.readText()
+    }
+
     private fun service(): String =
         source("java/com/jubersaleem/mobilegamingstreamer/capture/RtmpBroadcastService.kt")
 
@@ -378,6 +392,59 @@ class StreamingLifecycleStructureTest {
         assertTrue(preview.contains("LaunchedEffect"))
         assertTrue(preview.contains("delay(1_000L)"))
         assertTrue(preview.contains("SceneClockWidgets.formatElapsed"))
+    }
+
+    @Test
+    fun failStartReleasesInputEndpoint() {
+        // H10: init failure after input setup frees the input ST before
+        // EGL (the quitting thread strands anything later); the normal
+        // release path shares the same locked step.
+        val gl = compositorGl()
+        val fail = functionBody(gl, "fun failStart")
+        val input = fail.indexOf("releaseInputLocked()")
+        val egl = fail.indexOf("releaseEglLocked()")
+        assertTrue(input >= 0 && egl > input)
+        assertTrue(functionBody(gl, "fun releaseInput(").contains("releaseInputLocked()"))
+    }
+
+    @Test
+    fun framePathAllocatesNothingHeavy() {
+        // H10: per-frame code creates no bitmaps/canvases/paints/rects/
+        // buffers and uploads no textures (uploads happen at build and
+        // on the 1s widget tick only). The tiny frame metadata + the
+        // controller handle are the accepted per-frame allocs.
+        val gl = compositorGl()
+        for (marker in listOf("fun onFrameAvailable(", "fun drawFrameLocked(", "fun drawOverlaySlotLocked(")) {
+            val body = functionBody(gl, marker)
+            assertFalse(body.contains("Bitmap."))
+            assertFalse(body.contains("Canvas("))
+            assertFalse(body.contains("Paint("))
+            assertFalse(body.contains("Rect("))
+            assertFalse(body.contains("floatBufferOf("))
+            assertFalse(body.contains("texImage2D"))
+        }
+    }
+
+    @Test
+    fun previewThumbnailsNeverReloadPerTick() {
+        // H10: thumbnail bitmaps reload only when the measured set
+        // changes — the 1s widget tick recomposes glyphs, never bytes.
+        assertTrue(sceneEditor().contains("val imageById = remember(measured)"))
+    }
+
+    @Test
+    fun compatFloorStaysAt29() {
+        // H10: minSdk 29 is the floor java.time (26+) and
+        // ContentResolver.loadThumbnail (29) rely on.
+        assertTrue(moduleFile("build.gradle.kts").contains("minSdk = 29"))
+    }
+
+    @Test
+    fun apiGuardsPresent() {
+        // H10: the two SDK-33-gated call sites keep their guards
+        // (exported-receiver flag, typed parcelable overload).
+        assertEquals(2, service().split("SDK_INT >= 33").size - 1)
+        assertTrue(service().contains("RECEIVER_NOT_EXPORTED"))
     }
 
     @Test

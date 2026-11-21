@@ -159,7 +159,14 @@ internal class SceneCompositorGL(
     private fun failStart(cause: Throwable): Nothing {
         // Best-effort cleanup of partial GL state, then quit and rethrow the
         // original cause (never wrapped, never swallowed — fatals included).
-        runOnGlThread(GL_TEARDOWN_TIMEOUT_MS) { releaseEglLocked() }
+        // The input endpoint dies first when init failed after creating it
+        // (e.g. the overlay build threw): the thread quits below, so a
+        // later releaseInput could no longer rendezvous to free it (H10).
+        // No VD can be live here — start throws before VD creation.
+        runOnGlThread(GL_TEARDOWN_TIMEOUT_MS) {
+            releaseInputLocked()
+            releaseEglLocked()
+        }
         try {
             workerThread?.quitSafely()
         } catch (_: Exception) {
@@ -174,29 +181,36 @@ internal class SceneCompositorGL(
      * Any thread; rendezvous to the GL thread with timeout. Never throws.
      */
     fun releaseInput() {
-        runOnGlThread(GL_TEARDOWN_TIMEOUT_MS) {
-            try {
-                inputSurfaceTexture?.setOnFrameAvailableListener(null)
-            } catch (_: Exception) {
-            }
-            try {
-                glHandler?.removeCallbacksAndMessages(null)
-            } catch (_: Exception) {
-            }
-            try {
-                inputSurfaceTexture?.release()
-            } catch (e: Exception) {
-                Log.w(TAG, "input SurfaceTexture release failed", e)
-            }
-            inputSurfaceTexture = null
-            glReady = false
-        }
+        runOnGlThread(GL_TEARDOWN_TIMEOUT_MS) { releaseInputLocked() }
         try {
             inputSurface?.release()
         } catch (e: Exception) {
             Log.w(TAG, "input Surface release failed", e)
         }
         inputSurface = null
+    }
+
+    /**
+     * Releases the input endpoint on the GL thread (listener, queued
+     * callbacks, ST). Shared by [releaseInput] and [failStart]; the
+     * caller-thread input Surface release stays in [releaseInput].
+     */
+    private fun releaseInputLocked() {
+        try {
+            inputSurfaceTexture?.setOnFrameAvailableListener(null)
+        } catch (_: Exception) {
+        }
+        try {
+            glHandler?.removeCallbacksAndMessages(null)
+        } catch (_: Exception) {
+        }
+        try {
+            inputSurfaceTexture?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "input SurfaceTexture release failed", e)
+        }
+        inputSurfaceTexture = null
+        glReady = false
     }
 
     /**

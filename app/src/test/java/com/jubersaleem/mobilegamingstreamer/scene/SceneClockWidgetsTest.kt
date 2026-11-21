@@ -72,4 +72,18 @@ class SceneClockWidgetsTest {
         assertNull(SceneClockWidgets.tickDelayMs(0L, 0L))
         assertNull(SceneClockWidgets.tickDelayMs(0L, -5L))
     }
+
+    @Test
+    fun tickDelaySweepStaysInRange() {
+        // H10 soak: co-prime stepping across two minute-periods hits
+        // phases densely, including exact boundaries — always (0, P].
+        var now = 0L
+        while (now < 120_000L) {
+            val second = SceneClockWidgets.tickDelayMs(now, 1_000L)!!
+            assertTrue(second in 1..1_000L)
+            val minute = SceneClockWidgets.tickDelayMs(now, 60_000L)!!
+            assertTrue(minute in 1..60_000L)
+            now += 997L
+        }
+    }
 }
