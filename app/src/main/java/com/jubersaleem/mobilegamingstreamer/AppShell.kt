@@ -120,6 +120,13 @@ data class StudioActions(
     val onLayerMargin: (String, String, Int) -> Unit = { _, _, _ -> },
     val onLayerMaxWidth: (String, String, Int) -> Unit = { _, _, _ -> },
     val onLayerAlpha: (String, String, Float) -> Unit = { _, _, _ -> },
+    val onLayerTextColor: (String, String, Int) -> Unit = { _, _, _ -> },
+    val onLayerBackground: (String, String, Int?) -> Unit = { _, _, _ -> },
+    val onLayerBorderWidth: (String, String, Int) -> Unit = { _, _, _ -> },
+    val onLayerBorderColor: (String, String, Int) -> Unit = { _, _, _ -> },
+    val onLayerCornerRadius: (String, String, Int) -> Unit = { _, _, _ -> },
+    val onLayerShadowOffset: (String, String, Int) -> Unit = { _, _, _ -> },
+    val onLayerShadowColor: (String, String, Int) -> Unit = { _, _, _ -> },
     val onDismissSceneError: () -> Unit = {}
 )
 
@@ -282,6 +289,13 @@ fun StudioShell(state: StudioUiState, actions: StudioActions) {
                         onLayerMargin = actions.onLayerMargin,
                         onLayerMaxWidth = actions.onLayerMaxWidth,
                         onLayerAlpha = actions.onLayerAlpha,
+                        onLayerTextColor = actions.onLayerTextColor,
+                        onLayerBackground = actions.onLayerBackground,
+                        onLayerBorderWidth = actions.onLayerBorderWidth,
+                        onLayerBorderColor = actions.onLayerBorderColor,
+                        onLayerCornerRadius = actions.onLayerCornerRadius,
+                        onLayerShadowOffset = actions.onLayerShadowOffset,
+                        onLayerShadowColor = actions.onLayerShadowColor,
                         onDismissSceneError = actions.onDismissSceneError
                     )
                     "TOOLS" -> ToolsPage(

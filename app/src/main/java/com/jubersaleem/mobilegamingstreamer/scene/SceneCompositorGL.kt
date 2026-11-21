@@ -562,10 +562,14 @@ internal class SceneCompositorGL(
                 } else {
                     val content = contents[index]
                     paint.getTextBounds(content, 0, content.length, bounds)
+                    val styled = SceneLayerStyle.styledSize(
+                        SceneSizePx(bounds.width(), bounds.height()),
+                        spec.borderWidthPx, spec.shadowOffsetPx
+                    ) ?: throw RuntimeException("overlay styled size invalid: ${spec.id}")
                     MeasuredOverlay(
                         spec = spec,
                         content = content,
-                        measured = SceneSizePx(bounds.width(), bounds.height()),
+                        measured = styled,
                         offsetLeft = bounds.left,
                         offsetTop = bounds.top
                     )
@@ -594,13 +598,9 @@ internal class SceneCompositorGL(
                 // half-built slot on the frame path.
                 overlaySlotCount = slotIndex + 1
                 val bitmap = if (layer.decodedBitmap != null) {
-                    scaleImageForSlotLocked(layer.decodedBitmap, rect, decodedPending)
+                    composeImageBitmapLocked(layer.decodedBitmap, rect, layer.spec, decodedPending)
                 } else {
-                    Bitmap.createBitmap(rect.width, rect.height, Bitmap.Config.ARGB_8888).also { fresh ->
-                        Canvas(fresh).drawText(
-                            layer.content, -layer.offsetLeft.toFloat(), -layer.offsetTop.toFloat(), paint
-                        )
-                    }
+                    composeTextBitmapLocked(layer, rect, paint)
                 }
                 slot.bitmap = bitmap
                 GLES20.glGenTextures(1, textures, 0)
@@ -672,29 +672,111 @@ internal class SceneCompositorGL(
             Log.w(TAG, "overlay image unmeasurable, skipping: ${spec.id}")
             return null
         }
-        return MeasuredOverlay(spec, "", size, 0, 0, bitmap)
+        val styled = SceneLayerStyle.styledSize(size, spec.borderWidthPx, spec.shadowOffsetPx)
+            ?: throw RuntimeException("overlay styled size invalid: ${spec.id}")
+        return MeasuredOverlay(spec, "", styled, 0, 0, bitmap)
     }
 
     /**
-     * Scales a decoded image to the resolved rect exactly. Ownership of
-     * [src] transfers to the slot bitmap: the pre-scale original is
-     * recycled unless the scaler reused it (never double-owned), and it
-     * always leaves [decodedPending].
+     * H7 text slot bitmap: style underlay (shadow → background → border)
+     * then glyphs in the layer text color at the padding offset. The
+     * resolved rect may clip oversized content (same capping as H3–H6).
      */
-    private fun scaleImageForSlotLocked(
+    private fun composeTextBitmapLocked(
+        layer: MeasuredOverlay,
+        rect: SceneRectPx,
+        paint: Paint
+    ): Bitmap {
+        val spec = layer.spec
+        val bitmap = Bitmap.createBitmap(rect.width, rect.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawStyleUnderlayLocked(canvas, rect.width, rect.height, spec)
+        paint.color = spec.textColor
+        canvas.drawText(
+            layer.content,
+            -layer.offsetLeft.toFloat() + spec.borderWidthPx,
+            -layer.offsetTop.toFloat() + spec.borderWidthPx,
+            paint
+        )
+        return bitmap
+    }
+
+    /**
+     * H7 image slot bitmap: style underlay, then the decoded image scaled
+     * to the content box (rect minus padding, at least 1px; the canvas
+     * clips any overflow from resolve capping). Ownership of [src]
+     * transfers here: it leaves [decodedPending] and is recycled after
+     * drawing (the scaler temp too) — the composed bitmap is the only
+     * survivor, recycled by slot teardown.
+     */
+    private fun composeImageBitmapLocked(
         src: Bitmap,
         rect: SceneRectPx,
+        spec: SceneOverlaySpec,
         decodedPending: MutableList<Bitmap>
     ): Bitmap {
         decodedPending.remove(src)
-        val scaled = Bitmap.createScaledBitmap(src, rect.width, rect.height, true)
+        val contentW = (rect.width - spec.borderWidthPx * 2 - spec.shadowOffsetPx).coerceAtLeast(1)
+        val contentH = (rect.height - spec.borderWidthPx * 2 - spec.shadowOffsetPx).coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(rect.width, rect.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawStyleUnderlayLocked(canvas, rect.width, rect.height, spec)
+        val scaled = Bitmap.createScaledBitmap(src, contentW, contentH, true)
+        canvas.drawBitmap(scaled, spec.borderWidthPx.toFloat(), spec.borderWidthPx.toFloat(), null)
+        try {
+            scaled.recycle()
+        } catch (_: Throwable) {
+        }
         if (scaled !== src) {
             try {
                 src.recycle()
             } catch (_: Throwable) {
             }
         }
-        return scaled
+        return bitmap
+    }
+
+    /**
+     * Fixed style draw order (shared with the preview): offset shadow,
+     * background fill, border stroke. Zero-cost when unstyled (all
+     * widths zero, no background). Radius clamps to half the box.
+     */
+    private fun drawStyleUnderlayLocked(canvas: Canvas, width: Int, height: Int, spec: SceneOverlaySpec) {
+        val border = spec.borderWidthPx
+        val shadow = spec.shadowOffsetPx
+        if (shadow <= 0 && spec.backgroundColor == null && border <= 0) return
+        val radius = spec.cornerRadiusPx.toFloat().coerceAtMost(minOf(width, height).toFloat() / 2f)
+        val fill = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.FILL
+        }
+        if (shadow > 0) {
+            fill.color = spec.shadowColor
+            canvas.drawRoundRect(
+                shadow.toFloat(), shadow.toFloat(), width.toFloat(), height.toFloat(),
+                radius, radius, fill
+            )
+        }
+        if (spec.backgroundColor != null) {
+            fill.color = spec.backgroundColor
+            canvas.drawRoundRect(
+                0f, 0f, (width - shadow).toFloat(), (height - shadow).toFloat(),
+                radius, radius, fill
+            )
+        }
+        if (border > 0) {
+            val half = border.toFloat() / 2f
+            val stroke = Paint().apply {
+                isAntiAlias = true
+                style = Paint.Style.STROKE
+                strokeWidth = border.toFloat()
+                color = spec.borderColor
+            }
+            canvas.drawRoundRect(
+                half, half, (width - shadow).toFloat() - half, (height - shadow).toFloat() - half,
+                radius, radius, stroke
+            )
+        }
     }
 
     /**

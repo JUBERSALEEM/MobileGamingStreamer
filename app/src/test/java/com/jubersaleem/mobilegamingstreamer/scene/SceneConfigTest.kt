@@ -54,7 +54,7 @@ class SceneConfigTest {
     @Test
     fun decodeNeverThrowsOnGarbage() {
         val garbage = listOf(
-            null, "", "   ", "v3\nscene:a\tb", "v1", "v1\nbogus", "v2", "v2\nbogus",
+            null, "", "   ", "v4\nscene:a\tb", "v1", "v1\nbogus", "v2", "v2\nbogus", "v3", "v3\nbogus",
             "v1\nscene:onlyonefield", "v1\nscene:\t", "===",
             "\n===\n", "v1\nscene:a\tb\\"
         )
@@ -256,7 +256,7 @@ class SceneConfigTest {
     fun imageLayerRoundTripPreservesKindAndUri() {
         val original = scene(layers = listOf(layer(id = "t"), imageLayer()))
         val encoded = SceneConfigCodec.encodeScene(original)
-        assertTrue(encoded.startsWith("v2\n"))
+        assertTrue(encoded.startsWith("v3\n"))
         assertEquals(original, SceneConfigCodec.decodeScene(encoded))
     }
 
@@ -318,6 +318,104 @@ class SceneConfigTest {
         assertTrue(!isValidImageUri("notauri"))
         assertTrue(!isValidImageUri(""))
         assertTrue(!isValidImageUri(null))
+    }
+
+    // ---- H7 styling + codec v3 ----
+
+    private fun styledLayer() = StreamSceneLayer(
+        "s", "Hi", SceneOverlayAnchor.CENTER, 1, 27, 500, 0.9f, true,
+        SceneLayerKind.TEXT, null,
+        0xFFFF0000.toInt(), 0x80000000.toInt(), 4, 0xFF00FF00.toInt(),
+        12, 6, 0x66000000.toInt()
+    )
+
+    @Test
+    fun styledRoundTripPreservesStyle() {
+        val original = scene(layers = listOf(styledLayer(), imageLayer(id = "img")))
+        val encoded = SceneConfigCodec.encodeScene(original)
+        assertTrue(encoded.startsWith("v3\n"))
+        assertEquals(original, SceneConfigCodec.decodeScene(encoded))
+    }
+
+    @Test
+    fun v2LayersDecodeWithStyleDefaults() {
+        // H6 back-compat: v2 carries no style fields.
+        val decoded = SceneConfigCodec.decodeScene(
+            "v2\nscene:s\tS\n" +
+                "layer:t\tHi\tTOP_LEFT\t1\t8\t1920\t1\ttrue\tTEXT\t\n" +
+                "layer:i\t\tTOP_LEFT\t2\t8\t640\t1\ttrue\tIMAGE\tcontent://media/ok"
+        )!!
+        assertEquals(2, decoded.layers.size)
+        for (layer in decoded.layers) {
+            assertEquals(TEXT_COLOR_DEFAULT, layer.textColor)
+            assertTrue(layer.backgroundColor == null)
+            assertEquals(0, layer.borderWidthPx)
+            assertEquals(0, layer.cornerRadiusPx)
+            assertEquals(0, layer.shadowOffsetPx)
+        }
+        assertEquals(SceneLayerKind.IMAGE, decoded.layers[1].kind)
+    }
+
+    @Test
+    fun v1LayersDecodeWithStyleDefaults() {
+        val decoded = SceneConfigCodec.decodeScene(
+            "v1\nscene:s\tS\nlayer:t\tHi\tTOP_LEFT\t1\t8\t1920\t1\ttrue"
+        )!!
+        val layer = decoded.layers.single()
+        assertEquals(TEXT_COLOR_DEFAULT, layer.textColor)
+        assertTrue(layer.backgroundColor == null)
+        assertEquals(0, layer.borderWidthPx)
+        assertEquals(BORDER_COLOR_DEFAULT, layer.borderColor)
+        assertEquals(0, layer.cornerRadiusPx)
+        assertEquals(0, layer.shadowOffsetPx)
+        assertEquals(SHADOW_COLOR_DEFAULT, layer.shadowColor)
+    }
+
+    @Test
+    fun corruptStyleDropsLayer() {
+        val good = "layer:good\tHi\tTOP_LEFT\t1\t8\t500\t1\ttrue\tTEXT\t\t" +
+            "FFFFFFFF\t\t4\tFF00FF00\t12\t6\t66000000"
+        val lines = listOf(
+            good,
+            good.replace("FFFFFFFF", "NOTHEX"),
+            good.replace("\t\t4\t", "\t\t-1\t"),
+            good.replace("\t12\t", "\t257\t"),
+            good.replace("\t6\t", "\t100\t"),
+            good.replace("\t66000000", "\t"),
+            "layer:short\tHi\tTOP_LEFT\t1\t8\t500\t1\ttrue\tTEXT"
+        )
+        val v3 = SceneConfigCodec.decodeScene("v3\nscene:s\tS\n" + lines.joinToString("\n"))!!
+        assertEquals(listOf("good"), v3.layers.map { it.id })
+    }
+
+    @Test
+    fun versionFieldMismatchDropsLines() {
+        // v3-shaped lines under a v2 header want 10 fields: every line
+        // drops — header/field-count mismatch is structural, never a
+        // partial parse.
+        val line = "layer:good\tHi\tTOP_LEFT\t1\t8\t500\t1\ttrue\tTEXT\t\t" +
+            "FFFFFFFF\t\t4\tFF00FF00\t12\t6\t66000000"
+        val decoded = SceneConfigCodec.decodeScene("v2\nscene:s\tS\n" + line)
+        assertTrue(decoded != null)
+        assertTrue(decoded!!.layers.isEmpty())
+    }
+
+    @Test
+    fun styleValidationRejectsOutOfRange() {
+        fun spec(border: Int = 0, radius: Int = 0, shadow: Int = 0) =
+            SceneOverlaySpec.of(
+                "t", "Hi", SceneOverlayAnchor.TOP_LEFT, 1, 8, 500, 1f, true,
+                SceneLayerKind.TEXT, null, TEXT_COLOR_DEFAULT, null,
+                border, BORDER_COLOR_DEFAULT, radius, shadow, SHADOW_COLOR_DEFAULT
+            )
+        assertTrue(spec() != null)
+        assertTrue(spec(border = MAX_STYLE_BORDER_PX) != null)
+        assertTrue(spec(border = -1) == null)
+        assertTrue(spec(border = MAX_STYLE_BORDER_PX + 1) == null)
+        assertTrue(spec(radius = -1) == null)
+        assertTrue(spec(radius = MAX_STYLE_RADIUS_PX + 1) == null)
+        assertTrue(spec(shadow = -1) == null)
+        assertTrue(spec(shadow = MAX_STYLE_SHADOW_PX + 1) == null)
     }
 
     @Test

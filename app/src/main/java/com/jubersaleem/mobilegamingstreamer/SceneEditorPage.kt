@@ -4,6 +4,7 @@ import android.graphics.Paint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -35,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
@@ -48,6 +51,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_STATIC_OVERLAY_LAYERS
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_TEXT_LAYER_CHARS
+import com.jubersaleem.mobilegamingstreamer.scene.BORDER_COLOR_DEFAULT
+import com.jubersaleem.mobilegamingstreamer.scene.SHADOW_COLOR_DEFAULT
+import com.jubersaleem.mobilegamingstreamer.scene.TEXT_COLOR_DEFAULT
 import com.jubersaleem.mobilegamingstreamer.scene.SceneImageLayer
 import com.jubersaleem.mobilegamingstreamer.scene.SceneImageLoader
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerKind
@@ -66,9 +72,31 @@ internal const val SCENE_PREVIEW_HEIGHT_PX = 1080
 
 /** UI slider bounds (the pure codec/H4 validation backstop stays authoritative). */
 internal const val SCENE_IMAGE_DEFAULT_MAX_WIDTH_PX = 640
+internal const val SCENE_BORDER_MAX_UI_PX = 64
+internal const val SCENE_RADIUS_MAX_UI_PX = 64
+internal const val SCENE_SHADOW_MAX_UI_PX = 32
 internal const val SCENE_LAYER_MAX_MARGIN_UI_PX = 256
 internal const val SCENE_LAYER_MIN_MAX_WIDTH_UI_PX = 320
 internal const val SCENE_LAYER_MAX_MAX_WIDTH_UI_PX = 1920
+
+private val textColorSwatches = listOf(
+    0xFFFFFFFF.toInt(), 0xFF000000.toInt(), 0xFFFF5252.toInt(), 0xFFFF9800.toInt(),
+    0xFFFFEB3B.toInt(), 0xFF4CAF50.toInt(), 0xFF00BCD4.toInt(), 0xFF448AFF.toInt()
+)
+
+private val backgroundSwatches: List<Int?> = listOf(
+    null, 0xCC000000.toInt(), 0xB3FFFFFF.toInt(), 0xCCFF5252.toInt(),
+    0xCC448AFF.toInt(), 0xCC4CAF50.toInt()
+)
+
+private val borderColorSwatches = listOf(
+    0xFFFFFFFF.toInt(), 0xFF000000.toInt(), 0xFFFF5252.toInt(), 0xFFFF9800.toInt(),
+    0xFFFFEB3B.toInt(), 0xFF4CAF50.toInt(), 0xFF00BCD4.toInt(), 0xFF448AFF.toInt()
+)
+
+private val shadowColorSwatches = listOf(
+    0x99000000.toInt(), 0x66000000.toInt(), 0x66FFFFFF.toInt(), 0x99FF5252.toInt()
+)
 
 private val anchorLabels = mapOf(
     SceneOverlayAnchor.TOP_LEFT to "Top left",
@@ -107,6 +135,13 @@ fun SceneEditorPage(
     onLayerMargin: (String, String, Int) -> Unit,
     onLayerMaxWidth: (String, String, Int) -> Unit,
     onLayerAlpha: (String, String, Float) -> Unit,
+    onLayerTextColor: (String, String, Int) -> Unit,
+    onLayerBackground: (String, String, Int?) -> Unit,
+    onLayerBorderWidth: (String, String, Int) -> Unit,
+    onLayerBorderColor: (String, String, Int) -> Unit,
+    onLayerCornerRadius: (String, String, Int) -> Unit,
+    onLayerShadowOffset: (String, String, Int) -> Unit,
+    onLayerShadowColor: (String, String, Int) -> Unit,
     onDismissSceneError: () -> Unit
 ) {
     val p = LocalMgsPalette.current
@@ -178,7 +213,14 @@ fun SceneEditorPage(
                 onLayerAnchor = onLayerAnchor,
                 onLayerMargin = onLayerMargin,
                 onLayerMaxWidth = onLayerMaxWidth,
-                onLayerAlpha = onLayerAlpha
+                onLayerAlpha = onLayerAlpha,
+                onLayerTextColor = onLayerTextColor,
+                onLayerBackground = onLayerBackground,
+                onLayerBorderWidth = onLayerBorderWidth,
+                onLayerBorderColor = onLayerBorderColor,
+                onLayerCornerRadius = onLayerCornerRadius,
+                onLayerShadowOffset = onLayerShadowOffset,
+                onLayerShadowColor = onLayerShadowColor,
             )
         }
         Text(
@@ -213,7 +255,14 @@ private fun SceneCard(
     onLayerAnchor: (String, String, SceneOverlayAnchor) -> Unit,
     onLayerMargin: (String, String, Int) -> Unit,
     onLayerMaxWidth: (String, String, Int) -> Unit,
-    onLayerAlpha: (String, String, Float) -> Unit
+    onLayerAlpha: (String, String, Float) -> Unit,
+    onLayerTextColor: (String, String, Int) -> Unit,
+    onLayerBackground: (String, String, Int?) -> Unit,
+    onLayerBorderWidth: (String, String, Int) -> Unit,
+    onLayerBorderColor: (String, String, Int) -> Unit,
+    onLayerCornerRadius: (String, String, Int) -> Unit,
+    onLayerShadowOffset: (String, String, Int) -> Unit,
+    onLayerShadowColor: (String, String, Int) -> Unit,
 ) {
     val p = LocalMgsPalette.current
     val visibleCount = scene.layers.count { it.enabled }
@@ -271,7 +320,14 @@ private fun SceneCard(
                     onLayerAnchor = onLayerAnchor,
                     onLayerMargin = onLayerMargin,
                     onLayerMaxWidth = onLayerMaxWidth,
-                    onLayerAlpha = onLayerAlpha
+                    onLayerAlpha = onLayerAlpha,
+                    onLayerTextColor = onLayerTextColor,
+                    onLayerBackground = onLayerBackground,
+                    onLayerBorderWidth = onLayerBorderWidth,
+                    onLayerBorderColor = onLayerBorderColor,
+                    onLayerCornerRadius = onLayerCornerRadius,
+                    onLayerShadowOffset = onLayerShadowOffset,
+                    onLayerShadowColor = onLayerShadowColor,
                 )
             }
             ClayButtonRow {
@@ -326,7 +382,14 @@ private fun LayerListEditor(
     onLayerAnchor: (String, String, SceneOverlayAnchor) -> Unit,
     onLayerMargin: (String, String, Int) -> Unit,
     onLayerMaxWidth: (String, String, Int) -> Unit,
-    onLayerAlpha: (String, String, Float) -> Unit
+    onLayerAlpha: (String, String, Float) -> Unit,
+    onLayerTextColor: (String, String, Int) -> Unit,
+    onLayerBackground: (String, String, Int?) -> Unit,
+    onLayerBorderWidth: (String, String, Int) -> Unit,
+    onLayerBorderColor: (String, String, Int) -> Unit,
+    onLayerCornerRadius: (String, String, Int) -> Unit,
+    onLayerShadowOffset: (String, String, Int) -> Unit,
+    onLayerShadowColor: (String, String, Int) -> Unit,
 ) {
     val p = LocalMgsPalette.current
     val atCap = scene.layers.size >= MAX_STATIC_OVERLAY_LAYERS
@@ -390,7 +453,14 @@ private fun LayerListEditor(
                 onLayerAnchor = onLayerAnchor,
                 onLayerMargin = onLayerMargin,
                 onLayerMaxWidth = onLayerMaxWidth,
-                onLayerAlpha = onLayerAlpha
+                onLayerAlpha = onLayerAlpha,
+                onLayerTextColor = onLayerTextColor,
+                onLayerBackground = onLayerBackground,
+                onLayerBorderWidth = onLayerBorderWidth,
+                onLayerBorderColor = onLayerBorderColor,
+                onLayerCornerRadius = onLayerCornerRadius,
+                onLayerShadowOffset = onLayerShadowOffset,
+                onLayerShadowColor = onLayerShadowColor,
             )
         }
     }
@@ -412,7 +482,14 @@ private fun LayerRow(
     onLayerAnchor: (String, String, SceneOverlayAnchor) -> Unit,
     onLayerMargin: (String, String, Int) -> Unit,
     onLayerMaxWidth: (String, String, Int) -> Unit,
-    onLayerAlpha: (String, String, Float) -> Unit
+    onLayerAlpha: (String, String, Float) -> Unit,
+    onLayerTextColor: (String, String, Int) -> Unit,
+    onLayerBackground: (String, String, Int?) -> Unit,
+    onLayerBorderWidth: (String, String, Int) -> Unit,
+    onLayerBorderColor: (String, String, Int) -> Unit,
+    onLayerCornerRadius: (String, String, Int) -> Unit,
+    onLayerShadowOffset: (String, String, Int) -> Unit,
+    onLayerShadowColor: (String, String, Int) -> Unit,
 ) {
     val p = LocalMgsPalette.current
     Column(
@@ -525,6 +602,56 @@ private fun LayerRow(
                 steps = 19,
                 onChange = { onLayerAlpha(sceneId, layer.id, it) }
             )
+            if (layer.kind == SceneLayerKind.TEXT) {
+                StyleSwatchRow(
+                    title = "Text color",
+                    options = textColorSwatches,
+                    selected = layer.textColor,
+                    onSelect = { onLayerTextColor(sceneId, layer.id, it ?: TEXT_COLOR_DEFAULT) }
+                )
+            }
+            StyleSwatchRow(
+                title = "Background",
+                options = backgroundSwatches,
+                selected = layer.backgroundColor,
+                onSelect = { onLayerBackground(sceneId, layer.id, it) }
+            )
+            LayerSlider(
+                label = "Border width",
+                valueLabel = "${layer.borderWidthPx} px",
+                value = layer.borderWidthPx.toFloat().coerceIn(0f, SCENE_BORDER_MAX_UI_PX.toFloat()),
+                range = 0f..SCENE_BORDER_MAX_UI_PX.toFloat(),
+                steps = 15,
+                onChange = { onLayerBorderWidth(sceneId, layer.id, it.roundToInt()) }
+            )
+            StyleSwatchRow(
+                title = "Border color",
+                options = borderColorSwatches,
+                selected = layer.borderColor,
+                onSelect = { onLayerBorderColor(sceneId, layer.id, it ?: BORDER_COLOR_DEFAULT) }
+            )
+            LayerSlider(
+                label = "Corner radius",
+                valueLabel = "${layer.cornerRadiusPx} px",
+                value = layer.cornerRadiusPx.toFloat().coerceIn(0f, SCENE_RADIUS_MAX_UI_PX.toFloat()),
+                range = 0f..SCENE_RADIUS_MAX_UI_PX.toFloat(),
+                steps = 15,
+                onChange = { onLayerCornerRadius(sceneId, layer.id, it.roundToInt()) }
+            )
+            LayerSlider(
+                label = "Shadow offset",
+                valueLabel = "${layer.shadowOffsetPx} px",
+                value = layer.shadowOffsetPx.toFloat().coerceIn(0f, SCENE_SHADOW_MAX_UI_PX.toFloat()),
+                range = 0f..SCENE_SHADOW_MAX_UI_PX.toFloat(),
+                steps = 15,
+                onChange = { onLayerShadowOffset(sceneId, layer.id, it.roundToInt()) }
+            )
+            StyleSwatchRow(
+                title = "Shadow color",
+                options = shadowColorSwatches,
+                selected = layer.shadowColor,
+                onSelect = { onLayerShadowColor(sceneId, layer.id, it ?: SHADOW_COLOR_DEFAULT) }
+            )
         }
     }
 }
@@ -572,6 +699,55 @@ private fun ImageLayerThumbnail(imageUri: String?, onReplace: () -> Unit) {
             style = ClayButtonStyle.Raised,
             icon = Icons.Rounded.Edit
         )
+    }
+}
+
+@Composable
+private fun StyleSwatchRow(
+    title: String,
+    options: List<Int?>,
+    selected: Int?,
+    onSelect: (Int?) -> Unit
+) {
+    val p = LocalMgsPalette.current
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = title.uppercase(),
+            color = p.muted,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = 1.1.sp
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.forEach { color ->
+                val isSelected = color == selected
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .then(
+                            if (color == null) Modifier.background(p.warning.copy(alpha = 0.14f))
+                            else Modifier.background(Color(color))
+                        )
+                        .border(
+                            if (isSelected) 2.dp else 1.dp,
+                            if (isSelected) p.text else p.clayEdge.copy(alpha = 0.6f),
+                            RoundedCornerShape(10.dp)
+                        )
+                        .clickable { onSelect(color) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (color == null) {
+                        Text(
+                            text = "None",
+                            color = p.muted,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -637,11 +813,18 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
                     dims.widthPx, dims.heightPx, spec.maxWidthPx,
                     SCENE_PREVIEW_HEIGHT_PX - spec.marginPx * 2
                 ) ?: return@mapNotNull null
-                Triple(spec, size, "")
+                val styled = SceneLayerStyle.styledSize(
+                    size, spec.borderWidthPx, spec.shadowOffsetPx
+                ) ?: return@mapNotNull null
+                Triple(spec, styled, "")
             } else {
                 val bounds = android.graphics.Rect()
                 measurePaint.getTextBounds(layer.text, 0, layer.text.length, bounds)
-                Triple(spec, SceneSizePx(bounds.width(), bounds.height()), layer.text)
+                val size = SceneLayerStyle.styledSize(
+                    SceneSizePx(bounds.width(), bounds.height()),
+                    spec.borderWidthPx, spec.shadowOffsetPx
+                ) ?: return@mapNotNull null
+                Triple(spec, size, layer.text)
             }
         }
     }
@@ -656,6 +839,7 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
     }
     val textById = remember(measured) { measured.associate { it.first.id to it.third } }
     val kindById = remember(measured) { measured.associate { it.first.id to it.first.kind } }
+    val specById = remember(measured) { measured.associate { it.first.id to it.first } }
     val imageById = remember(measured) {
         measured.filter { it.first.kind == SceneLayerKind.IMAGE }.associate { triple ->
             val uri = triple.first.imageUri
@@ -699,11 +883,53 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
                         val bottom = box.bottom * size.height
                         val glyphs = textById[box.id].orEmpty()
                         if (box.enabled) {
-                            drawRect(
-                                color = Color.White.copy(alpha = 0.14f * box.alpha),
-                                topLeft = androidx.compose.ui.geometry.Offset(left, top),
-                                size = androidx.compose.ui.geometry.Size(right - left, bottom - top)
+                            val style = specById[box.id]
+                            val borderPx = (style?.borderWidthPx ?: 0) * scale
+                            val shadowPx = (style?.shadowOffsetPx ?: 0) * scale
+                            val radiusPx = CornerRadius(
+                                ((style?.cornerRadiusPx ?: 0) * scale).coerceAtMost(
+                                    minOf(right - left, bottom - top) / 2f
+                                )
                             )
+                            if (style != null && shadowPx > 0f) {
+                                drawRoundRect(
+                                    color = Color(style.shadowColor),
+                                    topLeft = androidx.compose.ui.geometry.Offset(left + shadowPx, top + shadowPx),
+                                    size = androidx.compose.ui.geometry.Size(right - left - shadowPx, bottom - top - shadowPx),
+                                    cornerRadius = radiusPx,
+                                    alpha = box.alpha
+                                )
+                            }
+                            val bg = style?.backgroundColor
+                            if (style != null && bg != null) {
+                                drawRoundRect(
+                                    color = Color(bg),
+                                    topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                                    size = androidx.compose.ui.geometry.Size(right - left - shadowPx, bottom - top - shadowPx),
+                                    cornerRadius = radiusPx,
+                                    alpha = box.alpha
+                                )
+                            }
+                            if (style != null && borderPx > 0f) {
+                                drawRoundRect(
+                                    color = Color(style.borderColor),
+                                    topLeft = androidx.compose.ui.geometry.Offset(left + borderPx / 2f, top + borderPx / 2f),
+                                    size = androidx.compose.ui.geometry.Size(
+                                        right - left - shadowPx - borderPx,
+                                        bottom - top - shadowPx - borderPx
+                                    ),
+                                    cornerRadius = radiusPx,
+                                    style = Stroke(width = borderPx),
+                                    alpha = box.alpha
+                                )
+                            }
+                            if (bg == null) {
+                                drawRect(
+                                    color = Color.White.copy(alpha = 0.14f * box.alpha),
+                                    topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                                    size = androidx.compose.ui.geometry.Size(right - left, bottom - top)
+                                )
+                            }
                             drawRect(
                                 color = Color.White.copy(alpha = 0.65f * box.alpha),
                                 topLeft = androidx.compose.ui.geometry.Offset(left, top),
@@ -715,20 +941,24 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
                                 if (image != null) {
                                     drawImage(
                                         image = image,
-                                        dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+                                        dstOffset = IntOffset(
+                                            (left + borderPx).roundToInt(),
+                                            (top + borderPx).roundToInt()
+                                        ),
                                         dstSize = IntSize(
-                                            (right - left).roundToInt().coerceAtLeast(1),
-                                            (bottom - top).roundToInt().coerceAtLeast(1)
+                                            (right - left - borderPx * 2f - shadowPx).roundToInt().coerceAtLeast(1),
+                                            (bottom - top - borderPx * 2f - shadowPx).roundToInt().coerceAtLeast(1)
                                         ),
                                         alpha = box.alpha
                                     )
                                 }
                             } else {
-                                drawPaint.color = android.graphics.Color.WHITE
+                                drawPaint.color = style?.textColor ?: android.graphics.Color.WHITE
                                 drawPaint.alpha = (box.alpha * 255f).roundToInt().coerceIn(0, 255)
                                 drawPaint.textSize = textSize * scale
                                 drawContext.canvas.nativeCanvas.drawText(
-                                    glyphs, left, bottom - drawPaint.descent(), drawPaint
+                                    glyphs, left + borderPx,
+                                    bottom - shadowPx - borderPx - drawPaint.descent(), drawPaint
                                 )
                             }
                         } else {

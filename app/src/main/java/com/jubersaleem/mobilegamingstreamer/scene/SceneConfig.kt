@@ -61,7 +61,14 @@ data class StreamSceneLayer(
     val alpha: Float,
     val enabled: Boolean = true,
     val kind: SceneLayerKind = SceneLayerKind.TEXT,
-    val imageUri: String? = null
+    val imageUri: String? = null,
+    val textColor: Int = TEXT_COLOR_DEFAULT,
+    val backgroundColor: Int? = null,
+    val borderWidthPx: Int = 0,
+    val borderColor: Int = BORDER_COLOR_DEFAULT,
+    val cornerRadiusPx: Int = 0,
+    val shadowOffsetPx: Int = 0,
+    val shadowColor: Int = SHADOW_COLOR_DEFAULT
 ) {
     /**
      * Validated H4 spec, or null when this layer cannot render. H4
@@ -78,7 +85,14 @@ data class StreamSceneLayer(
         alpha = alpha,
         enabled = enabled,
         kind = kind,
-        imageUri = imageUri
+        imageUri = imageUri,
+        textColor = textColor,
+        backgroundColor = backgroundColor,
+        borderWidthPx = borderWidthPx,
+        borderColor = borderColor,
+        cornerRadiusPx = cornerRadiusPx,
+        shadowOffsetPx = shadowOffsetPx,
+        shadowColor = shadowColor
     )
 }
 
@@ -109,18 +123,22 @@ data class StreamScene(
 }
 
 /**
- * Versioned text encoding for scenes and the scene store. Format v2:
+ * Versioned text encoding for scenes and the scene store. Format v3:
  * `scene:<id>\\t<name>` header line, then one `layer:` line per layer
- * with 10 tab-separated fields
+ * with 17 tab-separated fields
  * (id, text, ANCHOR, z, margin, maxWidth, alpha, enabled, KIND,
- * imageUri); store blocks joined by a lone `===` line. Tabs, newlines,
- * and backslashes inside free text are backslash-escaped, so the
- * framing can never be confused by user content. Decoding accepts v1
- * (8-field text-only layers) and v2; encoding always writes v2.
+ * imageUri, textColor, backgroundColor, borderWidth, borderColor,
+ * cornerRadius, shadowOffset, shadowColor); store blocks joined by a
+ * lone `===` line. Tabs, newlines, and backslashes inside free text
+ * are backslash-escaped, so the framing can never be confused by user
+ * content. Colors are 8-hex ARGB (empty = null background). Decoding
+ * accepts v1 (8-field text-only), v2 (10-field text/image), and v3;
+ * encoding always writes v3.
  */
 internal object SceneConfigCodec {
-    const val VERSION = "v2"
+    const val VERSION = "v3"
     private const val VERSION_V1 = "v1"
+    private const val VERSION_V2 = "v2"
     private const val SCENE_PREFIX = "scene:"
     private const val LAYER_PREFIX = "layer:"
     private const val BLOCK_SEPARATOR = "\n===\n"
@@ -184,7 +202,10 @@ internal object SceneConfigCodec {
                 LAYER_PREFIX + escape(layer.id) + "\t" + escape(layer.text) + "\t" +
                     layer.anchor.name + "\t" + layer.zOrder + "\t" + layer.marginPx + "\t" +
                     layer.maxWidthPx + "\t" + layer.alpha + "\t" + layer.enabled + "\t" +
-                    layer.kind.name + "\t" + escape(layer.imageUri ?: "")
+                    layer.kind.name + "\t" + escape(layer.imageUri ?: "") + "\t" +
+                    colorHex(layer.textColor) + "\t" + (layer.backgroundColor?.let { colorHex(it) } ?: "") + "\t" +
+                    layer.borderWidthPx + "\t" + colorHex(layer.borderColor) + "\t" +
+                    layer.cornerRadiusPx + "\t" + layer.shadowOffsetPx + "\t" + colorHex(layer.shadowColor)
             )
         }
         return VERSION + "\n" + lines.joinToString("\n")
@@ -194,8 +215,12 @@ internal object SceneConfigCodec {
         if (encoded == null) return null
         val lines = encoded.split("\n")
         if (lines.isEmpty()) return null
-        val legacy = lines[0] == VERSION_V1
-        if (!legacy && lines[0] != VERSION) return null
+        val version = when (lines[0]) {
+            VERSION_V1 -> 1
+            VERSION_V2 -> 2
+            VERSION -> 3
+            else -> return null
+        }
         if (lines.size < 2 || !lines[1].startsWith(SCENE_PREFIX)) return null
         val header = lines[1].removePrefix(SCENE_PREFIX).split("\t")
         if (header.size != 2) return null
@@ -206,7 +231,7 @@ internal object SceneConfigCodec {
         val seenLayerIds = mutableSetOf<String>()
         for (line in lines.drop(2)) {
             if (!line.startsWith(LAYER_PREFIX)) continue // Forward-compatible: ignore unknown lines.
-            val layer = decodeLayer(line.removePrefix(LAYER_PREFIX), legacy) ?: continue
+            val layer = decodeLayer(line.removePrefix(LAYER_PREFIX), version) ?: continue
             // Duplicate layer ids would fail H4 resolution; keep the first.
             if (!seenLayerIds.add(layer.id)) continue
             if (layers.size < MAX_STATIC_OVERLAY_LAYERS) layers.add(layer)
@@ -293,13 +318,18 @@ internal object SceneConfigCodec {
         return ResolvedSave(valid, active, encodeStore(valid))
     }
 
-    private fun decodeLayer(body: String, legacy: Boolean): StreamSceneLayer? {
+    private fun decodeLayer(body: String, version: Int): StreamSceneLayer? {
         val fields = body.split("\t")
-        if (fields.size != if (legacy) 8 else 10) return null
+        if (fields.size != when (version) {
+                1 -> 8
+                2 -> 10
+                else -> 17
+            }
+        ) return null
         val id = unescape(fields[0]) ?: return null
         if (id.isBlank()) return null
         val text = unescape(fields[1]) ?: return null
-        val kind = if (legacy) {
+        val kind = if (version == 1) {
             SceneLayerKind.TEXT
         } else {
             try {
@@ -308,7 +338,7 @@ internal object SceneConfigCodec {
                 return null
             }
         }
-        val imageUri = if (legacy) {
+        val imageUri = if (version == 1) {
             null
         } else {
             val raw = unescape(fields[9]) ?: return null
@@ -333,8 +363,46 @@ internal object SceneConfigCodec {
             "false" -> false
             else -> return null
         }
-        return StreamSceneLayer(id, text, anchor, z, margin, maxWidth, alpha, enabled, kind, imageUri)
+        // H7 style: v1/v2 layers take rendering-identical defaults.
+        val textColor: Int
+        val backgroundColor: Int?
+        val borderWidthPx: Int
+        val borderColor: Int
+        val cornerRadiusPx: Int
+        val shadowOffsetPx: Int
+        val shadowColor: Int
+        if (version < 3) {
+            textColor = TEXT_COLOR_DEFAULT
+            backgroundColor = null
+            borderWidthPx = 0
+            borderColor = BORDER_COLOR_DEFAULT
+            cornerRadiusPx = 0
+            shadowOffsetPx = 0
+            shadowColor = SHADOW_COLOR_DEFAULT
+        } else {
+            textColor = parseColorHex(fields[10]) ?: return null
+            backgroundColor = if (fields[11].isEmpty()) null else parseColorHex(fields[11]) ?: return null
+            borderWidthPx = fields[12].toIntOrNull() ?: return null
+            if (borderWidthPx < 0 || borderWidthPx > MAX_STYLE_BORDER_PX) return null
+            borderColor = parseColorHex(fields[13]) ?: return null
+            cornerRadiusPx = fields[14].toIntOrNull() ?: return null
+            if (cornerRadiusPx < 0 || cornerRadiusPx > MAX_STYLE_RADIUS_PX) return null
+            shadowOffsetPx = fields[15].toIntOrNull() ?: return null
+            if (shadowOffsetPx < 0 || shadowOffsetPx > MAX_STYLE_SHADOW_PX) return null
+            shadowColor = parseColorHex(fields[16]) ?: return null
+        }
+        return StreamSceneLayer(
+            id, text, anchor, z, margin, maxWidth, alpha, enabled, kind, imageUri,
+            textColor, backgroundColor, borderWidthPx, borderColor,
+            cornerRadiusPx, shadowOffsetPx, shadowColor
+        )
     }
+
+    private fun colorHex(color: Int): String =
+        color.toUInt().toString(16).uppercase().padStart(8, '0')
+
+    private fun parseColorHex(field: String): Int? =
+        field.toUIntOrNull(16)?.toInt()
 
     private fun repairedName(name: String): String {
         if (name.isBlank()) return REPAIRED_SCENE_NAME

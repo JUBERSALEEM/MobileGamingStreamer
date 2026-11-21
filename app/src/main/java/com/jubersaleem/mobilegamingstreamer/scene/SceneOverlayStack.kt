@@ -47,7 +47,14 @@ internal data class SceneOverlaySpec(
     val alpha: Float,
     val enabled: Boolean = true,
     val kind: SceneLayerKind = SceneLayerKind.TEXT,
-    val imageUri: String? = null
+    val imageUri: String? = null,
+    val textColor: Int = TEXT_COLOR_DEFAULT,
+    val backgroundColor: Int? = null,
+    val borderWidthPx: Int = 0,
+    val borderColor: Int = BORDER_COLOR_DEFAULT,
+    val cornerRadiusPx: Int = 0,
+    val shadowOffsetPx: Int = 0,
+    val shadowColor: Int = SHADOW_COLOR_DEFAULT
 ) {
     companion object {
         fun of(
@@ -60,7 +67,14 @@ internal data class SceneOverlaySpec(
             alpha: Float,
             enabled: Boolean = true,
             kind: SceneLayerKind = SceneLayerKind.TEXT,
-            imageUri: String? = null
+            imageUri: String? = null,
+            textColor: Int = TEXT_COLOR_DEFAULT,
+            backgroundColor: Int? = null,
+            borderWidthPx: Int = 0,
+            borderColor: Int = BORDER_COLOR_DEFAULT,
+            cornerRadiusPx: Int = 0,
+            shadowOffsetPx: Int = 0,
+            shadowColor: Int = SHADOW_COLOR_DEFAULT
         ): SceneOverlaySpec? {
             if (id.isBlank()) return null
             if (kind == SceneLayerKind.TEXT) {
@@ -73,10 +87,15 @@ internal data class SceneOverlaySpec(
             if (marginPx < 0) return null
             if (maxWidthPx <= 0) return null
             if (alpha.isNaN()) return null
+            if (borderWidthPx < 0 || borderWidthPx > MAX_STYLE_BORDER_PX) return null
+            if (cornerRadiusPx < 0 || cornerRadiusPx > MAX_STYLE_RADIUS_PX) return null
+            if (shadowOffsetPx < 0 || shadowOffsetPx > MAX_STYLE_SHADOW_PX) return null
             return SceneOverlaySpec(
                 id, if (kind == SceneLayerKind.TEXT) text else "", anchor, zOrder, marginPx, maxWidthPx,
                 alpha.coerceIn(0f, 1f), enabled, kind,
-                if (kind == SceneLayerKind.IMAGE) imageUri else null
+                if (kind == SceneLayerKind.IMAGE) imageUri else null,
+                textColor, backgroundColor, borderWidthPx, borderColor,
+                cornerRadiusPx, shadowOffsetPx, shadowColor
             )
         }
     }

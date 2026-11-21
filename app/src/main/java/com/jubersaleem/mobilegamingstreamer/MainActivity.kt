@@ -25,6 +25,9 @@ import com.jubersaleem.mobilegamingstreamer.overlay.FloatingControlService
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_SCENE_NAME_CHARS
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_STATIC_OVERLAY_LAYERS
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_STORED_SCENES
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_STYLE_BORDER_PX
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_STYLE_RADIUS_PX
+import com.jubersaleem.mobilegamingstreamer.scene.MAX_STYLE_SHADOW_PX
 import com.jubersaleem.mobilegamingstreamer.scene.MAX_TEXT_LAYER_CHARS
 import com.jubersaleem.mobilegamingstreamer.scene.SceneConfigCodec
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerKind
@@ -380,6 +383,33 @@ class MainActivity : ComponentActivity() {
                             updateLayer(sceneId, layerId) {
                                 it.copy(alpha = alpha.coerceIn(0f, 1f))
                             }
+                        },
+                        onLayerTextColor = { sceneId, layerId, color ->
+                            updateLayer(sceneId, layerId) { it.copy(textColor = color) }
+                        },
+                        onLayerBackground = { sceneId, layerId, color ->
+                            updateLayer(sceneId, layerId) { it.copy(backgroundColor = color) }
+                        },
+                        onLayerBorderWidth = { sceneId, layerId, width ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(borderWidthPx = width.coerceIn(0, MAX_STYLE_BORDER_PX))
+                            }
+                        },
+                        onLayerBorderColor = { sceneId, layerId, color ->
+                            updateLayer(sceneId, layerId) { it.copy(borderColor = color) }
+                        },
+                        onLayerCornerRadius = { sceneId, layerId, radius ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(cornerRadiusPx = radius.coerceIn(0, MAX_STYLE_RADIUS_PX))
+                            }
+                        },
+                        onLayerShadowOffset = { sceneId, layerId, offset ->
+                            updateLayer(sceneId, layerId) {
+                                it.copy(shadowOffsetPx = offset.coerceIn(0, MAX_STYLE_SHADOW_PX))
+                            }
+                        },
+                        onLayerShadowColor = { sceneId, layerId, color ->
+                            updateLayer(sceneId, layerId) { it.copy(shadowColor = color) }
                         },
                         onDismissSceneError = { sceneError = null }
                     )

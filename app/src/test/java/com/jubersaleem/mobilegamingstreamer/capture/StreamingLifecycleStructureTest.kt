@@ -246,6 +246,23 @@ class StreamingLifecycleStructureTest {
     }
 
     @Test
+    fun styledCompositionSharesPaddingRules() {
+        // H7: renderer and preview measure styled boxes through the same
+        // pure function and draw the same fixed order.
+        assertTrue(compositorGl().contains("SceneLayerStyle.styledSize"))
+        assertTrue(sceneEditor().contains("SceneLayerStyle.styledSize"))
+        assertTrue(compositorGl().contains("drawStyleUnderlayLocked"))
+    }
+
+    @Test
+    fun styleWidthsCoercedAtEntry() {
+        val act = activity()
+        assertTrue(act.contains("width.coerceIn(0, MAX_STYLE_BORDER_PX)"))
+        assertTrue(act.contains("radius.coerceIn(0, MAX_STYLE_RADIUS_PX)"))
+        assertTrue(act.contains("offset.coerceIn(0, MAX_STYLE_SHADOW_PX)"))
+    }
+
+    @Test
     fun projectionRevocationFlipsGuardWithoutStopping() {
         // Revocation flips the frame guard; teardown authority stays with
         // the service/library stop path — the source never stops anything.
