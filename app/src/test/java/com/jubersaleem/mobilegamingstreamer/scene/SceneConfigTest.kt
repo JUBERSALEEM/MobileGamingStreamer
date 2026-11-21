@@ -418,6 +418,74 @@ class SceneConfigTest {
         assertTrue(spec(shadow = MAX_STYLE_SHADOW_PX + 1) == null)
     }
 
+    // ---- H9 widgets ----
+
+    private fun widgetLayer(id: String, kind: SceneLayerKind) = StreamSceneLayer(
+        id, "", SceneOverlayAnchor.TOP_RIGHT, 1, 8, 1920, 1f, true, kind, null
+    )
+
+    @Test
+    fun widgetRoundTripPreservesKind() {
+        val original = scene(
+            layers = listOf(
+                widgetLayer("clock", SceneLayerKind.CLOCK),
+                widgetLayer("timer", SceneLayerKind.TIMER)
+            )
+        )
+        val encoded = SceneConfigCodec.encodeScene(original)
+        assertTrue(encoded.startsWith("v3\n"))
+        val decoded = SceneConfigCodec.decodeScene(encoded)!!
+        assertEquals(original, decoded)
+        // Widgets stream without stored content.
+        assertEquals(2, decoded.streamableSpecs().size)
+    }
+
+    @Test
+    fun unknownKindDropsLayerKeepsScene() {
+        // Forward tolerance (and the browser exclusion, mechanically):
+        // an unknown kind drops its layer, never the scene/siblings.
+        val good = "layer:good\tHi\tTOP_LEFT\t1\t8\t500\t1\ttrue\tTEXT\t\t" +
+            "FFFFFFFF\t\t0\tFFFFFFFF\t0\t0\t99000000"
+        val browser = good.replace("layer:good", "layer:web").replace("\tTEXT\t", "\tBROWSER\t")
+        val decoded = SceneConfigCodec.decodeScene(
+            "v3\nscene:s\tS\n" + browser + "\n" + good
+        )!!
+        assertEquals(listOf("good"), decoded.layers.map { it.id })
+    }
+
+    @Test
+    fun widgetValidationForcesEmptyContent() {
+        for (kind in listOf(SceneLayerKind.CLOCK, SceneLayerKind.TIMER)) {
+            // Stored text/URI are ignored, never rendered or kept.
+            val spec = SceneOverlaySpec.of(
+                "w", "ignored", SceneOverlayAnchor.TOP_LEFT, 1, 8, 500, 1f, true,
+                kind, "content://ignored"
+            )!!
+            assertEquals("", spec.text)
+            assertTrue(spec.imageUri == null)
+            // Blank text + null URI (the editor form) is valid.
+            assertTrue(
+                SceneOverlaySpec.of(
+                    "w", "", SceneOverlayAnchor.TOP_LEFT, 1, 8, 500, 1f, true,
+                    kind, null
+                ) != null
+            )
+        }
+        // TEXT/IMAGE gates unchanged.
+        assertTrue(
+            SceneOverlaySpec.of(
+                "t", "", SceneOverlayAnchor.TOP_LEFT, 1, 8, 500, 1f, true,
+                SceneLayerKind.TEXT, null
+            ) == null
+        )
+        assertTrue(
+            SceneOverlaySpec.of(
+                "i", "", SceneOverlayAnchor.TOP_LEFT, 1, 8, 500, 1f, true,
+                SceneLayerKind.IMAGE, null
+            ) == null
+        )
+    }
+
     @Test
     fun drawOrderFollowsZThenId() {
         val ordered = scene(

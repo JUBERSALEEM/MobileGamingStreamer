@@ -18,11 +18,13 @@ import android.opengl.GLUtils
 import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.time.ZoneId
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -65,6 +67,11 @@ private class OverlaySlot {
     var quadBuffer: FloatBuffer? = null
     var alpha: Float = 1f
     var bitmap: Bitmap? = null
+    // H9 dynamic-slot state: owner spec, glyph origin, last value.
+    var spec: SceneOverlaySpec? = null
+    var offsetLeft: Int = 0
+    var offsetTop: Int = 0
+    var lastContent: String? = null
 }
 
 /** Init-latch scratch: one requested overlay with its measurement. */
@@ -84,7 +91,8 @@ internal class SceneCompositorGL(
     private val textContent: String?,
     private val subtextContent: String?,
     private val sceneLayers: List<SceneOverlaySpec>?,
-    private val imageProvider: ((String) -> Bitmap?)? = null
+    private val imageProvider: ((String) -> Bitmap?)? = null,
+    private val sessionStartElapsedMs: Long = 0L
 ) : SurfaceTexture.OnFrameAvailableListener {
 
     private var workerThread: HandlerThread? = null
@@ -115,6 +123,8 @@ internal class SceneCompositorGL(
     private val stMatrix = FloatArray(16)
     private var vertexBuffer: FloatBuffer? = null
     private var texCoordBuffer: FloatBuffer? = null
+    private val zoneId: ZoneId = ZoneId.systemDefault()
+    private val dynamicTickRunnable = Runnable { onDynamicTickLocked() }
 
     /**
      * Starts the GL thread and initializes EGL + input producer endpoint.
@@ -563,6 +573,12 @@ internal class SceneCompositorGL(
      * EGL teardown and H8 live rebuild.
      */
     private fun releaseOverlaySlotsLocked() {
+        // H9: exactly one ticker iff a complete stack holds a dynamic
+        // slot — release cancels, build re-arms.
+        try {
+            glHandler?.removeCallbacks(dynamicTickRunnable)
+        } catch (_: Exception) {
+        }
         for (index in 0 until overlaySlotCount) {
             val slot = overlaySlots[index]
             try {
@@ -576,6 +592,10 @@ internal class SceneCompositorGL(
             }
             slot.bitmap = null
             slot.quadBuffer = null
+            slot.spec = null
+            slot.offsetLeft = 0
+            slot.offsetTop = 0
+            slot.lastContent = null
         }
         overlaySlotCount = 0
         try {
@@ -609,20 +629,29 @@ internal class SceneCompositorGL(
         if (paint.textSize <= 0f) throw RuntimeException("overlay text size invalid for height=$outH")
         val bounds = Rect()
         val decodedPending = mutableListOf<Bitmap>()
+        val buildWallMs = System.currentTimeMillis()
+        val buildElapsedMs = SystemClock.elapsedRealtime()
         try {
             val measured = requests.mapNotNull { spec ->
                 if (spec.kind == SceneLayerKind.IMAGE) {
                     measureImageLocked(spec, outH, decodedPending)
                 } else {
-                    val content = spec.text
-                    paint.getTextBounds(content, 0, content.length, bounds)
+                    // H9 widgets measure the worst-case box (stable
+                    // placement forever) but raster the current value.
+                    val measureContent = when (spec.kind) {
+                        SceneLayerKind.CLOCK -> SceneClockWidgets.WALL_CLOCK_WORST_CASE
+                        SceneLayerKind.TIMER -> SceneClockWidgets.TIMER_WORST_CASE
+                        else -> spec.text
+                    }
+                    paint.getTextBounds(measureContent, 0, measureContent.length, bounds)
                     val styled = SceneLayerStyle.styledSize(
                         SceneSizePx(bounds.width(), bounds.height()),
                         spec.borderWidthPx, spec.shadowOffsetPx
                     ) ?: throw RuntimeException("overlay styled size invalid: ${spec.id}")
                     MeasuredOverlay(
                         spec = spec,
-                        content = content,
+                        content = liveWidgetContent(spec.kind, buildWallMs, buildElapsedMs)
+                            ?: spec.text,
                         measured = styled,
                         offsetLeft = bounds.left,
                         offsetTop = bounds.top
@@ -677,11 +706,16 @@ internal class SceneCompositorGL(
                 checkGl("overlay texture upload")
                 slot.quadBuffer = floatBufferOf(entry.ndcQuad)
                 slot.alpha = entry.alpha
+                slot.spec = layer.spec
+                slot.offsetLeft = layer.offsetLeft
+                slot.offsetTop = layer.offsetTop
+                slot.lastContent = layer.content
                 // Sanitized: layer id + kind/length only, never content.
                 val detail = if (layer.spec.kind == SceneLayerKind.IMAGE) "image" else "${layer.content.length} chars"
                 Log.i(TAG, "overlay ready: ${entry.id} $detail " +
                     "${rect.width}x${rect.height}")
             }
+            armDynamicTickLocked()
         } finally {
             for (pending in decodedPending) {
                 try {
@@ -691,6 +725,107 @@ internal class SceneCompositorGL(
             }
             decodedPending.clear()
         }
+    }
+
+    /**
+     * Current rendered value for a widget kind, or null for static
+     * content. GL thread only (reads the latched session start).
+     */
+    private fun liveWidgetContent(kind: SceneLayerKind, wallMs: Long, elapsedMs: Long): String? =
+        when (kind) {
+            SceneLayerKind.CLOCK -> SceneClockWidgets.formatWallClock(wallMs, zoneId)
+            SceneLayerKind.TIMER -> SceneClockWidgets.formatElapsed(sessionStartElapsedMs, elapsedMs)
+            else -> null
+        }
+
+    /**
+     * H9 ticker arm (GL thread only): schedules the single delayed
+     * tick when the built stack holds a dynamic slot. Idempotent
+     * (cancels first); cadence is the fastest needed, aligned to the
+     * next boundary. No dynamic slot → no ticker, zero overhead.
+     */
+    private fun armDynamicTickLocked() {
+        try {
+            glHandler?.removeCallbacks(dynamicTickRunnable)
+        } catch (_: Exception) {
+        }
+        var periodMs = 0L
+        for (index in 0 until overlaySlotCount) {
+            when (overlaySlots[index].spec?.kind) {
+                SceneLayerKind.TIMER -> {
+                    periodMs = SceneClockWidgets.TIMER_TICK_PERIOD_MS
+                    break
+                }
+                SceneLayerKind.CLOCK -> periodMs = SceneClockWidgets.CLOCK_TICK_PERIOD_MS
+                else -> { }
+            }
+        }
+        if (periodMs <= 0L) return
+        // Anchor the delay to the ticking clock: wall for CLOCK-only,
+        // monotonic for any TIMER.
+        val nowMs = if (periodMs == SceneClockWidgets.TIMER_TICK_PERIOD_MS) {
+            SystemClock.elapsedRealtime()
+        } else {
+            System.currentTimeMillis()
+        }
+        val delayMs = SceneClockWidgets.tickDelayMs(nowMs, periodMs) ?: return
+        try {
+            glHandler?.postDelayed(dynamicTickRunnable, delayMs)
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * H9 tick (GL thread only): re-renders every dynamic slot whose
+     * value changed, then re-arms. Same queue as frames, so ticks
+     * never interleave a draw. A failing slot logs loudly and retries
+     * next tick — a wedged tick never kills the GL thread.
+     */
+    private fun onDynamicTickLocked() {
+        if (!glReady) return
+        val wallMs = System.currentTimeMillis()
+        val elapsedMs = SystemClock.elapsedRealtime()
+        for (index in 0 until overlaySlotCount) {
+            val slot = overlaySlots[index]
+            val spec = slot.spec ?: continue
+            val content = liveWidgetContent(spec.kind, wallMs, elapsedMs) ?: continue
+            try {
+                refreshTextSlotLocked(slot, spec, content)
+            } catch (e: RuntimeException) {
+                Log.e(TAG, "dynamic overlay refresh failed: ${spec.id}", e)
+            }
+        }
+        armDynamicTickLocked()
+    }
+
+    /**
+     * Re-renders one text slot in place (GL thread only): same fixed
+     * style order and offsets as the initial compose, then re-uploads
+     * into the live texture. Skips unchanged content. The bitmap is
+     * reused (erase + redraw) — zero allocation per tick.
+     */
+    private fun refreshTextSlotLocked(slot: OverlaySlot, spec: SceneOverlaySpec, content: String) {
+        if (slot.lastContent == content) return
+        val bitmap = slot.bitmap ?: return
+        if (slot.textureId == 0) return
+        bitmap.eraseColor(Color.TRANSPARENT)
+        val canvas = Canvas(bitmap)
+        drawStyleUnderlayLocked(canvas, bitmap.width, bitmap.height, spec)
+        val paint = Paint().apply {
+            isAntiAlias = true
+            color = spec.textColor
+            textSize = SceneTextLayerLayout.textSizePxFor(layout.outputHeight).toFloat()
+        }
+        canvas.drawText(
+            content,
+            -slot.offsetLeft.toFloat() + spec.borderWidthPx,
+            -slot.offsetTop.toFloat() + spec.borderWidthPx,
+            paint
+        )
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, slot.textureId)
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+        checkGl("dynamic overlay re-upload")
+        slot.lastContent = content
     }
 
     /**

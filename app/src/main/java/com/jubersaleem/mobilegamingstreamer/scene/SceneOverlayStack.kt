@@ -77,11 +77,16 @@ internal data class SceneOverlaySpec(
             shadowColor: Int = SHADOW_COLOR_DEFAULT
         ): SceneOverlaySpec? {
             if (id.isBlank()) return null
-            if (kind == SceneLayerKind.TEXT) {
-                if (text.isBlank()) return null
-                if (text.length > MAX_TEXT_LAYER_CHARS) return null
-            } else {
-                if (!isValidImageUri(imageUri)) return null
+            when (kind) {
+                SceneLayerKind.TEXT -> {
+                    if (text.isBlank()) return null
+                    if (text.length > MAX_TEXT_LAYER_CHARS) return null
+                }
+                SceneLayerKind.IMAGE -> {
+                    if (!isValidImageUri(imageUri)) return null
+                }
+                // H9 widgets carry no content: time is rendered, not stored.
+                SceneLayerKind.CLOCK, SceneLayerKind.TIMER -> { }
             }
             if (zOrder < 0) return null
             if (marginPx < 0) return null

@@ -6,6 +6,7 @@ import android.graphics.SurfaceTexture
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.projection.MediaProjection
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import com.pedro.encoder.input.sources.OrientationConfig
@@ -48,7 +49,8 @@ class SceneSource(
     private val mediaProjection: MediaProjection,
     private val textContent: String? = null,
     private val subtextContent: String? = null,
-    private val sceneConfig: String? = null
+    private val sceneConfig: String? = null,
+    private val sessionStartElapsedMs: Long = 0L
 ) : VideoSource() {
 
     // Mirrors ScreenSource: dpi snapshot from context. Only the application
@@ -108,10 +110,19 @@ class SceneSource(
                     null
                 }
             }
+            // H9 TIMER epoch: the service session start when provided
+            // (true uptime across swaps); otherwise latched here so a
+            // legacy-started source counts from its first frame.
+            val timerEpochMs = if (sessionStartElapsedMs > 0L) {
+                sessionStartElapsedMs
+            } else {
+                SystemClock.elapsedRealtime()
+            }
             val gl = SceneCompositorGL(
                 controller, output, activeLayout, textContent, subtextContent,
                 if (editorSpecs.isEmpty()) null else editorSpecs,
-                imageProvider
+                imageProvider,
+                timerEpochMs
             )
             compositor = gl
             val input = gl.start() // Latch-inits EGL + input endpoint; throws on failure.

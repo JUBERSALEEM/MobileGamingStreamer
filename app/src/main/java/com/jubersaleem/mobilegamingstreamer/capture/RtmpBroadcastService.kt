@@ -47,6 +47,7 @@ import com.pedro.library.generic.GenericStream
 class RtmpBroadcastService : Service() {
     private var display: GenericStream? = null
     private var activeVideoSource: VideoSource? = null
+    private var sessionStartElapsedMs = 0L
     private var activeAudioSource: AudioSource? = null
     private var activeMicSource: Int = AudioRouteLabels.SOURCE_NONE
     private var activeHeadset: Boolean = false
@@ -270,7 +271,14 @@ class RtmpBroadcastService : Service() {
                     update(BroadcastStatusMessages.SCENE_SWITCH_FAILED)
                     return
                 }
-                swapVideoSource(active, SceneSource(this, projection, sceneConfig = newConfig))
+                swapVideoSource(
+                    active,
+                    SceneSource(
+                        this, projection,
+                        sceneConfig = newConfig,
+                        sessionStartElapsedMs = sessionStartElapsedMs
+                    )
+                )
             }
             SwitchAction.SWAP_TO_SCREEN -> {
                 val projection = activeProjection
@@ -310,6 +318,8 @@ class RtmpBroadcastService : Service() {
         // release() itself triggers an async library onDisconnect that must
         // not touch the session built below.
         val sessionToken = callbackRouter.beginSession()
+        // H9 TIMER epoch: every startBroadcast is a new session.
+        sessionStartElapsedMs = SystemClock.elapsedRealtime()
         handler.removeCallbacks(startupTimeout)
         handler.removeCallbacks(streamHealthWatchdog)
         handler.removeCallbacks(sessionHeartbeat)
@@ -587,10 +597,14 @@ class RtmpBroadcastService : Service() {
                 if (!explicitSceneExtra && sceneSpecs.isNotEmpty()) {
                     SceneSource(
                         this, mediaProjection,
-                        sceneConfig = intent.getStringExtra(EXTRA_SCENE_CONFIG)
+                        sceneConfig = intent.getStringExtra(EXTRA_SCENE_CONFIG),
+                        sessionStartElapsedMs = sessionStartElapsedMs
                     )
                 } else {
-                    SceneSource(this, mediaProjection, sceneText, sceneText2)
+                    SceneSource(
+                        this, mediaProjection, sceneText, sceneText2,
+                        sessionStartElapsedMs = sessionStartElapsedMs
+                    )
                 }
             } else {
                 ScreenSource(this, mediaProjection)

@@ -326,6 +326,61 @@ class StreamingLifecycleStructureTest {
     }
 
     @Test
+    fun dynamicTickerRefreshesWidgetsInPlace() {
+        // H9: one GL-thread ticker re-renders changed widgets into the
+        // live textures (erase + re-upload, bitmap reused); release
+        // cancels, build re-arms — exactly one ticker per live stack.
+        val gl = compositorGl()
+        assertTrue(gl.contains("postDelayed(dynamicTickRunnable"))
+        assertTrue(gl.contains("removeCallbacks(dynamicTickRunnable)"))
+        val refresh = functionBody(gl, "fun refreshTextSlotLocked")
+        assertTrue(refresh.contains("slot.lastContent == content"))
+        assertTrue(refresh.contains("eraseColor"))
+        assertTrue(refresh.contains("texImage2D"))
+        assertTrue(refresh.contains("slot.lastContent = content"))
+    }
+
+    @Test
+    fun widgetTimeContractShared() {
+        // H9: renderer and preview format/measure widgets through the
+        // same pure contract (same minute, same boxes).
+        assertTrue(compositorGl().contains("SceneClockWidgets.formatWallClock"))
+        assertTrue(sceneEditor().contains("SceneClockWidgets.formatWallClock"))
+        assertTrue(compositorGl().contains("SceneClockWidgets.WALL_CLOCK_WORST_CASE"))
+        assertTrue(sceneEditor().contains("SceneClockWidgets.WALL_CLOCK_WORST_CASE"))
+    }
+
+    @Test
+    fun timerEpochThreadsFromSession() {
+        // H9: the service session start (monotonic) is the TIMER epoch
+        // end to end, so swaps preserve true session uptime.
+        assertTrue(service().contains("sessionStartElapsedMs = SystemClock.elapsedRealtime()"))
+        assertTrue(sceneSource().contains("timerEpochMs"))
+        assertTrue(compositorGl().contains("sessionStartElapsedMs"))
+    }
+
+    @Test
+    fun widgetAddActionsThreaded() {
+        // H9: ADD CLOCK / ADD TIMER reach dedicated add fns.
+        val act = activity()
+        assertTrue(act.contains("fun addClockLayer"))
+        assertTrue(act.contains("fun addTimerLayer"))
+        assertTrue(sceneEditor().contains("ADD CLOCK"))
+        assertTrue(sceneEditor().contains("ADD TIMER"))
+    }
+
+    @Test
+    fun previewTicksHonestly() {
+        // H9: the preview recomposes each second only with a dynamic
+        // layer, formatting through the shared contract.
+        val preview = functionBody(sceneEditor(), "fun ScenePreviewCanvas")
+        assertTrue(preview.contains("hasDynamicWidgets"))
+        assertTrue(preview.contains("LaunchedEffect"))
+        assertTrue(preview.contains("delay(1_000L)"))
+        assertTrue(preview.contains("SceneClockWidgets.formatElapsed"))
+    }
+
+    @Test
     fun projectionRevocationFlipsGuardWithoutStopping() {
         // Revocation flips the frame guard; teardown authority stays with
         // the service/library stop path — the source never stops anything.

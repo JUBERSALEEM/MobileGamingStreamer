@@ -1,6 +1,7 @@
 package com.jubersaleem.mobilegamingstreamer
 
 import android.graphics.Paint
+import android.os.SystemClock
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +57,7 @@ import com.jubersaleem.mobilegamingstreamer.scene.BORDER_COLOR_DEFAULT
 import com.jubersaleem.mobilegamingstreamer.scene.SHADOW_COLOR_DEFAULT
 import com.jubersaleem.mobilegamingstreamer.scene.TEXT_COLOR_DEFAULT
 import com.jubersaleem.mobilegamingstreamer.scene.SceneImageLayer
+import com.jubersaleem.mobilegamingstreamer.scene.SceneClockWidgets
 import com.jubersaleem.mobilegamingstreamer.scene.SceneImageLoader
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerKind
 import com.jubersaleem.mobilegamingstreamer.scene.SceneLayerStyle
@@ -65,6 +68,8 @@ import com.jubersaleem.mobilegamingstreamer.scene.SceneSizePx
 import com.jubersaleem.mobilegamingstreamer.scene.SceneTextLayerLayout
 import com.jubersaleem.mobilegamingstreamer.scene.StreamScene
 import com.jubersaleem.mobilegamingstreamer.scene.StreamSceneLayer
+import java.time.ZoneId
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /** 1080p reference canvas for the editor preview (labeled in the UI). */
@@ -127,6 +132,8 @@ fun SceneEditorPage(
     onRenameScene: (String, String) -> Unit,
     onAddLayer: (String) -> Unit,
     onAddImageLayer: (String) -> Unit,
+    onAddClockLayer: (String) -> Unit,
+    onAddTimerLayer: (String) -> Unit,
     onRemoveLayer: (String, String) -> Unit,
     onReplaceImageLayer: (String, String) -> Unit,
     onMoveLayer: (String, String, Boolean) -> Unit,
@@ -206,6 +213,8 @@ fun SceneEditorPage(
                 onRenameScene = onRenameScene,
                 onAddLayer = onAddLayer,
                 onAddImageLayer = onAddImageLayer,
+                onAddClockLayer = onAddClockLayer,
+                onAddTimerLayer = onAddTimerLayer,
                 onRemoveLayer = onRemoveLayer,
                 onReplaceImageLayer = onReplaceImageLayer,
                 onMoveLayer = onMoveLayer,
@@ -248,6 +257,8 @@ private fun SceneCard(
     onRenameScene: (String, String) -> Unit,
     onAddLayer: (String) -> Unit,
     onAddImageLayer: (String) -> Unit,
+    onAddClockLayer: (String) -> Unit,
+    onAddTimerLayer: (String) -> Unit,
     onRemoveLayer: (String, String) -> Unit,
     onReplaceImageLayer: (String, String) -> Unit,
     onMoveLayer: (String, String, Boolean) -> Unit,
@@ -313,6 +324,8 @@ private fun SceneCard(
                     layerKey = layerKey,
                     onAddLayer = onAddLayer,
                     onAddImageLayer = onAddImageLayer,
+                    onAddClockLayer = onAddClockLayer,
+                    onAddTimerLayer = onAddTimerLayer,
                     onRemoveLayer = onRemoveLayer,
                     onReplaceImageLayer = onReplaceImageLayer,
                     onMoveLayer = onMoveLayer,
@@ -375,6 +388,8 @@ private fun LayerListEditor(
     layerKey: (String, String) -> String,
     onAddLayer: (String) -> Unit,
     onAddImageLayer: (String) -> Unit,
+    onAddClockLayer: (String) -> Unit,
+    onAddTimerLayer: (String) -> Unit,
     onRemoveLayer: (String, String) -> Unit,
     onReplaceImageLayer: (String, String) -> Unit,
     onMoveLayer: (String, String, Boolean) -> Unit,
@@ -423,6 +438,22 @@ private fun LayerListEditor(
                     icon = Icons.Rounded.Add
                 )
             }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ClayButton(
+                label = "ADD CLOCK",
+                onClick = { onAddClockLayer(scene.id) },
+                enabled = !atCap,
+                style = ClayButtonStyle.Raised,
+                icon = Icons.Rounded.Add
+            )
+            ClayButton(
+                label = "ADD TIMER",
+                onClick = { onAddTimerLayer(scene.id) },
+                enabled = !atCap,
+                style = ClayButtonStyle.Raised,
+                icon = Icons.Rounded.Add
+            )
         }
         if (atCap) {
             Text(
@@ -513,6 +544,8 @@ private fun LayerRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = if (layer.kind == SceneLayerKind.IMAGE) "Image layer"
+                    else if (layer.kind == SceneLayerKind.CLOCK) "Clock widget"
+                    else if (layer.kind == SceneLayerKind.TIMER) "Stream timer"
                     else if (layer.text.isBlank()) "(empty text)" else layer.text,
                     color = if (layer.enabled) p.text else p.muted,
                     fontSize = 13.sp,
@@ -556,6 +589,13 @@ private fun LayerRow(
                 ImageLayerThumbnail(
                     imageUri = layer.imageUri,
                     onReplace = { onReplaceImageLayer(sceneId, layer.id) }
+                )
+            } else if (layer.kind == SceneLayerKind.CLOCK || layer.kind == SceneLayerKind.TIMER) {
+                Text(
+                    text = if (layer.kind == SceneLayerKind.CLOCK) "Shows the current time (HH:MM)."
+                    else "Counts up from stream start (HH:MM:SS).",
+                    color = p.muted,
+                    fontSize = 11.sp
                 )
             } else {
                 ClayTextField(
@@ -603,7 +643,7 @@ private fun LayerRow(
                 steps = 19,
                 onChange = { onLayerAlpha(sceneId, layer.id, it) }
             )
-            if (layer.kind == SceneLayerKind.TEXT) {
+            if (layer.kind != SceneLayerKind.IMAGE) {
                 StyleSwatchRow(
                     title = "Text color",
                     options = textColorSwatches,
@@ -819,13 +859,41 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
                 ) ?: return@mapNotNull null
                 Triple(spec, styled, "")
             } else {
+                // H9: widgets measure the shared worst-case box (stable
+                // placement, same as the renderer); glyphs tick below.
+                val measureContent = when (spec.kind) {
+                    SceneLayerKind.CLOCK -> SceneClockWidgets.WALL_CLOCK_WORST_CASE
+                    SceneLayerKind.TIMER -> SceneClockWidgets.TIMER_WORST_CASE
+                    else -> layer.text
+                }
                 val bounds = android.graphics.Rect()
-                measurePaint.getTextBounds(layer.text, 0, layer.text.length, bounds)
+                measurePaint.getTextBounds(measureContent, 0, measureContent.length, bounds)
                 val size = SceneLayerStyle.styledSize(
                     SceneSizePx(bounds.width(), bounds.height()),
                     spec.borderWidthPx, spec.shadowOffsetPx
                 ) ?: return@mapNotNull null
                 Triple(spec, size, layer.text)
+            }
+        }
+    }
+    // H9 honest preview tick — recomposes each second only while a
+    // dynamic layer is present. CLOCK shows real wall time; TIMER
+    // counts from preview start as a live demo (labeled PREVIEW).
+    val hasDynamicWidgets = remember(measured) {
+        measured.any {
+            it.first.kind == SceneLayerKind.CLOCK || it.first.kind == SceneLayerKind.TIMER
+        }
+    }
+    var tickWallMs by remember(hasDynamicWidgets) { mutableStateOf(System.currentTimeMillis()) }
+    var tickElapsedMs by remember(hasDynamicWidgets) { mutableStateOf(SystemClock.elapsedRealtime()) }
+    val previewStartElapsedMs = remember(hasDynamicWidgets) { SystemClock.elapsedRealtime() }
+    val previewZone = remember { ZoneId.systemDefault() }
+    if (hasDynamicWidgets) {
+        LaunchedEffect(Unit) {
+            while (true) {
+                delay(1_000L)
+                tickWallMs = System.currentTimeMillis()
+                tickElapsedMs = SystemClock.elapsedRealtime()
             }
         }
     }
@@ -838,7 +906,15 @@ private fun ScenePreviewCanvas(scene: StreamScene) {
             measured.map { SceneOverlayLayerInput(it.first, it.second) }
         )
     }
-    val textById = remember(measured) { measured.associate { it.first.id to it.third } }
+    val textById = remember(measured, tickWallMs, tickElapsedMs) {
+        measured.associate {
+            it.first.id to when (it.first.kind) {
+                SceneLayerKind.CLOCK -> SceneClockWidgets.formatWallClock(tickWallMs, previewZone)
+                SceneLayerKind.TIMER -> SceneClockWidgets.formatElapsed(previewStartElapsedMs, tickElapsedMs)
+                else -> it.third
+            }
+        }
+    }
     val kindById = remember(measured) { measured.associate { it.first.id to it.first.kind } }
     val specById = remember(measured) { measured.associate { it.first.id to it.first } }
     val imageById = remember(measured) {

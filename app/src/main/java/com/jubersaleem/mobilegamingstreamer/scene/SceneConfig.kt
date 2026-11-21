@@ -32,7 +32,11 @@ internal const val REPAIRED_SCENE_NAME = "Untitled scene"
 /** Layer content kind. Public: carried by the public UI-held model. */
 enum class SceneLayerKind {
     TEXT,
-    IMAGE
+    IMAGE,
+    /** H9 wall-clock widget: time is rendered, never stored. */
+    CLOCK,
+    /** H9 session-uptime widget: time is rendered, never stored. */
+    TIMER
 }
 
 /**
@@ -344,10 +348,15 @@ internal object SceneConfigCodec {
             val raw = unescape(fields[9]) ?: return null
             if (raw.isBlank()) null else raw
         }
-        if (kind == SceneLayerKind.TEXT) {
-            if (text.isBlank() || text.length > MAX_TEXT_LAYER_CHARS) return null
-        } else {
-            if (!isValidImageUri(imageUri)) return null
+        when (kind) {
+            SceneLayerKind.TEXT -> {
+                if (text.isBlank() || text.length > MAX_TEXT_LAYER_CHARS) return null
+            }
+            SceneLayerKind.IMAGE -> {
+                if (!isValidImageUri(imageUri)) return null
+            }
+            // H9 widgets: stored text/URI ignored (time is rendered).
+            SceneLayerKind.CLOCK, SceneLayerKind.TIMER -> { }
         }
         val anchor = SceneOverlayAnchor.values().firstOrNull { it.name == fields[2] } ?: return null
         val z = fields[3].toIntOrNull() ?: return null

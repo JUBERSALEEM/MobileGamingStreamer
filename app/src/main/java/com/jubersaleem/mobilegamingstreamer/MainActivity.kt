@@ -362,6 +362,8 @@ class MainActivity : ComponentActivity() {
                         onRenameScene = { id, name -> renameScene(id, name) },
                         onAddLayer = { id -> addLayer(id) },
                         onAddImageLayer = { id -> launchImagePicker(id, null) },
+                        onAddClockLayer = { id -> addClockLayer(id) },
+                        onAddTimerLayer = { id -> addTimerLayer(id) },
                         onReplaceImageLayer = { sceneId, layerId -> launchImagePicker(sceneId, layerId) },
                         onRemoveLayer = { sceneId, layerId -> removeLayer(sceneId, layerId) },
                         onMoveLayer = { sceneId, layerId, towardFront ->
@@ -601,6 +603,37 @@ class MainActivity : ComponentActivity() {
                     alpha = 1f,
                     kind = SceneLayerKind.IMAGE,
                     imageUri = imageUri
+                )
+            )
+        }
+        sceneError = null
+    }
+
+    private fun addClockLayer(sceneId: String) {
+        addWidgetLayer(sceneId, SceneLayerKind.CLOCK)
+    }
+
+    private fun addTimerLayer(sceneId: String) {
+        addWidgetLayer(sceneId, SceneLayerKind.TIMER)
+    }
+
+    private fun addWidgetLayer(sceneId: String, kind: SceneLayerKind) {
+        val scene = scenes.firstOrNull { it.id == sceneId } ?: return
+        if (scene.layers.size >= MAX_STATIC_OVERLAY_LAYERS) {
+            sceneError = "Layer limit reached ($MAX_STATIC_OVERLAY_LAYERS per scene)."
+            return
+        }
+        updateScene(sceneId) { current ->
+            current.copy(
+                layers = current.layers + StreamSceneLayer(
+                    id = SceneConfigCodec.freshLayerId(current),
+                    text = "",
+                    anchor = SceneOverlayAnchor.TOP_LEFT,
+                    zOrder = current.layers.size + 1,
+                    marginPx = SceneTextLayerLayout.marginPxFor(1080),
+                    maxWidthPx = 1920,
+                    alpha = 1f,
+                    kind = kind
                 )
             )
         }
